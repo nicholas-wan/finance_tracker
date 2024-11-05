@@ -22,7 +22,7 @@ tables = camelot.read_pdf(pdf_path, flavor='stream', pages='all')
 table_list = [table.df for table in tables]
 
 #The parsing for the first table is a bit different, need to parse separately.
-first_table = table_list[0].iloc[2:]
+first_table = table_list[1].iloc[2:]
 first_table.columns = ['Post', 'Trans', 'Description of Transaction', 'Transaction Amount']
 
 # Strip the first 3 rows as the information is not needed
@@ -67,6 +67,7 @@ total_sum = round(sum(float(x.replace(',','')) for x in total_sum if x not in ['
 # Print out all main stats for comparison, also to check if Calculated Sum == Sub Total
 res_data = {'Previous Balance': [prev_bal], 'Salary':salary, 'Credit':[remaining_credit], 'Calculated Sum': [round(total_sum-remaining_credit,2)], 'Sub Total': [sub_total], 'Total Balance': [total_bal]}
 res_data = pd.DataFrame.from_dict(res_data)
+res = res[res['Post']!='']
 print(res_data)
 
 # Save to CSV
