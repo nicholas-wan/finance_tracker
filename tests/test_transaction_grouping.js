@@ -269,6 +269,34 @@ test("an opening recorded after the displayed year is not applied to it", functi
   assert.equal(result.newYxShare, 0);
 });
 
+test("a same-year opening recorded after the cutoff month is not applied", function () {
+  var settlements = {
+    openingBalances: [
+      { from: "2026-01", youOweYx: 1000 },
+      { from: "2026-06", youOweYx: 5000 }
+    ],
+    payments: []
+  };
+  // Scoped through March, the June opening does not exist yet: the January
+  // record applies. Unscoped, the June record is the most recent one.
+  var scoped = grouping.settlementPosition(settlementRows(), settlements, "2026", "2026-03");
+  assert.equal(scoped.openingFrom, "2026-01");
+  assert.equal(scoped.openingYouOwe, 1000);
+  var unscoped = grouping.settlementPosition(settlementRows(), settlements, "2026", null);
+  assert.equal(unscoped.openingFrom, "2026-06");
+  assert.equal(unscoped.openingYouOwe, 5000);
+  // With only the June record, a view that stops in March has no opening at
+  // all rather than borrowing one from the future.
+  var onlyFuture = grouping.settlementPosition(
+    settlementRows(),
+    { openingBalances: [{ from: "2026-06", youOweYx: 5000 }], payments: [] },
+    "2026",
+    "2026-03"
+  );
+  assert.equal(onlyFuture.hasOpening, false);
+  assert.equal(onlyFuture.openingYouOwe, 0);
+});
+
 test("an opening recorded mid-year ignores the months already inside it", function () {
   var settlements = {
     openingBalances: [{ from: "2026-03", youOweYx: 500 }],

@@ -471,7 +471,8 @@ def main():
         },
         "transactions": rows,
     }
-    written = write_output(payload, not gaps and not failed and not row_failures)
+    written = write_output(
+        payload, not gaps and not failed and not row_failures and not unchecked)
 
     debits = sum(t["amount"] for t in rows if not t["credit"])
     credits = sum(t["amount"] for t in rows if t["credit"])
@@ -497,8 +498,8 @@ def main():
         print("All %d checkable card section(s) reconcile to their statement SUB TOTAL."
               % checked)
     if unchecked:
-        print("%d section(s) could NOT be checked - no PREVIOUS BALANCE or SUB TOTAL found:"
-              % len(unchecked))
+        print("\nFAIL: %d section(s) could NOT be checked - no PREVIOUS BALANCE or "
+              "SUB TOTAL found:" % len(unchecked))
         for month_key, card in unchecked[:10]:
             print("   %s %s" % (month_key, card))
     if from_csv:

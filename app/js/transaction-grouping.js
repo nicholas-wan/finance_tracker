@@ -229,11 +229,13 @@
     var endMonth = cutoff && cutoff < yearEnd ? cutoff : yearEnd;
 
     // The applicable opening balance is the most recent one recorded at or
-    // before the displayed year, not only one recorded in January of it.
+    // before the end of the displayed scope. Comparing against endMonth (not
+    // just the year) keeps an opening recorded after the cutoff month from
+    // being applied to a view that stops before it exists.
     var opening = null;
     openings.forEach(function (item) {
       if (!item || !item.from) return;
-      if (String(item.from).slice(0, 4) > displayYear) return;
+      if (String(item.from) > endMonth) return;
       if (!opening || String(item.from) > String(opening.from)) opening = item;
     });
 

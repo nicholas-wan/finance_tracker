@@ -171,6 +171,16 @@ class CardParserTests(ParserTestCase):
         self.assertEqual(payload["quality"]["unreconciledSections"], [])
         self.assertEqual(payload["quality"]["unparsedRows"], 1)
 
+    def test_unchecked_section_is_fatal_and_nothing_is_written(self):
+        # A section with no SUB TOTAL cannot be reconciled at all; publishing
+        # it would smuggle unverifiable rows past the balance check.
+        exited, payload, out_path, exists, _ = self.run_card_main(
+            "card_missing_subtotal_redacted.txt")
+        self.assertTrue(exited)
+        self.assertFalse(exists)
+        self.assertFalse(os.path.exists(out_path + ".tmp"))
+        self.assertEqual(payload["quality"]["uncheckedSections"], 1)
+
     def test_clean_run_writes_and_exports_an_empty_gap_list(self):
         exited, payload, _, exists, written = self.run_card_main("card_statement_redacted.txt")
         self.assertFalse(exited)
@@ -272,6 +282,25 @@ class AccountParserTests(ParserTestCase):
                     patch.object(parse_one, "PdfReader",
                                  return_value=FakeReader(
                                      self.fixture("account_lost_row_redacted.txt"))), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit):
+                    parse_one.main()
+            self.assertFalse(os.path.exists(out_path))
+            self.assertFalse(os.path.exists(out_path + ".tmp"))
+
+    def test_amount_override_is_fatal_and_nothing_is_written(self):
+        # account_statement_redacted.txt carries one row whose printed amount
+        # disagrees with the balance movement. That contradiction must abort
+        # the run before the published JSON is replaced.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "statements"))
+            open(os.path.join(tmp, "statements", "UOB_ONE_2026_06.pdf"), "w").close()
+            out_path = os.path.join(tmp, "app", "data", "account_transactions.json")
+            with patch.object(parse_one, "REPO_ROOT", tmp), \
+                    patch.object(parse_one, "OUT_PATH", out_path), \
+                    patch.object(parse_one, "PdfReader",
+                                 return_value=FakeReader(
+                                     self.fixture("account_statement_redacted.txt"))), \
                     contextlib.redirect_stdout(io.StringIO()):
                 with self.assertRaises(SystemExit):
                     parse_one.main()

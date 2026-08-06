@@ -43,7 +43,8 @@ and no output JSON is written. The card parser reconciles parsed rows against st
 balances. The account parser checks each printed amount against its balance movement.
 `validate_data.py` verifies stable IDs, dates, provenance, balance chains, all
 hand-entered references (owner tags, overrides, remarks, risk reviews), and
-source-to-dashboard totals. Use `--strict` when unresolved categories, ownership,
+source-to-dashboard totals. Audit history is exempt from reference checks because
+history may legitimately outlive the rows it describes. Use `--strict` when unresolved categories, ownership,
 provenance, or suspicious checks should also fail validation.
 
 Statements are authoritative. Rows are never deduplicated: identical charges can be
@@ -64,9 +65,10 @@ review. The original statement description and provenance remain unchanged. The
 **History** button shows edits made after audit history was enabled.
 
 Edits are written to `manual/` by stable transaction ID. IDs are hashed from
-transaction content only (date, description, amount, card, direction), never from the
-source filename or page position, so renaming a PDF or re-extracting it cannot detach
-manual decisions. The server writes atomically, rebuilds the dashboard, validates the
+transaction content and source type (date, description, amount, card, direction,
+card-vs-account), never from the source filename or page position, so renaming a PDF
+or re-extracting it cannot detach manual decisions. Replacing a CSV source with an
+equivalent PDF still changes IDs. The server writes atomically, rebuilds the dashboard, validates the
 result, and restores the previous files if the operation fails.
 
 ## Important accounting rules

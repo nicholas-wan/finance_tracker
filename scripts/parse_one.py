@@ -307,7 +307,8 @@ def main():
         },
         "transactions": all_txs,
     }
-    written = write_output(payload, not row_failures and not failed)
+    written = write_output(
+        payload, not row_failures and not failed and not all_overrides)
 
     wealth = ["Investment", "Retirement (SRS)", "Fixed deposit"]
     invested = sum(t["amount"] for t in all_txs
@@ -318,10 +319,10 @@ def main():
     if gaps:
         print("No statement found for: %s" % ", ".join(gaps))
     if all_overrides:
-        print("\n%d row(s) where the printed amount disagreed with the balance movement; "
-              "the balance was used:" % len(all_overrides))
+        print("\nFAIL: %d row(s) where the printed amount disagrees with the balance "
+              "movement; nothing was written:" % len(all_overrides))
         for month_key, o in all_overrides[:15]:
-            print("   %s %s printed %.2f, used %.2f  | %s"
+            print("   %s %s printed %.2f, balance movement %.2f  | %s"
                   % (month_key, o["date"], o["printed"], o["used"], o["description"]))
     else:
         print("Every row's printed amount matches the balance movement.")
@@ -335,7 +336,7 @@ def main():
         print("Could not parse %d file(s):" % len(failed))
         for name, why in failed[:12]:
             print("  ", name, "-", why)
-    if failed or row_failures:
+    if failed or row_failures or all_overrides:
         raise SystemExit(1)
 
 
