@@ -1,3 +1,11 @@
+# Financial data never belongs in the repo.
+statements/
+legacy/
+manual/
+app/data/
+
 *.csv
 *.pdf
 *.xlsx
+__pycache__/
+tmp/

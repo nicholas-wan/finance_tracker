@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Finances</title>
+<link rel="icon" type="image/svg+xml" href="favicon.svg">
+<link rel="stylesheet" href="css/styles.css?v=20260807-1">
+<script>
+  // Runs before first paint so the page never flashes the wrong theme.
+  (function () {
+    var saved = null;
+    try { saved = localStorage.getItem("theme"); } catch (e) { saved = null; }
+    var dark = saved ? saved === "dark"
+      : window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+    document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
+  })();
+</script>
+</head>
+<body>
+<svg class="sprite" aria-hidden="true" focusable="false"><defs>
+  <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
+  <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21.5h4"/><path d="M15.1 14c.2-1 .7-1.7 1.4-2.5A4.6 4.6 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.8 1.2 1.5 1.4 2.5"/></symbol>
+  <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></symbol>
+  <symbol id="i-gamepad" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="3"/><path d="M6 11h4M8 9v4"/><path d="M15.5 12h.01M18 10h.01"/></symbol>
+  <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
+  <symbol id="i-list" viewBox="0 0 24 24"><path d="M8 6h13M8 12h13M8 18h13"/><path d="M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></symbol>
+  <symbol id="i-card" viewBox="0 0 24 24"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="M22 7 13.5 15.5 8.5 10.5 2 17"/><path d="M16 7h6v6"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="M22 17 13.5 8.5 8.5 13.5 2 7"/><path d="M16 17h6v-6"/></symbol>
+  <symbol id="i-coins" viewBox="0 0 24 24"><circle cx="9" cy="9" r="6"/><path d="M15.6 7.6a6 6 0 1 1-6.9 9"/></symbol>
+  <symbol id="i-food" viewBox="0 0 24 24"><path d="M4 2v7a2 2 0 0 0 2 2h1a2 2 0 0 0 2-2V2"/><path d="M6.5 2v20"/><path d="M20 15V2a5 5 0 0 0-4 5v6h4Zm0 0v7"/></symbol>
+  <symbol id="i-bus" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="13" rx="2"/><path d="M3 10h18"/><circle cx="7.5" cy="19" r="2"/><circle cx="16.5" cy="19" r="2"/></symbol>
+  <symbol id="i-bike" viewBox="0 0 24 24"><circle cx="5.5" cy="17" r="3.5"/><circle cx="18.5" cy="17" r="3.5"/><path d="M12 17V13L9 10l4-3 2 3h2"/><circle cx="15.5" cy="5" r="1"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></symbol>
+  <symbol id="i-left" viewBox="0 0 24 24"><path d="M15 18l-6-6 6-6"/></symbol>
+  <symbol id="i-right" viewBox="0 0 24 24"><path d="M9 18l6-6-6-6"/></symbol>
+  <symbol id="i-bars" viewBox="0 0 24 24"><path d="M3 21h18"/><rect x="5" y="11" width="4" height="7" rx="1"/><rect x="15" y="6" width="4" height="12" rx="1"/></symbol>
+  <symbol id="i-pie" viewBox="0 0 24 24"><path d="M21.2 15.9A10 10 0 1 1 8.1 2.8"/><path d="M22 12A10 10 0 0 0 12 2v10Z"/></symbol>
+  <symbol id="i-calendar" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M3 10h18M8 3v4M16 3v4"/></symbol>
+  <symbol id="i-receipt" viewBox="0 0 24 24"><path d="M5 21V4a1 1 0 0 1 1-1h12a1 1 0 0 1 1 1v17l-3-2-2 2-2-2-2 2-2-2Z"/><path d="M9 8h6M9 12h6"/></symbol>
+  <symbol id="i-star" viewBox="0 0 24 24"><path d="m12 3 2.7 5.6 6 .9-4.3 4.3 1 6.2-5.4-3-5.4 3 1-6.2L3.3 9.5l6-.9Z"/></symbol>
+  <symbol id="i-target" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="4.5"/><circle cx="12" cy="12" r="1"/></symbol>
+  <symbol id="i-repeat" viewBox="0 0 24 24"><path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/><path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/></symbol>
+  <symbol id="i-percent" viewBox="0 0 24 24"><path d="M19 5 5 19"/><circle cx="7.5" cy="7.5" r="2.5"/><circle cx="16.5" cy="16.5" r="2.5"/></symbol>
+  <symbol id="i-swap" viewBox="0 0 24 24"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></symbol>
+</defs></svg>
+
+<header class="topbar">
+  <div class="topbar-inner">
+    <h1>Finances</h1>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
+      <button class="tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="pane-overview" data-tab="overview"><svg class="icon"><use href="#i-dashboard"/></svg>Overview</button>
+      <button class="tab" id="tab-income" role="tab" aria-selected="false" aria-controls="pane-income" data-tab="income"><svg class="icon"><use href="#i-wallet"/></svg>Income</button>
+      <button class="tab" id="tab-games" role="tab" aria-selected="false" aria-controls="pane-games" data-tab="games"><svg class="icon"><use href="#i-gamepad"/></svg>Games</button>
+      <button class="tab" id="tab-split" role="tab" aria-selected="false" aria-controls="pane-split" data-tab="split"><svg class="icon"><use href="#i-users"/></svg>Split</button>
+      <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
+    </nav>
+    <div class="top-right">
+      <button id="theme-toggle" class="icon-btn" aria-label="Switch colour theme"></button>
+    </div>
+  </div>
+</header>
+
+<main>
+  <div class="context-toolbar" id="month-nav">
+    <span class="context-label">Statement period</span>
+    <div class="month-nav">
+      <button id="prev-month" class="icon-btn" aria-label="Previous month"><svg class="icon"><use href="#i-left"/></svg></button>
+      <select id="month-select" aria-label="Statement month"></select>
+      <button id="next-month" class="icon-btn" aria-label="Next month"><svg class="icon"><use href="#i-right"/></svg></button>
+    </div>
+  </div>
+
+  <section class="pane" id="pane-overview" role="tabpanel" aria-labelledby="tab-overview">
+    <section class="freshness-strip" id="statement-freshness" aria-live="polite"></section>
+
+    <div class="kpis" id="kpis"></div>
+
+    <div class="overview-priority">
+      <section class="panel">
+        <div class="panel-head">
+          <h2><svg class="icon"><use href="#i-bulb"/></svg>What changed</h2>
+          <span class="hint">select to explore</span>
+        </div>
+        <div id="overview-insights" class="insight-list"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2><svg class="icon"><use href="#i-target"/></svg>Key spending</h2>
+          <span class="hint" id="key-hint"></span>
+        </div>
+        <div class="kpis" id="key-metrics"></div>
+      </section>
+    </div>
+
+    <section class="panel compact-chart-panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-bars"/></svg>Month by month</h2>
+        <div class="year-pills" id="range-pills"></div>
+      </div>
+      <div id="stacked"></div>
+    </section>
+
+    <div class="two-col">
+      <section class="panel">
+        <div class="panel-head">
+          <h2><svg class="icon"><use href="#i-pie"/></svg>Categories</h2>
+          <span class="hint" id="cat-hint"></span>
+        </div>
+        <div id="category-bars" class="cat-bars"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2><svg class="icon"><use href="#i-swap"/></svg>Outflows</h2>
+          <span class="hint" id="flow-hint"></span>
+        </div>
+        <div id="outflow-breakdown"></div>
+      </section>
+    </div>
+
+    <section class="panel quality-panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-receipt"/></svg>Needs attention</h2>
+        <span class="quality-status" id="quality-status"></span>
+      </div>
+      <div id="data-quality"></div>
+    </section>
+  </section>
+
+  <section class="pane hidden" id="pane-income" role="tabpanel" aria-labelledby="tab-income">
+    <div class="kpis" id="income-kpis"></div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-up"/></svg>Salary steps</h2>
+        <span class="hint">effective month and monthly gross</span>
+      </div>
+      <div id="salary-steps"></div>
+    </section>
+    <div class="two-col">
+      <section class="panel">
+        <div class="panel-head"><h2><svg class="icon"><use href="#i-calendar"/></svg>Annual income</h2><span class="hint">from your Salary sheet</span></div>
+        <div id="salary-years"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2><svg class="icon"><use href="#i-wallet"/></svg>Monthly credits</h2><span class="hint">bonus months stand out</span></div>
+        <div id="income-months"></div>
+      </section>
+    </div>
+  </section>
+
+  <section class="pane hidden" id="pane-games" role="tabpanel" aria-labelledby="tab-games">
+    <div class="kpis" id="games-kpis"></div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-gamepad"/></svg>Spending by game</h2>
+        <div class="year-pills" id="games-years"></div>
+      </div>
+      <div class="filters">
+        <div class="pills" id="game-pills"></div>
+      </div>
+      <div id="games-breakdown" class="cat-bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-bars"/></svg>Month by month</h2>
+        <span class="hint" id="games-trend-hint"></span>
+      </div>
+      <div id="games-trend" class="cat-bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
+        <span class="hint" id="games-count"></span>
+      </div>
+      <table class="ledger">
+        <thead>
+          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game</th><th class="col-amt">Amount</th></tr>
+        </thead>
+        <tbody id="games-body"></tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-coins"/></svg>Account sales</h2>
+        <span class="hint" id="sales-hint"></span>
+      </div>
+      <div id="sales-list" class="cat-bars"></div>
+    </section>
+  </section>
+
+  <section class="pane hidden" id="pane-split" role="tabpanel" aria-labelledby="tab-split">
+    <div class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-users"/></svg>Settlement with Yx</h2>
+        <div class="year-pills" id="split-years"></div>
+      </div>
+      <div id="split-summary"></div>
+      <div id="settlement-audit"></div>
+      <div class="section-divider-head">
+        <span>Monthly evidence</span>
+        <span class="hint" id="settlement-evidence-hint"></span>
+      </div>
+      <div id="split-table"></div>
+    </div>
+  </section>
+
+  <section class="pane hidden" id="pane-transactions" role="tabpanel" aria-labelledby="tab-transactions">
+    <div class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-list"/></svg>Transactions</h2>
+        <div class="panel-head-actions">
+          <span class="hint" id="ledger-hint"></span>
+          <button class="history-button" id="group-purchases-button" type="button"
+            aria-pressed="false">
+            <svg class="icon"><use href="#i-bars"/></svg>
+            <span id="group-purchases-label">Group purchases</span>
+          </button>
+          <button class="history-button" id="audit-history-button" type="button">
+            <svg class="icon"><use href="#i-repeat"/></svg>
+            History
+          </button>
+        </div>
+      </div>
+      <div class="filters">
+        <div class="pills source-pills" id="transaction-source-pills"
+          aria-label="Transaction source"></div>
+        <div class="period" id="period">
+          <button class="period-trigger" id="period-btn" aria-haspopup="true" aria-expanded="false">
+            <svg class="icon"><use href="#i-calendar"/></svg>
+            <span id="period-label">Jun 2026</span>
+            <svg class="icon caret"><use href="#i-right"/></svg>
+          </button>
+          <div class="period-menu hidden" id="period-menu">
+            <button class="period-all" id="period-all">All time</button>
+            <div class="period-body">
+              <div class="period-years" id="period-years"></div>
+              <div class="period-months" id="period-months"></div>
+            </div>
+          </div>
+        </div>
+        <input type="search" id="search" placeholder="Search transactions" aria-label="Search transactions">
+        <div class="pills" id="owner-pills"></div>
+        <select id="category-filter" aria-label="Filter by category"></select>
+        <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label>
+      </div>
+      <section class="transaction-summary" id="transaction-summary"
+        aria-label="Transaction cost breakdown"></section>
+      <table class="ledger">
+        <thead>
+          <tr><th class="col-date" id="ledger-date-head">Date</th><th id="ledger-description-head">Description</th><th class="col-cat" id="ledger-category-head">Category</th><th class="col-owner" id="ledger-owner-head">Owner</th><th class="col-remark" id="ledger-remark-head">Remarks</th><th class="col-amt" id="ledger-amount-head">Amount</th></tr>
+        </thead>
+        <tbody id="ledger-body"></tbody>
+      </table>
+      <div class="ledger-foot" id="ledger-foot"></div>
+    </div>
+  </section>
+
+  <footer class="foot" id="meta-foot"></footer>
+</main>
+
+<div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
+
+<div class="transaction-drawer-shell hidden" id="transaction-drawer-shell" aria-hidden="true">
+  <button class="transaction-drawer-backdrop" id="transaction-drawer-backdrop"
+    type="button" tabindex="-1" aria-label="Close transaction details"></button>
+  <aside class="transaction-drawer" id="transaction-drawer" role="dialog"
+    aria-modal="true" aria-labelledby="transaction-drawer-title">
+    <header class="transaction-drawer-head">
+      <div>
+        <span class="drawer-eyebrow" id="transaction-drawer-eyebrow">Transaction details</span>
+        <h2 id="transaction-drawer-title">Transaction</h2>
+      </div>
+      <button class="drawer-close" id="transaction-drawer-close" type="button"
+        aria-label="Close transaction details">×</button>
+    </header>
+    <div class="transaction-drawer-body" id="transaction-drawer-body"></div>
+  </aside>
+</div>
+
+<div class="audit-history-shell hidden" id="audit-history-shell" aria-hidden="true">
+  <button class="audit-history-backdrop" id="audit-history-backdrop"
+    type="button" tabindex="-1" aria-label="Close change history"></button>
+  <aside class="audit-history-panel" id="audit-history-panel" role="dialog"
+    aria-modal="true" aria-labelledby="audit-history-title">
+    <header class="audit-history-head">
+      <div>
+        <span class="drawer-eyebrow">Transaction changes</span>
+        <h2 id="audit-history-title">Audit history</h2>
+      </div>
+      <button class="drawer-close" id="audit-history-close" type="button"
+        aria-label="Close change history">×</button>
+    </header>
+    <div class="audit-history-intro">
+      New edits are recorded with their previous and updated values.
+      Decisions made before history was enabled have no reliable timestamp.
+    </div>
+    <div class="audit-history-list" id="audit-history-list" aria-live="polite"></div>
+  </aside>
+</div>
+
+<script src="js/charts.js?v=20260807-1"></script>
+<script src="js/insights.js?v=20260807-1"></script>
+<script src="js/transaction-grouping.js?v=20260807-1"></script>
+<script src="js/app.js?v=20260807-1"></script>
+</body>
+</html>
