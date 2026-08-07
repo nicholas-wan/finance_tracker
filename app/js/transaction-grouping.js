@@ -24,6 +24,53 @@
     return (MONTH_NAMES[parseInt(parts[1], 10) - 1] || parts[1]) + " " + parts[0];
   }
 
+  var CITY_SUFFIXES = ["SINGAPORE", "PETALING JAYA", "JOHOR BAHRU"];
+
+  // A statement line is cut to a fixed width, so the trailing city arrives
+  // truncated ("... SINGAPO", "... PETALING JAY") and the same merchant would
+  // otherwise split across group keys. Only a *prefix* of a known city is
+  // stripped, so SINGTEL, SINGLIFE and PLAZA SINGAPURA survive intact.
+  function matchesCitySuffix(tail, city) {
+    for (var i = 0; i < tail.length; i += 1) {
+      var word = city[i];
+      if (i < tail.length - 1) {
+        if (tail[i] !== word) return false;
+        continue;
+      }
+      // The final token is the truncated one. With no earlier city word to
+      // anchor it, demand four characters so a real word is not mistaken for
+      // a truncation; once "PETALING" has matched, "JAY" is unambiguous.
+      var minimum = i === 0 ? Math.min(4, word.length) : 1;
+      if (tail[i].length < minimum || word.indexOf(tail[i]) !== 0) return false;
+    }
+    return true;
+  }
+
+  function stripTrailingNoise(key) {
+    var tokens = key.split(" ").filter(Boolean);
+    var changed = true;
+    while (changed && tokens.length > 1) {
+      changed = false;
+      // Single letters are the leftovers of a word the statement cut short.
+      while (tokens.length > 1 && tokens[tokens.length - 1].length === 1) {
+        tokens.pop();
+        changed = true;
+      }
+      for (var i = 0; i < CITY_SUFFIXES.length && !changed; i += 1) {
+        var city = CITY_SUFFIXES[i].split(" ");
+        var longest = Math.min(city.length, tokens.length - 1);
+        for (var take = longest; take >= 1; take -= 1) {
+          if (matchesCitySuffix(tokens.slice(tokens.length - take), city)) {
+            tokens = tokens.slice(0, tokens.length - take);
+            changed = true;
+            break;
+          }
+        }
+      }
+    }
+    return tokens.join(" ");
+  }
+
   function merchantKey(description) {
     var key = String(description || "").toUpperCase();
     if (/^SUBSCRIPTIONGRAB(?:\*|\s|-|$)/.test(key)) return "GRAB SUBSCRIPTION";
@@ -34,7 +81,8 @@
     key = key.replace(/[0-9]{4,}/g, "");
     key = key.replace(/[^A-Z ]+/g, " ");
     key = key.replace(/\b(?:SINGAPORE|PETALING JAYA|JOHOR BAHRU)\b/g, " ");
-    return key.trim().replace(/\s+/g, " ") || String(description || "").toUpperCase().trim();
+    key = stripTrailingNoise(key.trim().replace(/\s+/g, " "));
+    return key || String(description || "").toUpperCase().trim();
   }
 
   function merchantLabel(transaction) {
@@ -221,8 +269,35 @@
     });
   }
 
+  // Most frequent name in the group, ties broken by sort order. Last-writer-wins
+  // made the visible label depend on row order, so the same group could be
+  // titled differently after an unrelated edit.
+  function dominantLabel(counts) {
+    return Object.keys(counts).sort(function (left, right) {
+      return counts[right] - counts[left] || left.localeCompare(right);
+    })[0] || null;
+  }
+
+  // Every row lands in exactly one bucket, so the parts always add up to count.
+  // Payment and rebate rows used to fall through all of them and render as
+  // "0 purchases" next to a large amount.
+  function groupCountLabel(group) {
+    function plural(value, noun) {
+      return value + " " + noun + (value === 1 ? "" : "s");
+    }
+    var parts = [];
+    if (group.purchaseCount) parts.push(plural(group.purchaseCount, "purchase"));
+    if (group.refundCount) parts.push(plural(group.refundCount, "refund"));
+    if (group.paymentCount) parts.push(plural(group.paymentCount, "payment"));
+    if (group.otherCount) parts.push(plural(group.otherCount, "row"));
+    if (!parts.length) parts.push(plural(group.count || 0, "row"));
+    return parts.join(" · ");
+  }
+
   function groupPurchases(rows) {
     var groups = {};
+    var displayNames = {};
+    var fallbackNames = {};
     rows.forEach(function (transaction) {
       var key = merchantKey(transaction.description) + "|" +
         transaction.category + "|" + transaction.owner;
@@ -235,23 +310,38 @@
           count: 0,
           purchaseCount: 0,
           refundCount: 0,
+          paymentCount: 0,
+          otherCount: 0,
           amount: 0,
           riskCount: 0
         };
+        displayNames[key] = {};
+        fallbackNames[key] = {};
       }
       var group = groups[key];
       group.count += 1;
       group.amount += signed(transaction);
       if (transaction.type === "debit") group.purchaseCount += 1;
       else if (transaction.type === "refund") group.refundCount += 1;
+      else if (transaction.type === "payment") group.paymentCount += 1;
+      else group.otherCount += 1;
       if (transaction.risk && !transaction.risk.recognized) group.riskCount += 1;
       if ((transaction.date || transaction.month) > group.lastDate) {
         group.lastDate = transaction.date || transaction.month;
       }
-      if (transaction.displayName) group.label = transaction.displayName;
+      if (transaction.displayName) {
+        displayNames[key][transaction.displayName] =
+          (displayNames[key][transaction.displayName] || 0) + 1;
+      } else {
+        var fallback = merchantLabel(transaction);
+        fallbackNames[key][fallback] = (fallbackNames[key][fallback] || 0) + 1;
+      }
     });
     return Object.keys(groups).map(function (key) {
       groups[key].amount = roundMoney(groups[key].amount);
+      // A name you set yourself outranks anything derived from statement text.
+      groups[key].label = dominantLabel(displayNames[key]) ||
+        dominantLabel(fallbackNames[key]) || groups[key].label;
       return groups[key];
     }).sort(function (left, right) {
       return Math.abs(right.amount) - Math.abs(left.amount) ||
@@ -259,24 +349,38 @@
     });
   }
 
+  // Both the summary panel and the table foot read from this, so the two
+  // surfaces can no longer disagree: netCost always excludes the excluded
+  // categories, and what was dropped is reported separately rather than
+  // silently folded into a second, differently-computed "net".
   function summarize(rows, excludedCategories) {
+    var excluded = excludedCategories || {};
     var result = {
       count: 0,
       netCost: 0,
+      excludedCount: 0,
+      excludedTotal: 0,
       categoryTotals: {},
       ownerTotals: {}
     };
     rows.forEach(function (transaction) {
-      if (excludedCategories[transaction.category]) return;
       var value = signed(transaction);
+      if (excluded[transaction.category]) {
+        result.excludedCount += 1;
+        result.excludedTotal += value;
+        return;
+      }
       result.count += 1;
       result.netCost += value;
       result.categoryTotals[transaction.category] =
         (result.categoryTotals[transaction.category] || 0) + value;
-      result.ownerTotals[transaction.owner] =
-        (result.ownerTotals[transaction.owner] || 0) + value;
+      // An owner outside the known set still needs a bucket; without one an
+      // undefined tag reads back as NaN and poisons every downstream total.
+      var owner = transaction.owner || "Untagged";
+      result.ownerTotals[owner] = (result.ownerTotals[owner] || 0) + value;
     });
     result.netCost = roundMoney(result.netCost);
+    result.excludedTotal = roundMoney(result.excludedTotal);
     Object.keys(result.categoryTotals).forEach(function (category) {
       result.categoryTotals[category] = roundMoney(result.categoryTotals[category]);
     });
@@ -299,6 +403,19 @@
       onToggle(active);
     });
     sync();
+    // The page needs to drive the toggle too — a drill-down that resets the
+    // other filters has to reset this one, and the closure state must follow
+    // or the next click would flip back to where it already was.
+    return {
+      isActive: function () { return active; },
+      set: function (value) {
+        var next = Boolean(value);
+        if (next === active) return false;
+        active = next;
+        sync();
+        return true;
+      }
+    };
   }
 
   function averageForMonths(rows, months, excludedCategories) {
@@ -578,6 +695,7 @@
     averageAccountSpending: averageAccountSpending,
     averageForMonths: averageForMonths,
     bindToggle: bindToggle,
+    groupCountLabel: groupCountLabel,
     groupPurchases: groupPurchases,
     groupAccountTransactions: groupAccountTransactions,
     merchantKey: merchantKey,

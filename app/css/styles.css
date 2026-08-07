@@ -1005,6 +1005,7 @@ body.drawer-open { overflow: hidden; }
   padding: 28px; color: var(--text-3); text-align: center; font-size: 12px;
 }
 .audit-loading { padding: 24px 0; color: var(--text-3); font-size: 12px; }
+.audit-truncated { padding: 0 0 12px; color: var(--text-3); font-size: 12px; }
 .toast {
   position: fixed; right: 20px; bottom: 20px; z-index: 50; max-width: min(420px, calc(100vw - 28px));
   border: 1px solid var(--green); border-radius: 10px; background: var(--surface);

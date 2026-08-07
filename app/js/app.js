@@ -20,6 +20,9 @@
   var data = null;
   var account = { transactions: [], months: [] };
   var accountReviewedIds = {};
+  // Handle returned by bindToggle, so a drill-down can reset the grouping
+  // toggle's own closure state and not just the flag on `state`.
+  var groupToggle = null;
   var editor = {
     available: false,
     toastTimer: null,
@@ -49,6 +52,11 @@
     showExcluded: false,
     groupPurchases: false,
     reviewMode: null,
+    // Exact id set behind an insight drill-down, so the rows opened are the
+    // same rows the insight counted. null means no id filter is active.
+    idFilter: null,
+    idFilterLabel: "",
+    idFilterCount: 0,
     ledgerLimit: LEDGER_CAP,
     period: { mode: "month", year: null, month: null }
   };
@@ -768,7 +776,7 @@
       minute: "2-digit"
     });
   }
-  function renderAuditHistory(entries) {
+  function renderAuditHistory(entries, total) {
     var list = document.getElementById("audit-history-list");
     clear(list);
     if (!entries.length) {
@@ -778,6 +786,14 @@
         "No recorded changes yet. The next transaction edit will appear here."
       ));
       return;
+    }
+    // The server caps its response at the most recent 250 entries but reports
+    // the true count. Without this the panel silently looks like the whole
+    // history.
+    var recorded = Number(total);
+    if (recorded > entries.length) {
+      list.appendChild(el("div", "audit-truncated",
+        "Showing last " + entries.length + " of " + recorded + " edits."));
     }
     entries.forEach(function (entry) {
       var item = el("article", "audit-entry");
@@ -842,7 +858,7 @@
     window.requestAnimationFrame(function () { shell.classList.add("is-open"); });
     document.getElementById("audit-history-close").focus();
     loadJson("api/audit-history?updated=" + Date.now()).then(function (history) {
-      renderAuditHistory(history.entries || []);
+      renderAuditHistory(history.entries || [], history.total);
     }).catch(function (error) {
       clear(list);
       list.appendChild(el("div", "audit-empty", "Change history could not be loaded."));
@@ -958,7 +974,12 @@
     } else {
       data.transactions.forEach(function (t) { values[t.category] = true; });
     }
-    ["All"].concat(Object.keys(values).sort()).forEach(function (value) {
+    var options = ["All"].concat(Object.keys(values).sort());
+    // Recategorizing the last row of a category retires that category. Keep the
+    // current selection when it still exists, otherwise fall back to "All" so
+    // the control never points at a filter that can match nothing.
+    if (options.indexOf(state.category) === -1) state.category = "All";
+    options.forEach(function (value) {
       var option = document.createElement("option");
       option.value = value;
       option.textContent = value === "All"
@@ -994,6 +1015,9 @@
     state.transactionSource = source;
     state.category = "All";
     state.reviewMode = null;
+    // Card and bank rows have separate id spaces, so an insight drill-down
+    // cannot survive the switch.
+    setIdFilter(null);
     state.ledgerLimit = LEDGER_CAP;
     var months = transactionMonths();
     if (state.period.mode === "month") {
@@ -1040,6 +1064,12 @@
     state.search = options.search || "";
     state.reviewMode = options.reviewMode || null;
     state.showExcluded = false;
+    setIdFilter(options.ids, options.filterLabel);
+    // Grouping is a view mode like any other filter here: a drill-down that
+    // resets owner, category, search and review must reset it too, or the
+    // rows the caller asked for arrive collapsed into merchant groups.
+    state.groupPurchases = false;
+    if (groupToggle) groupToggle.set(false);
     state.period = options.period || {
       mode: "month",
       year: month.slice(0, 4),
@@ -1054,6 +1084,32 @@
     renderPeriod();
     renderLedger();
     setTab("transactions");
+  }
+
+  function setIdFilter(ids, label) {
+    if (!ids || !ids.length) {
+      state.idFilter = null;
+      state.idFilterLabel = "";
+      state.idFilterCount = 0;
+    } else {
+      var map = {};
+      ids.forEach(function (id) { map[id] = true; });
+      state.idFilter = map;
+      state.idFilterLabel = label || "Selected transactions";
+      state.idFilterCount = Object.keys(map).length;
+    }
+    syncIdFilterChip();
+  }
+
+  function syncIdFilterChip() {
+    var chip = document.getElementById("insight-filter-chip");
+    if (!chip) return;
+    var active = Boolean(state.idFilter);
+    chip.classList.toggle("hidden", !active);
+    if (!active) return;
+    chip.textContent = state.idFilterLabel + " · " + state.idFilterCount + " ✕";
+    chip.title = "Showing the exact transactions behind this insight. " +
+      "Click to clear.";
   }
 
   function openReview(options) {
@@ -1445,6 +1501,19 @@
 
   function insightAction(item) {
     var title = item.title || "";
+    // An insight that counted specific rows opens exactly those rows. The old
+    // free-text fallback searched for a display alias that never appears in
+    // statement text, so the drill-down under-matched its own headline count.
+    if (item.ids && item.ids.length) {
+      return function () {
+        openTransactions({
+          month: state.month,
+          ids: item.ids,
+          filterLabel: item.filterLabel || title,
+          period: { mode: "all", year: state.period.year, month: state.period.month }
+        });
+      };
+    }
     var categories = [
       "Food & dining", "Transport", "Shopping", "Games", "Insurance",
       "Subscriptions", "Groceries", "Healthcare", "Travel"
@@ -2224,6 +2293,7 @@
 
   function matchesLedgerFilters(t, ignorePeriod) {
     var q = state.search.trim().toLowerCase();
+    if (state.idFilter && !state.idFilter[t.id]) return false;
     if (!ignorePeriod && !inPeriod(t)) return false;
     if (!state.showExcluded && EXCLUDED[t.category]) return false;
     if (state.owner !== "All" && t.owner !== state.owner) return false;
@@ -2333,6 +2403,19 @@
     });
     comparison.appendChild(grid);
     headline.appendChild(comparison);
+  }
+
+  // The summary panel and the table foot have to agree, so both read the same
+  // figure from the same call: "Net cost" always drops Payment and Rebates.
+  // With "show excluded" on, what those rows contribute is reported beside it
+  // instead of being silently folded into a second, differently-signed "Net".
+  function appendLedgerNet(foot, rows) {
+    var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
+    var text = "Net cost " + fmt(totals.netCost);
+    if (totals.excludedCount) {
+      text += " · excluded rows " + fmt(totals.excludedTotal);
+    }
+    foot.appendChild(el("span", "", text));
   }
 
   function renderTransactionSummary(rows) {
@@ -2730,11 +2813,8 @@
       owner.appendChild(el("span", "owner-tag",
         group.owner === "Untagged" ? "—" : group.owner));
       tr.appendChild(owner);
-      var countText = group.purchaseCount + " purchase" +
-        (group.purchaseCount === 1 ? "" : "s");
-      if (group.refundCount) countText += " · " + group.refundCount + " refund" +
-        (group.refundCount === 1 ? "" : "s");
-      tr.appendChild(el("td", "col-remark grouped-count", countText));
+      tr.appendChild(el("td", "col-remark grouped-count",
+        window.FinanceGrouping.groupCountLabel(group)));
       tr.appendChild(el("td", "col-amt" + (group.amount < 0 ? " credit" : ""),
         fmt(group.amount)));
       body.appendChild(tr);
@@ -2746,7 +2826,6 @@
       emptyRow.appendChild(emptyCell);
       body.appendChild(emptyRow);
     }
-    var net = rows.reduce(function (total, t) { return total + signed(t); }, 0);
     var foot = document.getElementById("ledger-foot");
     clear(foot);
     var shown = Math.min(groups.length, state.ledgerLimit);
@@ -2763,7 +2842,7 @@
       });
       foot.appendChild(more);
     }
-    foot.appendChild(el("span", "", "Grouped net " + fmt(net)));
+    appendLedgerNet(foot, rows);
     document.getElementById("ledger-hint").textContent = periodLabel() +
       " · grouped by merchant";
   }
@@ -2851,8 +2930,6 @@
       tr.appendChild(td);
       body.appendChild(tr);
     }
-    var net = 0;
-    rows.forEach(function (t) { net += signed(t); });
     var foot = document.getElementById("ledger-foot");
     clear(foot);
     var left = rows.length + " transaction" + (rows.length === 1 ? "" : "s");
@@ -2868,7 +2945,7 @@
       });
       foot.appendChild(more);
     }
-    foot.appendChild(el("span", "", "Net " + fmt(net)));
+    appendLedgerNet(foot, rows);
     document.getElementById("ledger-hint").textContent = periodLabel() +
       (state.reviewMode === "lady-unconfirmed" ? " · Lady card needs confirmation" : "") +
       (state.reviewMode === "delivery-rides" ? " · Grab + Foodpanda" : "");
@@ -2889,6 +2966,9 @@
     renderInsights();
     renderCategories();
     renderOutflows();
+    // An edit can retire a category or introduce a new one, so the filter
+    // options are rebuilt here rather than only on load.
+    populateTransactionCategoryFilter();
     renderLedger();
     renderIncome();
     renderGames();
@@ -3064,9 +3144,23 @@
       renderLedger();
     });
 
-    document.getElementById("search").addEventListener("input", function (e) {
+    var searchInput = document.getElementById("search");
+    var chip = el("button", "pill active hidden", "");
+    chip.id = "insight-filter-chip";
+    chip.type = "button";
+    chip.addEventListener("click", function () {
+      setIdFilter(null);
+      state.ledgerLimit = LEDGER_CAP;
+      renderLedger();
+    });
+    searchInput.parentNode.insertBefore(chip, searchInput.nextSibling);
+
+    searchInput.addEventListener("input", function (e) {
       state.search = e.target.value;
       state.reviewMode = null;
+      // Searching means you want the whole ledger back, not a subset of an
+      // insight's rows; drop the id filter rather than silently intersect.
+      setIdFilter(null);
       state.ledgerLimit = LEDGER_CAP;
       renderLedger();
     });
@@ -3095,7 +3189,7 @@
     document.addEventListener("click", closePeriod);
     var groupButton = document.getElementById("group-purchases-button");
     var groupLabel = document.getElementById("group-purchases-label");
-    window.FinanceGrouping.bindToggle(groupButton, groupLabel, function (active) {
+    groupToggle = window.FinanceGrouping.bindToggle(groupButton, groupLabel, function (active) {
       state.groupPurchases = active;
       state.ledgerLimit = LEDGER_CAP;
       syncTransactionSourceControls();

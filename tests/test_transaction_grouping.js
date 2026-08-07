@@ -476,3 +476,226 @@ test("every statement month and all-time conserve net cost when grouped", functi
     });
   });
 });
+
+// ---------- Merchant key: truncated city suffixes ----------
+// A statement line is cut to a fixed width, so the trailing city arrives
+// chopped and the same merchant used to split across group keys. Synthetic
+// descriptors only.
+
+test("truncated Singapore suffixes collapse into one merchant", function () {
+  var rows = [
+    transaction({ description: "NORTHFIELD BAKERY SINGAPORE", category: "Food & dining" }),
+    transaction({ description: "NORTHFIELD BAKERY SINGAPO", category: "Food & dining" }),
+    transaction({ description: "NORTHFIELD BAKERY SINGAP", category: "Food & dining" }),
+    transaction({ description: "NORTHFIELD BAKERY SING", category: "Food & dining" }),
+    transaction({ description: "NORTHFIELD BAKERY J", category: "Food & dining" })
+  ];
+  var result = grouping.groupPurchases(rows);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].count, 5);
+  assert.equal(grouping.merchantKey("NORTHFIELD BAKERY SINGAPO"), "NORTHFIELD BAKERY");
+});
+
+test("truncated Malaysian city suffixes collapse into one merchant", function () {
+  var rows = [
+    transaction({ description: "LANTERN GRILL PETALING JAYA" }),
+    transaction({ description: "LANTERN GRILL PETALING JAY" }),
+    transaction({ description: "LANTERN GRILL PETALIN" }),
+    transaction({ description: "LANTERN GRILL JOHOR BAHRU" }),
+    transaction({ description: "LANTERN GRILL JOHOR BAHR" }),
+    transaction({ description: "LANTERN GRILL JOHOR" })
+  ];
+  var result = grouping.groupPurchases(rows);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].count, 6);
+});
+
+test("words that merely start like a city are not treated as truncations", function () {
+  var rows = [
+    transaction({ description: "AURORA SINGTEL", category: "Bills & utilities" }),
+    transaction({ description: "AURORA SINGLIFE", category: "Bills & utilities" }),
+    transaction({ description: "AURORA SINGAPURA", category: "Bills & utilities" }),
+    transaction({ description: "AURORA BAHRU", category: "Bills & utilities" }),
+    transaction({ description: "AURORA", category: "Bills & utilities" })
+  ];
+  assert.equal(grouping.groupPurchases(rows).length, 5);
+});
+
+test("stripping a city suffix never empties the merchant key", function () {
+  assert.equal(grouping.merchantKey("SINGAPO"), "SINGAPO");
+  assert.equal(grouping.merchantKey("J"), "J");
+  assert.equal(grouping.merchantKey("HARBOUR DELI J J"), "HARBOUR DELI");
+});
+
+test("no live merchant key keeps a truncated city or stray letter tail", function () {
+  var data = require("../app/data/transactions.json");
+  var keys = {};
+  data.transactions.forEach(function (row) {
+    var key = grouping.merchantKey(row.description);
+    assert.ok(key.length > 0, "a merchant key should never be empty");
+    // A descriptor the normalizer consumes entirely falls back to its raw
+    // text, which is deliberately left untouched — nothing else is left to
+    // group on. Those rows are outside what the suffix trimming governs.
+    if (key !== String(row.description).toUpperCase().trim()) keys[key] = true;
+  });
+  assert.ok(Object.keys(keys).length > 100, "the live file should exercise this");
+  ["SINGAPORE", "PETALING", "JOHOR"].forEach(function (city) {
+    Object.keys(keys).forEach(function (key) {
+      var tokens = key.split(" ");
+      if (tokens.length < 2) return;
+      var last = tokens[tokens.length - 1];
+      assert.notEqual(last.length, 1, "stray letter tail should be trimmed: " + key);
+      assert.ok(last.length < 4 || city.indexOf(last) !== 0,
+        "truncated city tail should be trimmed: " + key);
+    });
+  });
+});
+
+// ---------- Grouped row counts ----------
+
+test("a payment group is counted as payments, not zero purchases", function () {
+  var groups = grouping.groupPurchases([
+    transaction({ description: "CARD PAYMENT THANK YOU", category: "Payment",
+      type: "payment", amount: 900 }),
+    transaction({ description: "CARD PAYMENT THANK YOU", category: "Payment",
+      type: "payment", amount: 400, date: "2026-07-05" })
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].count, 2);
+  assert.equal(groups[0].purchaseCount, 0);
+  assert.equal(groups[0].paymentCount, 2);
+  assert.equal(grouping.groupCountLabel(groups[0]), "2 payments");
+});
+
+test("grouped count parts always add up to the group count", function () {
+  var groups = grouping.groupPurchases([
+    transaction({ amount: 30 }),
+    transaction({ type: "refund", amount: 5, date: "2026-07-02" }),
+    transaction({ type: "payment", amount: 100, date: "2026-07-03" }),
+    transaction({ type: "rebate", amount: 2, date: "2026-07-04" })
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].count, 4);
+  assert.equal(groups[0].purchaseCount + groups[0].refundCount +
+    groups[0].paymentCount + groups[0].otherCount, groups[0].count);
+  assert.equal(grouping.groupCountLabel(groups[0]),
+    "1 purchase · 1 refund · 1 payment · 1 row");
+});
+
+test("a group with no typed rows falls back to its own count", function () {
+  assert.equal(grouping.groupCountLabel({ count: 70 }), "70 rows");
+  assert.equal(grouping.groupCountLabel({ count: 1 }), "1 row");
+});
+
+test("every live grouped label accounts for all of its rows", function () {
+  var data = require("../app/data/transactions.json");
+  grouping.groupPurchases(data.transactions).forEach(function (group) {
+    assert.equal(group.purchaseCount + group.refundCount +
+      group.paymentCount + group.otherCount, group.count);
+    assert.ok(!/^0 /.test(grouping.groupCountLabel(group)),
+      "a group should never report zero of anything as its whole label");
+  });
+});
+
+// ---------- Excluded rows are reported, never re-netted ----------
+
+test("summary reports excluded rows separately from net cost", function () {
+  var result = grouping.summarize([
+    transaction({ category: "Food & dining", amount: 20 }),
+    transaction({ category: "Food & dining", type: "refund", amount: 5 }),
+    transaction({ category: "Payment", type: "payment", amount: 100 }),
+    transaction({ category: "Rebates", type: "rebate", amount: 3 })
+  ], { Payment: true, Rebates: true });
+  assert.equal(result.count, 2);
+  assert.equal(result.netCost, 15);
+  assert.equal(result.excludedCount, 2);
+  assert.equal(result.excludedTotal, -103);
+});
+
+test("net cost plus excluded rows reconciles to every visible row", function () {
+  var data = require("../app/data/transactions.json");
+  var excluded = { Payment: true, Rebates: true };
+  data.months.concat(["all"]).forEach(function (period) {
+    var rows = data.transactions.filter(function (row) {
+      return period === "all" || row.month === period;
+    });
+    var totals = grouping.summarize(rows, excluded);
+    var everyRow = Math.round(rows.reduce(function (sum, row) {
+      return sum + (row.type === "debit" ? row.amount : -row.amount);
+    }, 0) * 100) / 100;
+    assert.equal(totals.count + totals.excludedCount, rows.length, period);
+    assert.equal(Math.round((totals.netCost + totals.excludedTotal) * 100) / 100,
+      everyRow, period + " net cost plus excluded rows should cover the view");
+  });
+});
+
+test("an owner outside the known set still gets a bucket", function () {
+  var result = grouping.summarize([
+    transaction({ owner: undefined, category: "Food & dining", amount: 10 }),
+    transaction({ owner: "", category: "Food & dining", amount: 5 })
+  ], {});
+  assert.equal(result.ownerTotals.Untagged, 15);
+  assert.ok(!Number.isNaN(result.ownerTotals.Untagged));
+  assert.equal(Object.keys(result.ownerTotals).length, 1);
+});
+
+// ---------- Deterministic grouped label ----------
+
+test("the grouped label is the most frequent name, not the last one written", function () {
+  var rows = [
+    transaction({ description: "BRIGHTON CAFE SINGAPORE", displayName: "Brighton Cafe" }),
+    transaction({ description: "BRIGHTON CAFE SINGAPO", displayName: "Brighton Cafe",
+      date: "2026-07-02" }),
+    transaction({ description: "BRIGHTON CAFE SING", displayName: "Brighton Cafe (old)",
+      date: "2026-07-03" })
+  ];
+  assert.equal(grouping.groupPurchases(rows)[0].label, "Brighton Cafe");
+  assert.equal(grouping.groupPurchases(rows.slice().reverse())[0].label, "Brighton Cafe");
+});
+
+test("a tied grouped label resolves the same way in either row order", function () {
+  var rows = [
+    transaction({ description: "ZEPHYR MART SINGAPORE", displayName: "Zephyr Mart" }),
+    transaction({ description: "ZEPHYR MART SINGAPO", displayName: "Alpha Mart",
+      date: "2026-07-02" })
+  ];
+  assert.equal(grouping.groupPurchases(rows)[0].label, "Alpha Mart");
+  assert.equal(grouping.groupPurchases(rows.slice().reverse())[0].label, "Alpha Mart");
+});
+
+test("a name you set outranks one derived from statement text", function () {
+  var rows = [
+    transaction({ description: "HARBOUR DELI SINGAPORE" }),
+    transaction({ description: "HARBOUR DELI SINGAPO", date: "2026-07-02" }),
+    transaction({ description: "HARBOUR DELI SING", displayName: "Harbour Deli",
+      date: "2026-07-03" })
+  ];
+  assert.equal(grouping.groupPurchases(rows)[0].label, "Harbour Deli");
+});
+
+// ---------- Toggle can be driven by the page ----------
+
+test("the page can reset the toggle without firing its callback", function () {
+  var listeners = {};
+  var attributes = {};
+  var button = {
+    addEventListener: function (name, callback) { listeners[name] = callback; },
+    classList: { toggle: function () {} },
+    setAttribute: function (name, value) { attributes[name] = value; }
+  };
+  var label = { textContent: "" };
+  var states = [];
+  var handle = grouping.bindToggle(button, label, function (active) {
+    states.push(active);
+  }, false);
+  listeners.click();
+  assert.equal(handle.isActive(), true);
+  assert.equal(handle.set(false), true);
+  assert.equal(handle.isActive(), false);
+  assert.equal(label.textContent, "Group purchases");
+  assert.equal(attributes["aria-pressed"], "false");
+  assert.deepEqual(states, [true], "resetting must not re-enter the callback");
+  assert.equal(handle.set(false), false, "resetting an off toggle is a no-op");
+  listeners.click();
+  assert.deepEqual(states, [true, true], "the next click turns grouping back on");
+});

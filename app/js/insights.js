@@ -201,14 +201,21 @@ window.Insights = (function () {
     spendable(data.transactions).forEach(function (t) {
       if (last12.indexOf(t.month) === -1 || t.type !== "debit") return;
       var k = merchantKey(t.description);
-      if (!byMerchant[k]) byMerchant[k] = { total: 0, count: 0, months: {} };
+      if (!byMerchant[k]) byMerchant[k] = { total: 0, count: 0, months: {}, ids: [] };
       byMerchant[k].total += t.amount;
       byMerchant[k].count += 1;
       byMerchant[k].months[t.month] = true;
+      // The display alias ("Foodpanda", "Bus and MRT") never appears in the
+      // statement text, so a free-text drill-down found only a fraction of
+      // these rows. Carry the matched ids and filter on them exactly.
+      byMerchant[k].ids.push(t.id);
     });
     var habits = Object.keys(byMerchant).map(function (k) {
       var m = byMerchant[k];
-      return { name: k, total: m.total, count: m.count, months: Object.keys(m.months).length };
+      return {
+        name: k, total: m.total, count: m.count,
+        months: Object.keys(m.months).length, ids: m.ids
+      };
     }).filter(function (h) { return h.months >= 6 && h.count >= 12; });
     habits.sort(function (a, b) { return b.total - a.total; });
     habits.slice(0, 3).forEach(function (h) {
@@ -219,6 +226,8 @@ window.Insights = (function () {
         title: h.name + ": " + money(h.total) + " over 12 months",
         detail: h.count + " charges averaging " + money(h.total / h.count) + ", about " +
           money(h.total / 12) + " a month.",
+        ids: h.ids,
+        filterLabel: h.name,
       });
     });
 
@@ -295,6 +304,8 @@ window.Insights = (function () {
           scope: "monthly",
           title: "Largest charge: " + money(biggest.amount) + " at " + merchantKey(biggest.description),
           detail: biggest.description + " on " + (biggest.date || currentMonth) + ", filed under " + biggest.category + ".",
+          ids: [biggest.id],
+          filterLabel: merchantKey(biggest.description),
         });
       }
     }
