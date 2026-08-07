@@ -168,8 +168,15 @@
   var TRUSTED_COUNTERPARTIES = [
     "PARTNER FULL NAME",
     "Yx",
+    "Mei",
     "Design 4 Space"
   ];
+
+  // Everyday-sized outgoing movements repeat legitimately - two S$25 PayNow
+  // splits at dinner are not a double-charge. Identical same-day outflows
+  // below this amount stay quiet unless there are many of them.
+  var SMALL_OUTFLOW_AMOUNT = 50.0;
+  var SMALL_OUTFLOW_MAX_COUNT = 3;
 
   function accountTrustedCounterparty(counterparty) {
     var name = String(counterparty || "").toLowerCase();
@@ -227,8 +234,10 @@
       var duplicateKey = [transaction.date, counterparty, transaction.direction,
         Number(transaction.amount).toFixed(2)].join("|");
       var matching = duplicates[duplicateKey] || [];
-      if (transaction.direction !== "deposit" && matching.length > 1 &&
-          transaction.amount * matching.length >= 40) {
+      var smallRoutineOutflow = transaction.amount < SMALL_OUTFLOW_AMOUNT &&
+        matching.length <= SMALL_OUTFLOW_MAX_COUNT;
+      if (transaction.direction !== "deposit" && !smallRoutineOutflow &&
+          matching.length > 1 && transaction.amount * matching.length >= 40) {
         reasons.push(matching.length + " identical same-day bank movements");
         checks.push("possible-duplicate");
       }

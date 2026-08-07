@@ -412,13 +412,48 @@ test("trusted counterparties skip amount checks but keep integrity checks", func
   assert.ok(unverified.a.checks.includes("unverified-source"));
 });
 
+test("small routine outflow duplicates stay quiet until there are many", function () {
+  function rows(count, amount) {
+    var list = [];
+    for (var index = 0; index < count; index += 1) {
+      list.push({
+        id: "s" + index, month: "2026-07", date: "2026-07-05",
+        description: "PAYNOW-FAST DINNER FRIEND OTHR Transfer - Mobile",
+        flow: "Transfer", direction: "withdrawal", amount: amount,
+        provenance: { sourceFile: "JUL.pdf", page: 1, line: index + 1, verified: true }
+      });
+    }
+    return list;
+  }
+  // Two S$25 same-day transfers: everyday splitting, no flag.
+  var pair = grouping.analyzeAccountTransactions(rows(2, 25), {});
+  assert.equal(pair.s0.requiresReview, false);
+  // Four identical small ones exceed the small-quantity allowance.
+  var burst = grouping.analyzeAccountTransactions(rows(4, 25), {});
+  assert.ok(burst.s0.checks.includes("possible-duplicate"));
+  // Two S$60 duplicates are above the small-outflow amount and still flag.
+  var large = grouping.analyzeAccountTransactions(rows(2, 60), {});
+  assert.ok(large.s0.checks.includes("possible-duplicate"));
+});
+
+test("Mei is a trusted counterparty", function () {
+  var result = grouping.analyzeAccountTransactions([{
+    id: "m1", month: "2026-07", date: "2026-07-15",
+    description: "PAYNOW-FAST PIB2503305595567963 Mei OTHR SOMEONE",
+    flow: "Transfer", direction: "withdrawal", amount: 800,
+    provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
+  }], {});
+  assert.equal(result.m1.requiresReview, false);
+});
+
 test("incoming transfer duplicates stay quiet, outgoing still flag", function () {
+  // Amount sits above the small-outflow allowance so only direction differs.
   function pair(direction) {
     return ["p", "q"].map(function (id) {
       return {
         id: direction + id, month: "2026-07", date: "2026-07-04",
         description: "PAYNOW-FAST SAME PERSON OTHR Transfer - Mobile",
-        flow: "Transfer", direction: direction, amount: 30,
+        flow: "Transfer", direction: direction, amount: 75,
         provenance: { sourceFile: "JUL.pdf", page: 1,
           line: id === "p" ? 1 : 2, verified: true }
       };
