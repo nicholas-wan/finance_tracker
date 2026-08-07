@@ -36,8 +36,10 @@ node --test tests/*.js
 Parsing fails closed: an unreadable row, unreconciled card section, contradictory
 amount, or broken balance chain aborts the run without replacing generated data.
 Validation checks stable IDs, dates, provenance, account continuity, manual
-references, and source-to-dashboard totals. Use `validate_data.py --strict` to also
-fail on unresolved categories, ownership, provenance, or suspicious checks.
+references, and source-to-dashboard totals. Audit history is exempt from reference
+checks because history may outlive the rows it describes. Use `validate_data.py
+--strict` to also fail on unresolved categories, ownership, provenance, or
+suspicious checks.
 
 Statement months come from PDF contents. Importing a second source for an existing
 month is rejected, while legitimate identical transactions within a statement are
@@ -56,13 +58,17 @@ review-status filters.
   counterparty; transfers and internal movements can be hidden.
 - **Review transaction** opens the exact bank row needing attention. Review prompts
   explain their reason and are not fraud verdicts. Decisions are saved and audited.
+  Recognition is per signal, not per transaction: a new kind of alert on an already
+  recognized transaction re-surfaces. Card checks net refunds against charges within
+  a week per merchant before flagging.
 - Opening any transaction shows its original statement description and provenance.
   Card transactions also support display-name, category, owner, and remark edits.
 - **History** shows recorded manual changes.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
-renames or extraction line shifts do not detach decisions. Saves and generated-data
-rebuilds are atomic and roll back if validation fails.
+renames or extraction line shifts do not detach decisions (replacing a CSV source
+with an equivalent PDF is the one change that still re-mints IDs). Saves and
+generated-data rebuilds are atomic and roll back if validation fails.
 
 ## Accounting rules
 
@@ -83,6 +89,9 @@ rebuilds are atomic and roll back if validation fails.
 - Salary history: `manual/salary.json`
 - Game-account sales: `manual/game_sales.json`
 - Owner-policy preview: `python scripts/assign_unassigned.py` (add `--apply` to save)
+- Suspicious-check thresholds: documented constants at the top of
+  `scripts/risk_checks.py` (card) and in `analyzeAccountTransactions` in
+  `app/js/transaction-grouping.js` (bank)
 
 ## Project layout
 
