@@ -336,11 +336,13 @@ def main():
         key=lambda t: (t["month"], t["date"] or "", t["description"], t["id"])
     )
 
-    risk_reviews = manual("risk_reviews.json", {"recognizedIds": []})
+    # Recognition is stored per signal (rows + checks that fired), so a new
+    # reason on an already-acknowledged transaction surfaces again.
+    risk_reviews = manual("risk_reviews.json", {"recognizedSignals": []})
     risk_summary = detect_risks(
         transactions,
         merchant_key,
-        risk_reviews.get("recognizedIds", []),
+        risk_reviews.get("recognizedSignals", []),
     )
 
     months = sorted({t["month"] for t in transactions})

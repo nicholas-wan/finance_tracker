@@ -38,25 +38,85 @@ class OwnerApiValidationTests(unittest.TestCase):
                 {"id": "tx_abc123", "owner": "Everyone"}, self.transactions
             )
 
-    def test_accepts_current_risk_group(self):
-        transactions = {
-            "tx_a": {
-                "id": "tx_a",
-                "risk": {"groupIds": ["tx_a", "tx_b"]},
-            },
-            "tx_b": {"id": "tx_b"},
+    def risk_transactions(self, key=None, checks=("same-day-duplicate",)):
+        key = key or ("a" * 64)
+        risk = {
+            "key": key,
+            "groupIds": ["tx_a", "tx_b"],
+            "checks": list(checks),
         }
+        return {
+            "tx_a": {"id": "tx_a", "risk": dict(risk, primary=True)},
+            "tx_b": {"id": "tx_b", "risk": dict(risk, primary=False)},
+        }
+
+    def test_accepts_current_risk_group(self):
         result = serve.validate_risk_review_request(
             {"ids": ["tx_b", "tx_a"], "recognized": True},
-            transactions,
+            self.risk_transactions(),
         )
-        self.assertEqual(result, (["tx_a", "tx_b"], True))
+        self.assertEqual(
+            result, (["tx_a", "tx_b"], True, "a" * 64, ["same-day-duplicate"])
+        )
+
+    def test_accepts_a_matching_signal_key(self):
+        result = serve.validate_risk_review_request(
+            {"ids": ["tx_a", "tx_b"], "recognized": False, "key": "a" * 64},
+            self.risk_transactions(),
+        )
+        self.assertEqual(result[1], False)
+        self.assertEqual(result[2], "a" * 64)
+
+    def test_rejects_a_stale_signal_key(self):
+        # The rows still form a group, but the checks that fired have changed,
+        # so acknowledging the decision the page was showing would acknowledge
+        # a reason the user never saw.
+        with self.assertRaisesRegex(ValueError, "changed since this page loaded"):
+            serve.validate_risk_review_request(
+                {"ids": ["tx_a", "tx_b"], "recognized": True, "key": "b" * 64},
+                self.risk_transactions(),
+            )
+
+    def test_rejects_a_malformed_signal_key(self):
+        with self.assertRaisesRegex(ValueError, "malformed"):
+            serve.validate_risk_review_request(
+                {"ids": ["tx_a", "tx_b"], "recognized": True, "key": "nope"},
+                self.risk_transactions(),
+            )
+
+    def test_rejects_a_partial_group(self):
+        with self.assertRaisesRegex(ValueError, "not present"):
+            serve.validate_risk_review_request(
+                {"ids": ["tx_a"], "recognized": True},
+                self.risk_transactions(),
+            )
 
     def test_rejects_non_risk_group(self):
         with self.assertRaisesRegex(ValueError, "not present"):
             serve.validate_risk_review_request(
                 {"ids": ["tx_abc123"], "recognized": True},
                 self.transactions,
+            )
+
+    def test_rejects_a_group_without_a_signal_key(self):
+        transactions = {
+            "tx_a": {"id": "tx_a", "risk": {"groupIds": ["tx_a"]}},
+        }
+        with self.assertRaisesRegex(ValueError, "not present"):
+            serve.validate_risk_review_request(
+                {"ids": ["tx_a"], "recognized": True}, transactions
+            )
+
+    def test_accepts_current_account_review(self):
+        result = serve.validate_account_review_request(
+            {"id": "tx_abc123", "reviewed": True}, self.transactions
+        )
+        self.assertEqual(result, ("tx_abc123", True))
+
+    def test_rejects_missing_account_review_transaction(self):
+        with self.assertRaisesRegex(ValueError, "not present"):
+            serve.validate_account_review_request(
+                {"id": "tx_missing", "reviewed": True}, self.transactions
             )
 
     def test_accepts_trimmed_remark(self):

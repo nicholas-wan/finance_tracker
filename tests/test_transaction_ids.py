@@ -26,6 +26,7 @@ SCRIPTS = ROOT / "scripts"
 FIXTURES = Path(__file__).resolve().parent / "fixtures"
 sys.path.insert(0, str(SCRIPTS))
 
+risk_checks = importlib.import_module("risk_checks")
 parse_cc = importlib.import_module("parse_cc")
 parse_one = importlib.import_module("parse_one")
 validate_data = importlib.import_module("validate_data")
@@ -55,7 +56,9 @@ def parse_card(text, filename):
 
 def parse_account(text, filename):
     with patch.object(parse_one, "PdfReader", return_value=FakeReader(text)):
-        return parse_one.parse_pdf(filename)
+        # The trailing element is the printed BALANCE B/F anchor; these tests
+        # are about IDs, so they keep the original four-part shape.
+        return parse_one.parse_pdf(filename)[:4]
 
 
 class SourceIndependentIdTests(unittest.TestCase):
@@ -226,7 +229,8 @@ def synthetic_tree(root, overrides=None, remarks=None, recognized=None, audit=No
     write(os.path.join(manual_dir, "transaction_overrides.json"),
           {"overridesById": overrides or {}})
     write(os.path.join(manual_dir, "transaction_remarks.json"), {"remarksById": remarks or {}})
-    write(os.path.join(manual_dir, "risk_reviews.json"), {"recognizedIds": recognized or []})
+    write(os.path.join(manual_dir, "risk_reviews.json"),
+          {"recognizedSignals": recognized or []})
     write(os.path.join(manual_dir, "audit_history.json"), {"entries": audit or []})
     return data_dir, manual_dir
 
@@ -245,6 +249,18 @@ def run_validate(root):
         except SystemExit:
             failed = True
     return failed, stdout.getvalue()
+
+
+def recognized_signal(ids, checks=("same-day-duplicate",)):
+    """A stored acknowledgement, keyed the way the detector keys signals."""
+    ids = sorted(ids)
+    checks = list(checks)
+    return {
+        "key": risk_checks.signal_key(ids, checks),
+        "ids": ids,
+        "checks": checks,
+        "recognizedAt": "2026-06-12T00:00:00+08:00",
+    }
 
 
 class OrphanDetectionTests(unittest.TestCase):
@@ -271,11 +287,42 @@ class OrphanDetectionTests(unittest.TestCase):
 
     def test_dangling_recognized_risk_id_is_an_error(self):
         with tempfile.TemporaryDirectory() as tmp:
-            synthetic_tree(tmp, recognized=["tx_goneaway000000000003"])
+            synthetic_tree(tmp, recognized=[
+                recognized_signal(["tx_goneaway000000000003"])])
             failed, output = run_validate(tmp)
         self.assertTrue(failed)
         self.assertIn(
-            "recognized transaction check tx_goneaway000000000003 no longer matches", output)
+            "names unknown transaction tx_goneaway000000000003", output)
+
+    def test_a_retired_signal_warns_rather_than_failing(self):
+        # Tuning a check legitimately stops it firing. The acknowledgement is
+        # then dead weight, worth reporting but not worth failing the build -
+        # failing would push the user towards deleting their own decisions.
+        with tempfile.TemporaryDirectory() as tmp:
+            synthetic_tree(tmp, recognized=[recognized_signal([REAL_ID])])
+            failed, output = run_validate(tmp)
+        self.assertFalse(failed, output)
+        self.assertNotIn("INTEGRITY ERRORS", output)
+        self.assertIn("no longer matches a check in the current build", output)
+
+    def test_a_tampered_signal_key_is_an_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            entry = recognized_signal([REAL_ID])
+            entry["checks"] = ["first-observed-high-value"]
+            synthetic_tree(tmp, recognized=[entry])
+            failed, output = run_validate(tmp)
+        self.assertTrue(failed)
+        self.assertIn("does not match its own rows and checks", output)
+
+    def test_a_leftover_pre_signal_list_is_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            synthetic_tree(tmp)
+            path = os.path.join(tmp, "manual", "risk_reviews.json")
+            with open(path, "w", encoding="utf-8") as handle:
+                json.dump({"recognizedIds": [REAL_ID]}, handle)
+            failed, output = run_validate(tmp)
+        self.assertFalse(failed, output)
+        self.assertIn("migrate_risk_reviews_to_signals", output)
 
     def test_all_three_orphan_kinds_are_reported_together(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -283,13 +330,13 @@ class OrphanDetectionTests(unittest.TestCase):
                 tmp,
                 overrides={"tx_goneaway000000000001": {"category": "Games"}},
                 remarks={"tx_goneaway000000000002": "PC purchase"},
-                recognized=["tx_goneaway000000000003"],
+                recognized=[recognized_signal(["tx_goneaway000000000003"])],
             )
             failed, output = run_validate(tmp)
         self.assertTrue(failed)
         for fragment in ("category override tx_goneaway000000000001",
                          "remark tx_goneaway000000000002",
-                         "recognized transaction check tx_goneaway000000000003"):
+                         "names unknown transaction tx_goneaway000000000003"):
             self.assertIn(fragment, output)
 
     def test_an_override_that_resolves_but_was_not_applied_is_an_error(self):

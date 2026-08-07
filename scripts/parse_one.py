@@ -33,7 +33,7 @@ FLOW_RULES = [
     ("Salary", ["SALARY", "PAYROLL", "GIRO SALARY"]),
     # IRAS prints as "INLAND REVENUE AUTHO..." over PayNow, which never says IRAS.
     ("Tax", ["IRAS", "INCOME TAX", "TAXS", "INLAND REVENUE"]),
-    ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST"]),
+    ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST", "INTEREST CREDIT"]),
     ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", "FWD", "GREAT EASTERN", "AIA", "AVIVA", "INCOME"]),
     ("Mortgage & home", ["HDB", "MORTGAGE", "HOME LOAN", "TOWN COUNCIL", "SP SERVICES", "SP DIGITAL"]),
     ("CPF", ["CPF"]),
@@ -97,7 +97,7 @@ def parse_pdf(path):
     reader = PdfReader(path)
     ym = statement_month(reader, path)
     if not ym:
-        return None, [], [], []
+        return None, [], [], [], None
     year, month = ym
     month_key = "%04d-%02d" % (year, month)
 
@@ -116,11 +116,21 @@ def parse_pdf(path):
             break
 
     SKIP_RE = re.compile(
-        r"^(Page \d|NICHOLAS|Date Description|One Account|Account Transaction|Total\b|-{5,})", re.I)
+        r"^(Page \d|NICHOLAS|Date Description|One Account|Account Transaction|Total\b|"
+        r"Please note that you are bound\b|omissions or unauthorised debits\b|-{5,})", re.I)
 
     entries = []
     current = None
+    current_page = None
     for page_no, line_no, raw in lines:
+        # A transaction row never continues onto the next statement page. Text
+        # extraction can place the next page's legal footer before its table,
+        # so close the prior row before considering any text from a new page.
+        if current_page is not None and page_no != current_page:
+            if current:
+                entries.append(current)
+                current = None
+        current_page = page_no
         line = raw.strip()
         if not line:
             continue
@@ -139,6 +149,7 @@ def parse_pdf(path):
     overrides = []
     failures = []
     balance = None
+    opening = None
     opened = False
     broken = False
 
@@ -170,12 +181,24 @@ def parse_pdf(path):
         desc = re.sub(DATE_RE, "", e["lines"][0]).strip() + " " + " ".join(e["lines"][1:])
         desc = AMOUNT_RE.sub("", desc)
         desc = " ".join(desc.split())
+        # UOB repeats this legal footer near the end of many transaction pages.
+        # Older text layers occasionally append it to the final transaction on
+        # the page, so also trim it defensively after the entry is assembled.
+        desc = re.sub(
+            r"\s*(?:Please note that you are bound|omissions or unauthorised debits)\b.*$",
+            "", desc,
+            flags=re.I,
+        ).strip()
 
         if "BALANCE B/F" in text.upper():
             # The opening marker is the one legitimate single-number row. A second
             # one, or one without a figure, means the layout moved under us.
             if nums and not opened:
                 balance = nums[-1]
+                # Keep the printed figure. Without it the first movement on a
+                # statement is unfalsifiable: the chain seeds from that row's own
+                # balance, so its amount can be anything and still reconcile.
+                opening = round(balance, 2)
                 opened = True
                 continue
             fail(e, "BALANCE B/F marker is repeated or carries no figure", text)
@@ -233,7 +256,15 @@ def parse_pdf(path):
             "_sourceLine": e["line"],
         })
     assign_provenance(txs, "account-pdf", source_name(path), verified=True)
-    return month_key, txs, overrides, failures
+    anchor = None
+    if opening is not None:
+        anchor = {
+            "file": source_name(path),
+            "openingBalance": opening,
+            "closingBalance": round(txs[-1]["balance"], 2) if txs else opening,
+            "rows": len(txs),
+        }
+    return month_key, txs, overrides, failures, anchor
 
 
 def write_output(payload, ok):
@@ -261,12 +292,13 @@ def main():
     files = sorted({f for p in patterns for f in glob.glob(p, recursive=True)})
     all_txs = []
     months = {}
+    anchors = {}
     failed = []
     all_overrides = []
     row_failures = []
     for path in files:
         try:
-            month_key, txs, overrides, failures = parse_pdf(path)
+            month_key, txs, overrides, failures, anchor = parse_pdf(path)
         except Exception as exc:
             failed.append((os.path.basename(path), str(exc)[:60]))
             continue
@@ -279,6 +311,8 @@ def main():
                            "month %s already read from %s" % (month_key, months[month_key])))
             continue
         months[month_key] = os.path.basename(path)
+        if anchor:
+            anchors[month_key] = anchor
         all_txs.extend(txs)
         for o in overrides:
             all_overrides.append((month_key, o))
@@ -299,6 +333,10 @@ def main():
     payload = {
         "months": sorted(months.keys()),
         "sourceFiles": months,
+        # The statement's own printed BALANCE B/F, kept per month so the
+        # validator can check the first row against something the bank wrote
+        # rather than against the row itself.
+        "statementAnchors": {key: anchors[key] for key in sorted(anchors)},
         "quality": {
             "statementFiles": len(months),
             "missingMonths": gaps,

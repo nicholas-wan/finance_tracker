@@ -29,7 +29,8 @@ class FakePage:
 
 class FakeReader:
     def __init__(self, text):
-        self.pages = [FakePage(text)]
+        pages = text if isinstance(text, list) else [text]
+        self.pages = [FakePage(page) for page in pages]
 
 
 class ParserTestCase(unittest.TestCase):
@@ -235,7 +236,8 @@ class CardCsvFallbackTests(ParserTestCase):
 
 class AccountParserTests(ParserTestCase):
     def test_direction_classification_and_visible_override(self):
-        month, rows, overrides, failures = self.parse_account("account_statement_redacted.txt")
+        month, rows, overrides, failures, _ = self.parse_account(
+            "account_statement_redacted.txt")
         self.assertEqual(month, "2026-06")
         self.assertEqual(failures, [])
         self.assertEqual(len(rows), 3)
@@ -248,10 +250,25 @@ class AccountParserTests(ParserTestCase):
         self.assertEqual(len(overrides), 1)
         self.assertTrue(all(row["provenance"]["verified"] for row in rows))
 
+    def test_printed_opening_balance_is_exported_as_an_anchor(self):
+        # The first movement on a statement seeds the balance chain from its own
+        # balance, so nothing inside the statement can contradict it. The printed
+        # BALANCE B/F is the only independent witness, so it has to leave the
+        # parser.
+        _, rows, _, _, anchor = self.parse_account("account_statement_redacted.txt")
+        self.assertEqual(anchor["file"], "UOB_ONE_REDACTED.pdf")
+        self.assertEqual(anchor["openingBalance"], 1000.00)
+        self.assertEqual(anchor["closingBalance"], rows[-1]["balance"])
+        self.assertEqual(anchor["rows"], len(rows))
+        # The anchor must be the printed figure, not the first row read back.
+        first = rows[0]
+        derived = round(first["balance"] - first["amount"], 2)
+        self.assertEqual(anchor["openingBalance"], derived)
+
     def test_row_with_too_few_numbers_is_fatal_not_absorbed(self):
         # The lost salary line used to be skipped without advancing the balance,
         # which turned the next row's S$80 withdrawal into a S$4,920 deposit.
-        _, rows, overrides, failures = self.parse_account("account_lost_row_redacted.txt")
+        _, rows, overrides, failures, _ = self.parse_account("account_lost_row_redacted.txt")
         self.assertEqual(failures[0]["file"], "UOB_ONE_REDACTED.pdf")
         self.assertIn("REDACTED SALARY", failures[0]["text"])
         self.assertIn("number(s)", failures[0]["reason"])
@@ -264,13 +281,46 @@ class AccountParserTests(ParserTestCase):
         self.assertEqual(overrides, [])
 
     def test_printed_sign_contradicting_the_balance_move_is_fatal(self):
-        _, rows, _, failures = self.parse_account("account_sign_conflict_redacted.txt")
+        _, rows, _, failures, _ = self.parse_account("account_sign_conflict_redacted.txt")
         self.assertEqual(rows, [])
         self.assertEqual(len(failures), 2)
         self.assertIn("REDACTED REFUND", failures[0]["text"])
         self.assertIn("deposit", failures[0]["reason"])
         self.assertIn("REDACTED FEE", failures[1]["text"])
         self.assertIn("withdrawal", failures[1]["reason"])
+
+    def test_legal_footer_is_not_appended_to_transaction_description(self):
+        text = self.fixture("account_statement_redacted.txt").replace(
+            "End of Transaction Details",
+            "Please note that you are bound by a duty under the rules governing this account\n"
+            "omissions or unauthorised debits within fourteen (14) days of this statement\n"
+            "End of Transaction Details",
+        )
+        with patch.object(parse_one, "PdfReader", return_value=FakeReader(text)):
+            _, rows, _, failures, _ = parse_one.parse_pdf("UOB_ONE_REDACTED.pdf")
+        self.assertEqual(failures, [])
+        self.assertTrue(rows)
+        self.assertTrue(all("Please note" not in row["description"] for row in rows))
+        self.assertTrue(all("omissions or unauthorised" not in row["description"]
+                            for row in rows))
+
+    def test_new_page_footer_cannot_pollute_prior_page_transaction(self):
+        first_page = self.fixture("account_statement_redacted.txt").replace(
+            "End of Transaction Details\n", ""
+        )
+        second_page = (
+            "claim against the bank in relation thereto. BROKEN PDF GLYPHS\n"
+            "Page 2 of 2\n"
+            "05 JUN REDACTED FEE 10.00 830.00\n"
+            "End of Transaction Details\n"
+        )
+        with patch.object(parse_one, "PdfReader",
+                          return_value=FakeReader([first_page, second_page])):
+            _, rows, _, failures, _ = parse_one.parse_pdf("UOB_ONE_REDACTED.pdf")
+        self.assertEqual(failures, [])
+        self.assertEqual(len(rows), 4)
+        self.assertEqual(rows[2]["description"], "REDACTED TRANSFER")
+        self.assertTrue(all("claim against" not in row["description"] for row in rows))
 
     def test_failed_statement_is_not_written(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -322,6 +372,7 @@ class AccountParserTests(ParserTestCase):
         )
         # The existing tax and transfer rules keep working.
         self.assertEqual(parse_one.classify("GIRO IRAS INCOME TAX"), "Tax")
+        self.assertEqual(parse_one.classify("Interest Credit"), "Interest")
         self.assertEqual(parse_one.classify("PAYNOW-FAST SOMEONE ELSE"), "Transfer")
 
 

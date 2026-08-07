@@ -25,10 +25,12 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "app"
 OWNER_PATH = REPO_ROOT / "manual" / "owner_tags.json"
 RISK_REVIEW_PATH = REPO_ROOT / "manual" / "risk_reviews.json"
+ACCOUNT_REVIEW_PATH = REPO_ROOT / "manual" / "account_reviews.json"
 REMARK_PATH = REPO_ROOT / "manual" / "transaction_remarks.json"
 OVERRIDE_PATH = REPO_ROOT / "manual" / "transaction_overrides.json"
 AUDIT_PATH = REPO_ROOT / "manual" / "audit_history.json"
 TRANSACTIONS_PATH = APP_DIR / "data" / "transactions.json"
+ACCOUNT_TRANSACTIONS_PATH = APP_DIR / "data" / "account_transactions.json"
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_data.py"
 VALIDATE_SCRIPT = REPO_ROOT / "scripts" / "validate_data.py"
 ALLOWED_OWNERS = {"Nic", "Shared", "Yx", "Untagged"}
@@ -135,29 +137,69 @@ def validate_owner_request(payload, transactions):
     return tx_id, owner
 
 
+def is_signal_key(value):
+    return (
+        isinstance(value, str)
+        and len(value) == 64
+        and all(character in "0123456789abcdef" for character in value)
+    )
+
+
 def validate_risk_review_request(payload, transactions):
+    """Resolve a posted review decision to one signal in the current build.
+
+    Decisions are recorded against a signal - the rows plus the checks that
+    fired - not against the rows alone, so the caller's key must still match
+    what the current build computes. A stale page whose signal has since gained
+    a new reason is rejected rather than silently acknowledging the new reason.
+    """
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object.")
     ids = payload.get("ids")
     recognized = payload.get("recognized")
+    key = payload.get("key")
     if (not isinstance(ids, list) or not ids or len(ids) > 50 or
             any(not isinstance(tx_id, str) or not tx_id.startswith("tx_")
                 for tx_id in ids)):
         raise ValueError("One current transaction-check group is required.")
     if recognized not in (True, False):
         raise ValueError("Recognized must be true or false.")
+    if key is not None and not is_signal_key(key):
+        raise ValueError("The transaction-check signal key is malformed.")
     if any(tx_id not in transactions for tx_id in ids):
         raise ValueError("A transaction is not present in the current build.")
 
-    requested = set(ids)
-    current_groups = {
-        frozenset(row.get("risk", {}).get("groupIds", []))
-        for row in transactions.values()
-        if row.get("risk")
-    }
-    if frozenset(requested) not in current_groups:
+    requested = frozenset(ids)
+    signal = None
+    for row in transactions.values():
+        risk = row.get("risk")
+        if not isinstance(risk, dict) or not is_signal_key(risk.get("key")):
+            continue
+        if frozenset(risk.get("groupIds") or []) == requested:
+            signal = risk
+            break
+    if signal is None:
         raise ValueError("That transaction-check group is not present in the current build.")
-    return sorted(requested), recognized
+    if key is not None and key != signal["key"]:
+        raise ValueError(
+            "That transaction check changed since this page loaded. "
+            "Reload the dashboard and review it again."
+        )
+    return sorted(requested), recognized, signal["key"], list(signal.get("checks") or [])
+
+
+def validate_account_review_request(payload, transactions):
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object.")
+    tx_id = payload.get("id")
+    reviewed = payload.get("reviewed")
+    if not isinstance(tx_id, str) or not tx_id.startswith("tx_"):
+        raise ValueError("A valid account transaction ID is required.")
+    if tx_id not in transactions:
+        raise ValueError("That account transaction is not present in the current statements.")
+    if reviewed not in (True, False):
+        raise ValueError("Reviewed must be true or false.")
+    return tx_id, reviewed
 
 
 def validate_remark_request(payload, transactions):
@@ -295,28 +337,40 @@ def save_owner(tx_id, owner):
         }
 
 
-def save_risk_review(ids, recognized):
+def save_risk_review(ids, recognized, key=None):
     with WRITE_LOCK:
         transaction_data = load_json(TRANSACTIONS_PATH)
         transactions = {
             row.get("id"): row for row in transaction_data.get("transactions", [])
         }
-        ids, recognized = validate_risk_review_request(
-            {"ids": ids, "recognized": recognized}, transactions
+        ids, recognized, key, checks = validate_risk_review_request(
+            {"ids": ids, "recognized": recognized, "key": key}, transactions
         )
         current = next(
             row for row in transactions.values()
-            if set(row.get("risk", {}).get("groupIds", [])) == set(ids)
+            if row.get("risk", {}).get("key") == key
+            and row.get("risk", {}).get("primary", True)
         )
         paths = (RISK_REVIEW_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
         risk_data = json.loads(originals[RISK_REVIEW_PATH].decode("utf-8"))
-        reviewed = set(risk_data.get("recognizedIds", []))
+        stored = risk_data.get("recognizedSignals")
+        entries = [
+            entry for entry in (stored if isinstance(stored, list) else [])
+            if isinstance(entry, dict) and entry.get("key") != key
+        ]
         if recognized:
-            reviewed.update(ids)
-        else:
-            reviewed.difference_update(ids)
-        risk_data["recognizedIds"] = sorted(reviewed)
+            entries.append({
+                "key": key,
+                "ids": ids,
+                "checks": checks,
+                "recognizedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+            })
+        entries.sort(key=lambda entry: entry.get("key") or "")
+        risk_data["recognizedSignals"] = entries
+        # The flat pre-signal list is not consulted any more; leaving it behind
+        # would look like a live setting.
+        risk_data.pop("recognizedIds", None)
         audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
         before = bool(current.get("risk", {}).get("recognized"))
         changes = []
@@ -349,7 +403,7 @@ def save_risk_review(ids, recognized):
             updated = next(
                 (
                     row for row in refreshed.get("transactions", [])
-                    if set(row.get("risk", {}).get("groupIds", [])) == set(ids)
+                    if row.get("risk", {}).get("key") == key
                 ),
                 None,
             )
@@ -568,6 +622,60 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         }
 
 
+def save_account_review(tx_id, reviewed):
+    with WRITE_LOCK:
+        account_data = load_json(ACCOUNT_TRANSACTIONS_PATH)
+        transactions = {
+            row.get("id"): row for row in account_data.get("transactions", [])
+        }
+        validate_account_review_request(
+            {"id": tx_id, "reviewed": reviewed}, transactions)
+        current = transactions[tx_id]
+        paths = (ACCOUNT_REVIEW_PATH, AUDIT_PATH)
+        originals = {path: path.read_bytes() for path in paths}
+        review_data = json.loads(originals[ACCOUNT_REVIEW_PATH].decode("utf-8"))
+        reviewed_ids = set(review_data.get("reviewedIds", []))
+        before = tx_id in reviewed_ids
+        if reviewed:
+            reviewed_ids.add(tx_id)
+        else:
+            reviewed_ids.discard(tx_id)
+        review_data["reviewedIds"] = sorted(reviewed_ids)
+        changes = []
+        if before != reviewed:
+            changes.append({
+                "field": "Bank review",
+                "before": "Reviewed" if before else "Needs review",
+                "after": "Reviewed" if reviewed else "Needs review",
+            })
+        audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
+        append_audit_entry(
+            audit_data,
+            make_audit_entry(
+                current,
+                "Reviewed bank transaction" if reviewed else "Reopened bank transaction",
+                changes,
+            ),
+        )
+        payloads = {ACCOUNT_REVIEW_PATH: review_data, AUDIT_PATH: audit_data}
+        try:
+            for path in paths:
+                shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+                atomic_write_json(path, payloads[path])
+            validation_output = run_script(VALIDATE_SCRIPT)
+        except Exception:
+            for path in paths:
+                atomic_write_bytes(path, originals[path])
+            raise
+        return {
+            "ok": True,
+            "id": tx_id,
+            "reviewed": reviewed,
+            "validation": validation_output.splitlines()[0]
+            if validation_output else "Validation completed.",
+        }
+
+
 class FinanceHandler(SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(APP_DIR), **kwargs)
@@ -627,7 +735,25 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "remarks": True,
                 "transactionDetails": True,
                 "auditHistory": True,
+                "accountReviews": True,
                 "owners": ["Nic", "Shared", "Yx", "Untagged"],
+            })
+            return
+        if endpoint == "/api/account-reviews":
+            try:
+                with WRITE_LOCK:
+                    review_data = load_json(ACCOUNT_REVIEW_PATH)
+            except Exception as error:
+                self.send_json(500, {
+                    "ok": False,
+                    "error": "Could not read account reviews: %s" % error,
+                })
+                return
+            reviewed_ids = review_data.get("reviewedIds", []) \
+                if isinstance(review_data, dict) else []
+            self.send_json(200, {
+                "ok": True,
+                "reviewedIds": reviewed_ids,
             })
             return
         if endpoint == "/api/audit-history":
@@ -659,6 +785,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             "/api/risk-review",
             "/api/remark",
             "/api/transaction-detail",
+            "/api/account-review",
         }:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint."})
             return
@@ -674,20 +801,30 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            transaction_data = load_json(TRANSACTIONS_PATH)
-            transactions = {
-                row.get("id"): row for row in transaction_data.get("transactions", [])
-            }
+            if endpoint == "/api/account-review":
+                account_data = load_json(ACCOUNT_TRANSACTIONS_PATH)
+                account_transactions = {
+                    row.get("id"): row for row in account_data.get("transactions", [])
+                }
+                tx_id, reviewed = validate_account_review_request(
+                    payload, account_transactions)
+                result = save_account_review(tx_id, reviewed)
+            else:
+                transaction_data = load_json(TRANSACTIONS_PATH)
+                transactions = {
+                    row.get("id"): row for row in transaction_data.get("transactions", [])
+                }
             if endpoint == "/api/owner":
                 tx_id, owner = validate_owner_request(payload, transactions)
                 result = save_owner(tx_id, owner)
             elif endpoint == "/api/risk-review":
-                ids, recognized = validate_risk_review_request(payload, transactions)
-                result = save_risk_review(ids, recognized)
+                ids, recognized, key, _ = validate_risk_review_request(
+                    payload, transactions)
+                result = save_risk_review(ids, recognized, key)
             elif endpoint == "/api/remark":
                 tx_id, remark = validate_remark_request(payload, transactions)
                 result = save_remark(tx_id, remark)
-            else:
+            elif endpoint == "/api/transaction-detail":
                 details = validate_transaction_detail_request(payload, transactions)
                 result = save_transaction_detail(*details)
         except ValueError as error:

@@ -4,14 +4,55 @@ These checks surface transactions for human review; they do not label fraud.
 Refunds are netted before duplicate and amount checks so reversals do not create
 false alarms. Every signal uses fields printed on the statement or stable
 history derived from earlier statements.
+
+Recognition is per *signal*, not per transaction. A signal's identity is a
+hash over the rows it covers plus the checks that fired, so acknowledging a
+duplicate pair does not silently suppress a different check that the same rows
+trip later.
 """
 
+import hashlib
 from collections import defaultdict
+from datetime import date
 from statistics import median
 
 
 EXCLUDED_CATEGORIES = {"Payment", "Rebates", "Fees & charges", "Insurance"}
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
+
+# Card reversals rarely post on the charge date. A week covers the usual
+# settlement lag without letting an unrelated later credit erase a genuine
+# anomaly. Refunds are matched on merchant key, not on the raw descriptor,
+# because the descriptor carries per-authorisation noise.
+REFUND_WINDOW_DAYS = 7
+
+# Cross-day netting only moves material credits. Without this, a S$1.09 scrap
+# left over from one day's reversal drifts onto a neighbouring day and quietly
+# shaves the review amount there for no reason a reader could follow.
+REFUND_CROSS_DAY_MIN = 40.0
+
+# The median-based outlier check needs a real distribution behind it, so it
+# only runs from this many prior rows onwards.
+OUTLIER_MIN_HISTORY = 10
+
+# Between 1 and OUTLIER_MIN_HISTORY - 1 prior rows there is no trustworthy
+# median, but "nothing at all" is the wrong answer: nine S$12 charges followed
+# by S$5,000 is exactly the shape worth surfacing. Compare against the prior
+# maximum instead and require the charge to be both a large multiple of
+# anything seen before and large in absolute terms, so ordinary ramp-ups
+# (S$12 -> S$60) stay quiet.
+SHORT_HISTORY_MULTIPLE = 4.0
+SHORT_HISTORY_FLOOR = 500.0
+
+# A currency only counts as "known" for a merchant once a charge in it was big
+# enough to have been surfaced. A S$5 test charge must not immunise the
+# merchant against a S$3,000 charge later, in that currency or another one.
+FOREIGN_MIN_REVIEW = 200.0
+
+# Charges below this are noise for the duplicate check regardless of count.
+DUPLICATE_MIN_TOTAL = 40.0
+
+CENT = 0.005
 
 
 def _stronger(current, candidate):
@@ -20,55 +61,216 @@ def _stronger(current, candidate):
     return current
 
 
-def detect_risks(transactions, merchant_key, recognized_ids=None):
-    """Annotate representative transactions and return unresolved review totals."""
-    recognized_ids = set(recognized_ids or [])
-    groups = defaultdict(list)
+def _rule_category(row):
+    """Category as the rules derive it, ignoring the user's override.
 
+    Category overrides are a labelling choice. Letting them drive the risk
+    filter means re-tagging a flagged charge as Insurance deletes its signal
+    with no trace, so every exclusion and exemption below reads the rule
+    category and falls back to the plain category only when the build did not
+    supply one.
+    """
+    return row.get("ruleCategory") or row.get("category")
+
+
+def _day_ordinal(value):
+    """Day number for "YYYY-MM-DD"; month-only rows anchor to the 1st."""
+    if not value:
+        return None
+    parts = str(value).split("-")
+    try:
+        year = int(parts[0])
+        month = int(parts[1])
+        day = int(parts[2]) if len(parts) > 2 else 1
+        return date(year, month, day).toordinal()
+    except (IndexError, ValueError):
+        return None
+
+
+def signal_key(group_ids, checks):
+    """Stable identity for one signal: which rows, and which checks fired.
+
+    Both parts matter. Keying on rows alone is what let a recognized duplicate
+    pair suppress a later first-observed-high-value check on the same rows.
+    """
+    payload = "|".join(sorted(group_ids)) + "||" + "|".join(sorted(set(checks)))
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def recognized_keys(recognized_signals):
+    """Accept stored entry dicts, bare key strings, or a mix."""
+    keys = set()
+    for entry in recognized_signals or []:
+        if isinstance(entry, str):
+            keys.add(entry)
+        elif isinstance(entry, dict) and isinstance(entry.get("key"), str):
+            keys.add(entry["key"])
+    return keys
+
+
+def _collect(transactions, merchant_key):
+    """Split rows into per-day debit groups and a per-merchant refund pool."""
+    debit_groups = defaultdict(list)
+    refunds = defaultdict(list)
     for transaction in transactions:
-        if transaction.get("category") in EXCLUDED_CATEGORIES:
+        if _rule_category(transaction) in EXCLUDED_CATEGORIES:
             continue
-        groups[(
-            transaction.get("date") or transaction.get("month"),
-            transaction.get("card", ""),
-            transaction["description"].upper().strip(),
-        )].append(transaction)
+        when = transaction.get("date") or transaction.get("month")
+        key = merchant_key(transaction["description"])
+        row_type = transaction.get("type")
+        if row_type == "refund":
+            refunds[key].append({
+                "when": when,
+                "day": _day_ordinal(when),
+                "amount": round(float(transaction["amount"]), 2),
+                "used": 0.0,
+            })
+        elif row_type == "debit":
+            debit_groups[(when, key)].append(transaction)
+    for pool in refunds.values():
+        pool.sort(key=lambda refund: (refund["when"] or "", refund["amount"]))
+    return debit_groups, refunds
+
+
+def _allocate_refunds(debit_groups, refunds):
+    """Decide which day's charges each refund reverses.
+
+    Same-day reversals win outright: a statement showing S$960 charged and
+    S$813.58 + S$146.42 credited back that same day is describing one
+    transaction, and no nearby day has a better claim on that money. Only what
+    is left over travels, and only if it is material and lands inside the
+    netting window, nearest day first. Handing credits out earliest-day-first
+    instead would let a delayed reversal cancel an unrelated charge that merely
+    happened to come sooner.
+    """
+    capacity = {
+        group_id: round(sum(float(row["amount"]) for row in rows), 2)
+        for group_id, rows in debit_groups.items()
+    }
+    allocations = defaultdict(list)
+
+    def give(group_id, refund):
+        value = min(refund["amount"] - refund["used"], capacity[group_id])
+        if value <= CENT:
+            return
+        refund["used"] += value
+        capacity[group_id] -= value
+        allocations[group_id].append({"amount": refund["amount"], "value": value})
+
+    for key, pool in refunds.items():
+        for refund in pool:
+            group_id = (refund["when"], key)
+            if group_id in capacity:
+                give(group_id, refund)
+
+    groups_by_merchant = defaultdict(list)
+    for when, key in debit_groups:
+        groups_by_merchant[key].append((when, key))
+
+    for key, pool in refunds.items():
+        for refund in pool:
+            if refund["day"] is None:
+                continue
+            candidates = []
+            for group_id in groups_by_merchant.get(key, ()):
+                if group_id[0] == refund["when"]:
+                    continue
+                day = _day_ordinal(group_id[0])
+                if day is None:
+                    continue
+                distance = abs(day - refund["day"])
+                if distance <= REFUND_WINDOW_DAYS:
+                    candidates.append((distance, group_id[0], group_id))
+            for _, _, group_id in sorted(candidates):
+                if refund["amount"] - refund["used"] < REFUND_CROSS_DAY_MIN:
+                    break
+                give(group_id, refund)
+    return allocations
+
+
+def _apply_refunds(debits, contributions):
+    """Net this group's allocated refunds against its charges.
+
+    Exact amount matches are assigned to their own duplicate bucket first, so a
+    single S$300 refund cancels one S$300 charge instead of being subtracted
+    from every bucket at once. Whatever is left over is a general pool applied
+    to the largest outstanding bucket first.
+    """
+    debit_total = round(sum(float(row["amount"]) for row in debits), 2)
+    buckets = defaultdict(list)
+    for row in debits:
+        buckets[round(float(row["amount"]), 2)].append(row)
+    offsets = {amount: 0.0 for amount in buckets}
+    pending = [dict(entry) for entry in contributions]
+    allocated = 0.0
+
+    for amount in sorted(buckets, reverse=True):
+        outstanding = amount * len(buckets[amount]) - offsets[amount]
+        for entry in pending:
+            if outstanding <= CENT:
+                break
+            if entry["value"] <= CENT or abs(entry["amount"] - amount) > CENT:
+                continue
+            take = min(entry["value"], outstanding)
+            entry["value"] -= take
+            offsets[amount] += take
+            outstanding -= take
+            allocated += take
+
+    pool = 0.0
+    for entry in pending:
+        if entry["value"] > CENT:
+            pool += entry["value"]
+            allocated += entry["value"]
+            entry["value"] = 0.0
+
+    for amount in sorted(buckets, reverse=True):
+        if pool <= CENT:
+            break
+        outstanding = max(0.0, amount * len(buckets[amount]) - offsets[amount])
+        take = min(pool, outstanding)
+        offsets[amount] += take
+        pool -= take
+
+    net = round(max(0.0, debit_total - allocated), 2)
+    return net, buckets, offsets
+
+
+def detect_risks(transactions, merchant_key, recognized_signals=None):
+    """Annotate flagged transactions and return unresolved review totals."""
+    known = recognized_keys(recognized_signals)
+
+    # A second call on the same rows must not inherit the first call's verdict.
+    for transaction in transactions:
+        transaction.pop("risk", None)
+
+    debit_groups, refund_pool = _collect(transactions, merchant_key)
+    allocations = _allocate_refunds(debit_groups, refund_pool)
 
     signals = []
     merchant_history = defaultdict(list)
     foreign_history = set()
-    ordered_groups = sorted(
-        groups.values(),
-        key=lambda rows: (
-            rows[0].get("date") or rows[0].get("month") or "",
-            rows[0].get("card", ""),
-            rows[0]["description"].upper().strip(),
-        ),
-    )
-    for rows in ordered_groups:
-        debits = [row for row in rows if row.get("type") == "debit"]
-        if not debits:
-            continue
-        refunds = [row for row in rows if row.get("type") == "refund"]
-        debit_total = sum(float(row["amount"]) for row in debits)
-        refund_total = sum(float(row["amount"]) for row in refunds)
-        net = round(max(0.0, debit_total - refund_total), 2)
+
+    for when, key in sorted(debit_groups, key=lambda item: (item[0] or "", item[1])):
+        debits = debit_groups[(when, key)]
+        net, buckets, offsets = _apply_refunds(
+            debits, allocations.get((when, key), ())
+        )
         if net <= 0:
             continue
 
         reasons = []
         checks = []
         severity = "low"
-        duplicate_amounts = defaultdict(list)
-        for row in debits:
-            duplicate_amounts[round(float(row["amount"]), 2)].append(row)
-        for amount, matching in duplicate_amounts.items():
+
+        for amount in sorted(buckets, reverse=True):
+            matching = buckets[amount]
             if len(matching) < 2:
                 continue
-            unresolved_value = max(0.0, amount * len(matching) - refund_total)
+            unresolved_value = max(0.0, amount * len(matching) - offsets[amount])
             unresolved_count = int((unresolved_value + amount - 0.01) // amount)
             unresolved_total = round(unresolved_count * amount, 2)
-            if unresolved_count > 1 and unresolved_total >= 40:
+            if unresolved_count > 1 and unresolved_total >= DUPLICATE_MIN_TOTAL:
                 reasons.append(
                     "%d identical S$%.2f charges on the same day with no full reversal"
                     % (unresolved_count, amount)
@@ -81,9 +283,8 @@ def detect_risks(transactions, merchant_key, recognized_ids=None):
                     else "low",
                 )
 
-        key = merchant_key(debits[0]["description"])
         history = merchant_history[key]
-        category = debits[0].get("category")
+        category = _rule_category(debits[0])
 
         if not history and net >= 1500:
             reasons.append(
@@ -96,7 +297,23 @@ def detect_risks(transactions, merchant_key, recognized_ids=None):
                 "high" if net >= 3000 else "medium",
             )
 
-        typical = median(history) if len(history) >= 10 else None
+        if 0 < len(history) < OUTLIER_MIN_HISTORY:
+            prior_max = max(history)
+            threshold = max(prior_max * SHORT_HISTORY_MULTIPLE, SHORT_HISTORY_FLOOR)
+            if net >= threshold:
+                reasons.append(
+                    "S$%.2f net charge is far above the S$%.2f most this merchant"
+                    " had charged across %d earlier %s"
+                    % (net, prior_max, len(history),
+                       "row" if len(history) == 1 else "rows")
+                )
+                checks.append("short-history-spike")
+                severity = _stronger(
+                    severity,
+                    "high" if net >= 3000 or net >= prior_max * 20 else "medium",
+                )
+
+        typical = median(history) if len(history) >= OUTLIER_MIN_HISTORY else None
         ratio = net / max(typical or 0, 0.01)
         if typical and net >= 300 and ratio >= 10:
             reasons.append(
@@ -143,51 +360,59 @@ def detect_risks(transactions, merchant_key, recognized_ids=None):
                 )
 
         foreign_debits = [row for row in debits if row.get("foreign")]
+        currencies = sorted({
+            row["foreign"].split(" ", 1)[0] for row in foreign_debits
+            if row.get("foreign")
+        })
+        unseen = [code for code in currencies if (key, code) not in foreign_history]
+        surfaced_foreign = False
         if (
-            foreign_debits
-            and key not in foreign_history
-            and net >= 200
+            unseen
+            and net >= FOREIGN_MIN_REVIEW
             and category not in {"Games", "Travel"}
         ):
-            currencies = sorted({
-                row["foreign"].split(" ", 1)[0] for row in foreign_debits
-                if row.get("foreign")
-            })
             reasons.append(
                 "First foreign-currency charge from this merchant is %s (S$%.2f)"
-                % ("/".join(currencies) or "foreign currency", net)
+                % ("/".join(unseen) or "foreign currency", net)
             )
             checks.append("first-foreign-currency-use")
             severity = _stronger(
                 severity,
                 "medium" if net >= 500 else "low",
             )
+            surfaced_foreign = True
 
         history.extend(float(row["amount"]) for row in debits)
-        if foreign_debits:
-            foreign_history.add(key)
+        if currencies and (surfaced_foreign or net >= FOREIGN_MIN_REVIEW):
+            for code in currencies:
+                foreign_history.add((key, code))
 
         if not reasons:
             continue
 
-        affected_ids = sorted(row["id"] for row in debits)
-        recognized = all(tx_id in recognized_ids for tx_id in affected_ids)
+        group_ids = sorted(row["id"] for row in debits)
+        identity = signal_key(group_ids, checks)
         representative = sorted(
             debits,
             key=lambda row: (-float(row["amount"]), row["id"]),
         )[0]
         risk = {
+            "key": identity,
             "severity": severity,
             "reasons": reasons,
             "checks": checks,
-            "groupIds": affected_ids,
+            "groupIds": group_ids,
             "reviewAmount": net,
-            "recognized": recognized,
+            "recognized": identity in known,
         }
-        representative["risk"] = risk
+        # Every row in the group carries the signal, so opening any member of a
+        # duplicate pair shows the check. ``primary`` marks the one row the
+        # review queue counts, keeping row counts equal to signal counts.
+        for row in debits:
+            row["risk"] = dict(risk, primary=row["id"] == representative["id"])
         signals.append({
             "transaction": representative,
-            "risk": risk,
+            "risk": representative["risk"],
         })
 
     unresolved = [signal for signal in signals if not signal["risk"]["recognized"]]

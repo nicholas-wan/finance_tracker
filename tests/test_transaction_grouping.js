@@ -319,7 +319,80 @@ test("account summary keeps deposits withdrawals and balance distinct", function
   assert.equal(result.withdrawals, 40);
   assert.equal(result.netMovement, 60);
   assert.equal(result.withdrawalFlows["Cash & NETS"], 40);
-  assert.deepEqual(result.latestBalance, { date: "2026-07-03", amount: 60 });
+  assert.equal(result.openingBalance, 0);
+  assert.equal(result.closingBalance, 60);
+  assert.equal(result.reconciliationGap, 0);
+  assert.equal(result.latestBalance.date, "2026-07-03");
+  assert.equal(result.latestBalance.amount, 60);
+});
+
+test("account closing balance follows statement order when dates match", function () {
+  var result = grouping.summarizeAccount([
+    { month: "2026-07", date: "2026-07-31", direction: "deposit", amount: 3.39,
+      flow: "Interest", balance: 82916.10,
+      provenance: { sourceFile: "JUL.pdf", page: 4, line: 59 } },
+    { month: "2026-07", date: "2026-07-31", direction: "withdrawal", amount: 1.40,
+      flow: "Transfer", balance: 82912.71,
+      provenance: { sourceFile: "JUL.pdf", page: 4, line: 54 } }
+  ]);
+  assert.equal(result.closingBalance, 82916.10);
+  assert.equal(result.latestBalance.amount, 82916.10);
+  assert.equal(result.reconciliationGap, 0);
+});
+
+test("bank counterparty cleanup groups references without merging flows", function () {
+  assert.equal(grouping.accountCounterparty(
+    "Inward Debit-FAST OTHR U7869181.615725 Interactive Brokers U7869181.2147898"),
+  "Interactive Brokers");
+  assert.equal(grouping.accountCounterparty(
+    "NETS Debit-Consumer DSTA DRINKS10142900 xxxxxx5080"), "DSTA Drinks");
+  var groups = grouping.groupAccountTransactions([
+    { description: "NETS Debit-Consumer DSTA DRINKS10142900 xxxxxx5080",
+      flow: "Cash & NETS", direction: "withdrawal", amount: 5, date: "2026-07-01" },
+    { description: "NETS Debit-Consumer DSTA DRINKS10142901 xxxxxx5080",
+      flow: "Cash & NETS", direction: "withdrawal", amount: 7, date: "2026-07-02" }
+  ]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, "DSTA Drinks");
+  assert.equal(groups[0].amount, 12);
+  assert.equal(groups[0].count, 2);
+});
+
+test("bank review analysis flags conservative explainable cases", function () {
+  var rows = [
+    { id: "a", month: "2026-07", date: "2026-07-01", description: "PAYNOW-FAST SOMEONE",
+      flow: "Transfer", direction: "withdrawal", amount: 800,
+      provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true } },
+    { id: "b", month: "2026-07", date: "2026-07-02", description: "UNKNOWN CREDIT",
+      flow: "Other", direction: "deposit", amount: 10,
+      provenance: { sourceFile: "JUL.pdf", page: 1, line: 2, verified: true } },
+    { id: "c", month: "2026-07", date: "2026-07-03",
+      description: "Misc Credit ONE TAX PROMO 2602", flow: "Other",
+      direction: "deposit", amount: 10,
+      provenance: { sourceFile: "JUL.pdf", page: 1, line: 3, verified: true } }
+  ];
+  var result = grouping.analyzeAccountTransactions(rows, { a: true });
+  assert.equal(result.a.requiresReview, true);
+  assert.equal(result.a.reviewed, true);
+  assert.ok(result.a.checks.includes("large-transfer"));
+  assert.ok(result.b.checks.includes("unclassified"));
+  assert.equal(result.c.requiresReview, false);
+  assert.deepEqual(result.c.checks, []);
+  assert.equal(grouping.accountReviewWhitelisted({
+    description: "Misc Credit", direction: "deposit"
+  }), true);
+  assert.equal(grouping.accountReviewWhitelisted({
+    description: "UNKNOWN CREDIT", direction: "deposit"
+  }), false);
+});
+
+test("account spending average excludes internal movements", function () {
+  var result = grouping.averageAccountSpending([
+    { month: "2026-05", direction: "withdrawal", flow: "Investment", amount: 1000 },
+    { month: "2026-05", direction: "withdrawal", flow: "Tax", amount: 100 },
+    { month: "2026-06", direction: "withdrawal", flow: "Cash & NETS", amount: 50 }
+  ], ["2026-05", "2026-06"]);
+  assert.equal(result, 75);
 });
 
 test("account movement average includes months with no matching rows", function () {

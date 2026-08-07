@@ -19,6 +19,7 @@
 
   var data = null;
   var account = { transactions: [], months: [] };
+  var accountReviewedIds = {};
   var editor = {
     available: false,
     toastTimer: null,
@@ -42,6 +43,9 @@
     transactionSource: "card",
     owner: "All",
     category: "All",
+    bankDirection: "all",
+    bankReview: "all",
+    bankExcludeInternal: false,
     showExcluded: false,
     groupPurchases: false,
     reviewMode: null,
@@ -110,6 +114,17 @@
   }
   function transactionName(t) {
     return t.displayName || t.description;
+  }
+  function refreshAccountAnalysis() {
+    var analysis = window.FinanceGrouping.analyzeAccountTransactions(
+      account.transactions, accountReviewedIds);
+    account.transactions.forEach(function (transaction) {
+      transaction.accountReview = analysis[transaction.id] || {
+        counterparty: window.FinanceGrouping.accountCounterparty(transaction.description),
+        reasons: [], checks: [], requiresReview: false, reviewed: false
+      };
+      transaction.counterparty = transaction.accountReview.counterparty;
+    });
   }
   function categoryColor(category) {
     return {
@@ -350,7 +365,11 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         ids: t.risk.groupIds,
-        recognized: recognized
+        recognized: recognized,
+        // Decisions are recorded against the signal, not the rows, so a check
+        // that has gained a new reason since this page loaded is rejected
+        // instead of being acknowledged unseen.
+        key: t.risk.key
       })
     }).then(function (response) {
       return response.json().catch(function () {
@@ -401,6 +420,64 @@
     button.addEventListener("click", function (event) {
       event.stopPropagation();
       saveRiskReview(t, !risk.recognized, button, status);
+    });
+    controls.appendChild(button);
+    wrap.appendChild(controls);
+    wrap.appendChild(status);
+    return wrap;
+  }
+  function saveAccountReview(t, reviewed, button, status) {
+    button.disabled = true;
+    status.textContent = "Saving review...";
+    fetch("api/account-review", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: t.id, reviewed: reviewed })
+    }).then(function (response) {
+      return response.json().catch(function () {
+        return { error: "The local server returned an unreadable response." };
+      }).then(function (payload) {
+        if (!response.ok) throw new Error(payload.error || "Bank review save failed.");
+        return payload;
+      });
+    }).then(function () {
+      if (reviewed) accountReviewedIds[t.id] = true;
+      else delete accountReviewedIds[t.id];
+      refreshAccountAnalysis();
+      renderLedger();
+      var updated = account.transactions.find(function (row) { return row.id === t.id; });
+      if (updated && editor.drawerTransactionId === t.id) openTransactionDrawer(updated);
+      showToast(reviewed ? "Bank transaction marked as reviewed." :
+        "Bank transaction returned to review.", "success");
+    }).catch(function (error) {
+      status.textContent = error.message;
+      button.disabled = false;
+      showToast(error.message, "error");
+    });
+  }
+  function buildAccountReviewEditor(t) {
+    var review = t.accountReview || { reasons: [], reviewed: false };
+    var wrap = el("div", "risk-editor account-review-editor" +
+      (review.reviewed ? " recognized" : ""));
+    var copy = el("div", "risk-editor-copy");
+    copy.appendChild(el("strong", "", review.reviewed
+      ? "Bank transaction reviewed"
+      : (review.requiresReview ? "Needs your review" : "Review status")));
+    copy.appendChild(el("span", "", review.reasons.length
+      ? review.reasons.join(" · ")
+      : "No automated concern was found; you can still mark this row as checked."));
+    copy.appendChild(el("small", "",
+      "Review prompts use statement history only and are not fraud verdicts."));
+    wrap.appendChild(copy);
+    var controls = el("div", "risk-editor-controls");
+    var button = el("button", "risk-review-button",
+      review.reviewed ? "Review again" : "Mark reviewed");
+    button.disabled = !editor.available;
+    var status = el("span", "risk-review-status", editor.available
+      ? "" : "Start scripts/serve.py to save this decision.");
+    button.addEventListener("click", function (event) {
+      event.stopPropagation();
+      saveAccountReview(t, !review.reviewed, button, status);
     });
     controls.appendChild(button);
     wrap.appendChild(controls);
@@ -598,7 +675,8 @@
     var eyebrow = document.getElementById("transaction-drawer-eyebrow");
     var body = document.getElementById("transaction-drawer-body");
     clear(body);
-    title.textContent = t.description;
+    title.textContent = t.counterparty ||
+      window.FinanceGrouping.accountCounterparty(t.description);
     eyebrow.textContent = dateLabel(t.date || (t.month + "-01")) + " · Bank account";
 
     var deposit = t.direction === "deposit";
@@ -615,6 +693,8 @@
     summary.appendChild(tags);
     body.appendChild(summary);
 
+    body.appendChild(buildAccountReviewEditor(t));
+
     var evidence = el("section", "drawer-section");
     evidence.appendChild(el("h3", "", "Account statement evidence"));
     var meta = el("div", "drawer-meta");
@@ -623,6 +703,8 @@
     meta.appendChild(drawerMetaRow("Statement", statementLabel(t.month)));
     meta.appendChild(drawerMetaRow("Direction", deposit ? "Deposit" : "Withdrawal"));
     meta.appendChild(drawerMetaRow("Flow", t.flow || "Other"));
+    meta.appendChild(drawerMetaRow("Counterparty", t.counterparty ||
+      window.FinanceGrouping.accountCounterparty(t.description)));
     meta.appendChild(drawerMetaRow("Balance after transaction", fmt(t.balance)));
     meta.appendChild(drawerMetaRow("Amount source", t.amountSource || "Not recorded"));
     meta.appendChild(drawerMetaRow(
@@ -726,6 +808,11 @@
           var transaction = data.transactions.find(function (row) {
             return row.id === entry.transactionId;
           });
+          if (!transaction) {
+            transaction = account.transactions.find(function (row) {
+              return row.id === entry.transactionId;
+            });
+          }
           if (transaction) openTransactionDrawer(transaction);
         }
         item.addEventListener("click", openEntry);
@@ -896,8 +983,10 @@
     );
     document.getElementById("owner-pills").classList.toggle("hidden", bank);
     document.getElementById("show-excluded-label").classList.toggle("hidden", bank);
-    document.getElementById("group-purchases-button").classList.toggle("hidden", bank);
-    document.getElementById("audit-history-button").classList.toggle("hidden", bank);
+    document.getElementById("bank-review-controls").classList.toggle("hidden", !bank);
+    document.getElementById("group-purchases-label").textContent = state.groupPurchases
+      ? "Show individual"
+      : (bank ? "Group counterparties" : "Group purchases");
   }
 
   function setTransactionSource(source) {
@@ -2146,8 +2235,10 @@
          (t.owner !== "Shared" && t.owner !== "Yx"))) return false;
     if (state.reviewMode === "delivery-rides" &&
         !DELIVERY_RIDES.test(t.description)) return false;
+    // Every row in a flagged group carries the check so any of them can be
+    // opened and reviewed; the queue lists the group once, via its primary row.
     if (state.reviewMode === "suspicious" &&
-        (!t.risk || t.risk.recognized)) return false;
+        (!t.risk || t.risk.recognized || t.risk.primary === false)) return false;
     if (q && (transactionName(t) + " " + t.description + " " +
       t.category + " " + t.owner + " " +
       (t.card || "") + " " + (t.foreign || "") + " " +
@@ -2165,7 +2256,25 @@
     var q = state.search.trim().toLowerCase();
     if (!ignorePeriod && !inPeriod(t)) return false;
     if (state.category !== "All" && t.flow !== state.category) return false;
-    if (q && (t.description + " " + t.flow + " " + t.direction + " " +
+    if (state.bankDirection !== "all" && t.direction !== state.bankDirection) return false;
+    if (state.bankExcludeInternal &&
+        window.FinanceGrouping.accountIsInternalMovement(t)) return false;
+    var review = t.accountReview || {};
+    if (state.bankReview === "needs-review" &&
+        (!review.requiresReview || review.reviewed)) return false;
+    if (state.bankReview === "reviewed" && !review.reviewed) return false;
+    if (state.bankReview === "new-counterparty" && !review.firstCounterparty) return false;
+    if (state.bankReview === "large-unusual" &&
+        !(review.checks || []).some(function (check) {
+          return check.indexOf("large-") === 0 || check === "derived-amount" ||
+            check === "unverified-source";
+        })) return false;
+    if (state.bankReview === "unclassified" &&
+        (review.checks || []).indexOf("unclassified") === -1) return false;
+    if (state.bankReview === "possible-duplicate" &&
+        (review.checks || []).indexOf("possible-duplicate") === -1) return false;
+    if (q && ((t.counterparty || "") + " " + t.description + " " + t.flow + " " +
+      t.direction + " " + (review.reasons || []).join(" ") + " " +
       (t.provenance && t.provenance.sourceFile || "")).toLowerCase().indexOf(q) === -1) {
       return false;
     }
@@ -2175,7 +2284,10 @@
   function filteredAccountLedger() {
     return account.transactions.filter(function (t) {
       return matchesAccountLedgerFilters(t, false);
-    }).sort(function (a, b) { return (b.date || b.month).localeCompare(a.date || a.month); });
+    }).sort(function (a, b) {
+      return window.FinanceGrouping.accountSourceOrder(b).localeCompare(
+        window.FinanceGrouping.accountSourceOrder(a));
+    });
   }
 
   function appendAverageComparison(headline, currentCost) {
@@ -2226,6 +2338,7 @@
   function renderTransactionSummary(rows) {
     var summary = document.getElementById("transaction-summary");
     clear(summary);
+    summary.classList.remove("bank-summary");
     var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
     if (!totals.count) {
       summary.appendChild(el("div", "transaction-summary-empty",
@@ -2295,7 +2408,7 @@
     appendBreakdown("By owner", totals.ownerTotals, OWNER_ORDER, null, "owner");
   }
 
-  function appendBankAverageComparison(headline, currentMovement) {
+  function appendBankAverageComparison(headline, currentSpending) {
     var comparison = el("div", "transaction-average");
     if (state.period.mode !== "month") {
       comparison.appendChild(el("div", "transaction-average-note",
@@ -2317,15 +2430,14 @@
     [6, 12].forEach(function (requestedMonths) {
       var priorMonths = allPriorMonths.slice(-requestedMonths);
       var rows = account.transactions.filter(function (transaction) {
-        return priorMonths.indexOf(transaction.month) !== -1 &&
-          matchesAccountLedgerFilters(transaction, true);
+        return priorMonths.indexOf(transaction.month) !== -1;
       });
-      var average = window.FinanceGrouping.averageAccountMovement(rows, priorMonths);
-      var difference = roundMoney(currentMovement - average);
+      var average = window.FinanceGrouping.averageAccountSpending(rows, priorMonths);
+      var difference = roundMoney(currentSpending - average);
       var direction = difference > 0 ? "above" : difference < 0 ? "below" : "in line";
-      var tone = difference > 0 ? "lower" : difference < 0 ? "higher" : "even";
+      var tone = difference > 0 ? "higher" : difference < 0 ? "lower" : "even";
       var item = el("div", "transaction-average-item");
-      item.appendChild(el("span", "", priorMonths.length + "M avg"));
+      item.appendChild(el("span", "", priorMonths.length + "M spend avg"));
       item.appendChild(el("strong", "", fmt(average)));
       var variance = Math.abs(average) >= 0.01
         ? (Math.abs(difference) / Math.abs(average) * 100).toFixed(1) + "% " + direction
@@ -2370,30 +2482,139 @@
     summary.appendChild(section);
   }
 
+  function appendBankReviewSummary(summary, rows) {
+    var section = el("div", "transaction-breakdown bank-review-summary");
+    section.appendChild(el("span", "transaction-summary-label", "Review status"));
+    var flagged = rows.filter(function (transaction) {
+      return transaction.accountReview && transaction.accountReview.requiresReview;
+    });
+    var pending = flagged.filter(function (transaction) {
+      return !transaction.accountReview.reviewed;
+    });
+    var reviewed = rows.filter(function (transaction) {
+      return transaction.accountReview && transaction.accountReview.reviewed;
+    });
+    section.appendChild(el("strong", pending.length ? "review-pending" : "review-clear",
+      pending.length ? pending.length + (pending.length === 1
+        ? " needs review" : " need review") : "All clear"));
+    section.appendChild(el("small", "",
+      reviewed.length + " checked · " + flagged.length + " automatically flagged"));
+    if (pending.length) {
+      var reviewLink = el("a", "bank-review-link",
+        "Review " + (pending.length === 1 ? "transaction" : "transactions") + " →");
+      reviewLink.href = "#bank-transactions";
+      reviewLink.addEventListener("click", function () {
+        state.bankReview = "needs-review";
+        state.bankDirection = "all";
+        state.bankExcludeInternal = false;
+        state.category = "All";
+        state.search = "";
+        state.ledgerLimit = LEDGER_CAP;
+        document.getElementById("bank-review-filter").value = state.bankReview;
+        document.getElementById("bank-exclude-internal").checked = false;
+        document.getElementById("search").value = "";
+        populateTransactionCategoryFilter();
+        Array.prototype.forEach.call(
+          document.getElementById("bank-direction-pills").children,
+          function (button) {
+            var active = button.textContent === "All";
+            button.classList.toggle("active", active);
+            setPressed(button, active);
+          }
+        );
+        renderLedger();
+      });
+      section.appendChild(reviewLink);
+    }
+    var progress = el("span", "bank-review-progress");
+    var fill = el("span", "");
+    fill.style.width = rows.length
+      ? Math.min(100, reviewed.length / rows.length * 100) + "%" : "0%";
+    progress.appendChild(fill);
+    section.appendChild(progress);
+    summary.appendChild(section);
+  }
+
   function renderAccountSummary(rows) {
     var summary = document.getElementById("transaction-summary");
     clear(summary);
     var totals = window.FinanceGrouping.summarizeAccount(rows);
+    var periodRows = account.transactions.filter(function (transaction) {
+      return inPeriod(transaction);
+    });
+    var statementTotals = window.FinanceGrouping.summarizeAccount(periodRows);
     if (!totals.count) {
       summary.appendChild(el("div", "transaction-summary-empty",
         "No bank transactions match this view."));
       return;
     }
+    summary.classList.add("bank-summary");
     var headline = el("div", "transaction-summary-total");
-    headline.appendChild(el("span", "transaction-summary-label", "Net movement"));
-    headline.appendChild(el("strong", totals.netMovement >= 0 ? "credit" : "debit",
-      fmt(totals.netMovement)));
-    headline.appendChild(el("small", "",
-      totals.count + " bank transaction" + (totals.count === 1 ? "" : "s") +
-      (totals.latestBalance ? " · balance after latest match " +
-        fmt(totals.latestBalance.amount) : "")));
-    appendBankAverageComparison(headline, totals.netMovement);
+    headline.appendChild(el("span", "transaction-summary-label", "Closing balance"));
+    headline.appendChild(el("strong", "", statementTotals.closingBalance === null
+      ? "—" : fmt(statementTotals.closingBalance)));
+    var reconciled = statementTotals.reconciliationGap !== null &&
+      Math.abs(statementTotals.reconciliationGap) < 0.01;
+    headline.appendChild(el("small", reconciled ? "review-clear" : "review-pending",
+      (statementTotals.openingBalance === null ? "Opening unavailable" :
+        "Opened " + fmt(statementTotals.openingBalance)) +
+      (reconciled ? " · reconciled ✓" : " · reconciliation gap " +
+        fmt(statementTotals.reconciliationGap || 0)) +
+      (rows.length !== periodRows.length ? " · " + rows.length + " shown" : "")));
+    appendBankAverageComparison(headline, statementTotals.nonTransferSpending);
     summary.appendChild(headline);
     appendBankBreakdown(summary, "Money movement", {
       "Money in": totals.deposits,
       "Money out": totals.withdrawals
     }, null, { "Money in": "var(--green)", "Money out": "var(--red)" });
-    appendBankBreakdown(summary, "Withdrawals by flow", totals.withdrawalFlows, 4);
+    appendBankBreakdown(summary, "Non-transfer spending", totals.spendingFlows, 4);
+    appendBankReviewSummary(summary, periodRows);
+  }
+
+  function renderGroupedAccountLedger(body, rows, showYear) {
+    var groups = window.FinanceGrouping.groupAccountTransactions(rows);
+    document.getElementById("ledger-date-head").textContent = "Latest";
+    document.getElementById("ledger-description-head").textContent = "Counterparty";
+    document.getElementById("ledger-category-head").textContent = "Flow";
+    document.getElementById("ledger-owner-head").textContent = "In / Out";
+    document.getElementById("ledger-remark-head").textContent = "Transactions";
+    document.getElementById("ledger-amount-head").textContent = "Grouped amount";
+    groups.slice(0, state.ledgerLimit).forEach(function (group) {
+      var tr = document.createElement("tr");
+      tr.className = "grouped-purchase-row" + (group.reviewCount ? " risk-row risk-medium" : "");
+      var d = group.lastDate ? group.lastDate.slice(8, 10) + " " +
+        MONTH_NAMES[parseInt(group.lastDate.slice(5, 7), 10) - 1] : "—";
+      if (showYear && group.lastDate) d += " " + group.lastDate.slice(2, 4);
+      tr.appendChild(el("td", "col-date", d));
+      var description = el("td", "bank-counterparty", group.label);
+      if (group.reviewCount) description.appendChild(el(
+        "span", "risk-badge risk-medium", group.reviewCount + " review"));
+      tr.appendChild(description);
+      var flow = el("td", "col-cat");
+      flow.appendChild(el("span", "cat-pill bank-flow", group.flow));
+      tr.appendChild(flow);
+      var direction = el("td", "col-owner");
+      direction.appendChild(el("span", "bank-direction " +
+        (group.direction === "deposit" ? "money-in" : "money-out"),
+        group.direction === "deposit" ? "Money in" : "Money out"));
+      tr.appendChild(direction);
+      tr.appendChild(el("td", "col-remark grouped-count",
+        group.count + " row" + (group.count === 1 ? "" : "s")));
+      tr.appendChild(el("td", "col-amt bank-amount" +
+        (group.direction === "deposit" ? " credit" : ""),
+        (group.direction === "deposit" ? "+" : "−") +
+        group.amount.toLocaleString("en-SG",
+          { minimumFractionDigits: 2, maximumFractionDigits: 2 })));
+      body.appendChild(tr);
+    });
+    var foot = document.getElementById("ledger-foot");
+    clear(foot);
+    foot.appendChild(el("span", "", groups.length + " counterpart" +
+      (groups.length === 1 ? "y" : "ies") + " · " + rows.length + " transactions"));
+    var totals = window.FinanceGrouping.summarizeAccount(rows);
+    foot.appendChild(el("span", "", "Net movement " + fmt(totals.netMovement)));
+    document.getElementById("ledger-hint").textContent = periodLabel() +
+      " · grouped by counterparty";
   }
 
   function renderAccountLedger(body) {
@@ -2401,6 +2622,10 @@
     renderAccountSummary(rows);
     var showYear = state.period.mode !== "month";
     document.querySelector(".ledger").classList.add("bank-ledger");
+    if (state.groupPurchases) {
+      renderGroupedAccountLedger(body, rows, showYear);
+      return;
+    }
     document.getElementById("ledger-date-head").textContent = "Date";
     document.getElementById("ledger-description-head").textContent = "Bank transaction";
     document.getElementById("ledger-category-head").textContent = "Type";
@@ -2409,12 +2634,25 @@
     document.getElementById("ledger-amount-head").textContent = "Balance after";
     rows.slice(0, state.ledgerLimit).forEach(function (t) {
       var tr = document.createElement("tr");
+      if (t.accountReview && t.accountReview.requiresReview &&
+          !t.accountReview.reviewed) {
+        tr.classList.add("risk-row", "risk-medium");
+      }
       var d = t.date ? t.date.slice(8, 10) + " " +
         MONTH_NAMES[parseInt(t.date.slice(5, 7), 10) - 1] : "—";
       if (showYear && t.date) d += " " + t.date.slice(2, 4);
       tr.appendChild(el("td", "col-date", d));
-      var description = el("td", "", t.description);
+      var description = el("td", "bank-counterparty",
+        t.counterparty || window.FinanceGrouping.accountCounterparty(t.description));
       description.title = t.description;
+      if (t.accountReview && t.accountReview.requiresReview) {
+        description.appendChild(el("span", t.accountReview.reviewed
+          ? "review-badge reviewed" : "risk-badge risk-medium",
+        t.accountReview.reviewed ? "Reviewed" : "Review"));
+      } else if (t.accountReview && t.accountReview.reviewed) {
+        description.appendChild(el("span", "review-badge reviewed", "Reviewed"));
+      }
+      description.appendChild(el("small", "bank-description-raw", t.description));
       tr.appendChild(description);
       var flow = el("td", "col-cat");
       flow.appendChild(el("span", "cat-pill bank-flow", t.flow || "Other"));
@@ -2763,6 +3001,42 @@
       sourcePills.appendChild(button);
     });
 
+    var bankDirectionPills = document.getElementById("bank-direction-pills");
+    [
+      { key: "all", label: "All" },
+      { key: "withdrawal", label: "Money out" },
+      { key: "deposit", label: "Money in" }
+    ].forEach(function (direction) {
+      var button = el("button", "pill" +
+        (state.bankDirection === direction.key ? " active" : ""), direction.label);
+      setPressed(button, state.bankDirection === direction.key);
+      button.addEventListener("click", function () {
+        state.bankDirection = direction.key;
+        state.ledgerLimit = LEDGER_CAP;
+        Array.prototype.forEach.call(bankDirectionPills.children, function (child) {
+          var active = child.textContent === direction.label;
+          child.classList.toggle("active", active);
+          setPressed(child, active);
+        });
+        renderLedger();
+      });
+      bankDirectionPills.appendChild(button);
+    });
+    var bankReviewFilter = document.getElementById("bank-review-filter");
+    bankReviewFilter.value = state.bankReview;
+    bankReviewFilter.addEventListener("change", function () {
+      state.bankReview = bankReviewFilter.value;
+      state.ledgerLimit = LEDGER_CAP;
+      renderLedger();
+    });
+    var bankExcludeInternal = document.getElementById("bank-exclude-internal");
+    bankExcludeInternal.checked = state.bankExcludeInternal;
+    bankExcludeInternal.addEventListener("change", function () {
+      state.bankExcludeInternal = bankExcludeInternal.checked;
+      state.ledgerLimit = LEDGER_CAP;
+      renderLedger();
+    });
+
     var pills = document.getElementById("owner-pills");
     ["All"].concat(OWNER_ORDER).forEach(function (o) {
       var b = el("button", "pill" + (o === state.owner ? " active" : ""), o);
@@ -2824,6 +3098,7 @@
     window.FinanceGrouping.bindToggle(groupButton, groupLabel, function (active) {
       state.groupPurchases = active;
       state.ledgerLimit = LEDGER_CAP;
+      syncTransactionSourceControls();
       renderLedger();
     }, state.groupPurchases);
     syncTransactionSourceControls();
@@ -2911,11 +3186,18 @@
     })
     .then(function (acct) {
       account = acct;
-      return loadJson("api/status").then(function (status) {
-        editor.available = status.editable === true;
-      }).catch(function () {
-        editor.available = false;
+      return Promise.all([
+        loadJson("api/status").catch(function () { return { editable: false }; }),
+        loadJson("api/account-reviews").catch(function () { return { reviewedIds: [] }; })
+      ]);
+    })
+    .then(function (loaded) {
+      editor.available = loaded[0].editable === true;
+      accountReviewedIds = {};
+      (loaded[1].reviewedIds || []).forEach(function (txId) {
+        accountReviewedIds[txId] = true;
       });
+      refreshAccountAnalysis();
     })
     .then(function () {
       state.month = data.months[data.months.length - 1];

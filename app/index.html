@@ -177,7 +177,7 @@
         <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
         <span class="hint" id="games-count"></span>
       </div>
-      <table class="ledger">
+      <table class="ledger" id="bank-transactions">
         <thead>
           <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game</th><th class="col-amt">Amount</th></tr>
         </thead>
@@ -247,6 +247,23 @@
         <div class="pills" id="owner-pills"></div>
         <select id="category-filter" aria-label="Filter by category"></select>
         <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label>
+        <div class="bank-review-controls hidden" id="bank-review-controls">
+          <div class="pills bank-direction-pills" id="bank-direction-pills"
+            aria-label="Bank transaction direction"></div>
+          <select id="bank-review-filter" aria-label="Filter bank review status">
+            <option value="all">All bank transactions</option>
+            <option value="needs-review">Needs review</option>
+            <option value="reviewed">Reviewed</option>
+            <option value="new-counterparty">New counterparties</option>
+            <option value="large-unusual">Large or unusual</option>
+            <option value="unclassified">Unclassified</option>
+            <option value="possible-duplicate">Possible duplicates</option>
+          </select>
+          <label class="toggle bank-internal-toggle">
+            <input type="checkbox" id="bank-exclude-internal">
+            exclude transfers &amp; internal movements
+          </label>
+        </div>
       </div>
       <section class="transaction-summary" id="transaction-summary"
         aria-label="Transaction cost breakdown"></section>
@@ -303,9 +320,9 @@
   </aside>
 </div>
 
-<script src="js/charts.js?v=20260807-2"></script>
-<script src="js/insights.js?v=20260807-2"></script>
-<script src="js/transaction-grouping.js?v=20260807-2"></script>
-<script src="js/app.js?v=20260807-2"></script>
+<script src="js/charts.js?v=20260807-8"></script>
+<script src="js/insights.js?v=20260807-8"></script>
+<script src="js/transaction-grouping.js?v=20260807-8"></script>
+<script src="js/app.js?v=20260807-8"></script>
 </body>
 </html>
