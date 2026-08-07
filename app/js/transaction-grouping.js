@@ -49,6 +49,178 @@
     return label || transaction.description || "Unknown merchant";
   }
 
+  function accountSourceOrder(transaction) {
+    var provenance = transaction.provenance || {};
+    function pad(value, width) {
+      var text = String(value || 0);
+      while (text.length < width) text = "0" + text;
+      return text;
+    }
+    return String(transaction.month || "") + "|" +
+      String(provenance.sourceFile || "") + "|" +
+      pad(provenance.page, 4) + "|" + pad(provenance.line, 6);
+  }
+
+  function accountCounterparty(description) {
+    var original = String(description || "").replace(
+      /\s*Please note that you are bound\b.*$/i, "").trim();
+    var upper = original.toUpperCase();
+    if (/INTERACTIVE BROKERS/.test(upper)) return "Interactive Brokers";
+    if (/PHILLIP SECURITIES/.test(upper)) return "Phillip Securities";
+    if (/TIGER BROKERS/.test(upper)) return "Tiger Brokers";
+    if (/IRAS|INLAND REVENUE/.test(upper)) return "IRAS";
+    if (/SALARY PAYMENT DSTA|GIRO SALA/.test(upper)) return "DSTA salary";
+    if (/SUPPLIERPYMT DSTA|GIRO SUPP/.test(upper)) return "DSTA reimbursement";
+    if (/ONE BONUS INTEREST/.test(upper)) return "UOB One bonus interest";
+    if (/INTEREST CREDIT/.test(upper)) return "UOB interest";
+    if (/UOB CARDS?/.test(upper)) return "UOB Cards";
+    if (/HSBC CC/.test(upper)) return "HSBC credit card";
+    if (/SHOPEEPAY/.test(upper)) return "ShopeePay";
+
+    var nets = original.match(/NETS Debit-Consumer\s+(.+?)(?:\d{8}|\s+x{4,}\d+)/i);
+    if (nets) original = nets[1];
+    original = original
+      .replace(/^(?:PAYNOW-FAST|Funds Trf - FAST|Inward (?:Credit|Debit|CR|DR)-FAST)\s*/i, "")
+      .replace(/^(?:PAYNOW\s+)?OTHR\s+/i, "")
+      .replace(/\b(?:PIB|MBK)\d{12,}\b/ig, " ")
+      .replace(/\b(?:OTHR|COLL|SALA|SUPP)\b/ig, " ")
+      .replace(/\b(?:Transfer|PayNow)\s*-?\s*(?:Mobile|UEN)?\b.*$/i, " ")
+      .replace(/\b(?:Q[A-Z0-9]{8,}|[A-Z0-9]*\d[A-Z0-9]{11,})\b/ig, " ")
+      .replace(/\b[xX]{4,}\d+\b/g, " ")
+      .replace(/\s+/g, " ").trim();
+    if (!original) return "Unknown counterparty";
+    return original.toLowerCase().replace(/\b\w/g, function (letter) {
+      return letter.toUpperCase();
+    }).replace(/\b(?:Uob|Dsta|Iras|Nets)\b/g, function (word) {
+      return word.toUpperCase();
+    });
+  }
+
+  function accountIsInternalMovement(transaction) {
+    return {
+      "Transfer": true,
+      "Investment": true,
+      "Retirement (SRS)": true,
+      "Fixed deposit": true,
+      "Credit card bill": true
+    }[transaction.flow] === true;
+  }
+
+  function accountReviewWhitelisted(transaction) {
+    return transaction.direction === "deposit" &&
+      /^Misc Credit\b/i.test((transaction.description || "").trim());
+  }
+
+  function analyzeAccountTransactions(rows, reviewedIds) {
+    var reviewed = reviewedIds || {};
+    var ordered = (rows || []).slice().sort(function (left, right) {
+      return accountSourceOrder(left).localeCompare(accountSourceOrder(right));
+    });
+    var firstSeen = {};
+    var duplicates = {};
+    ordered.forEach(function (transaction) {
+      var counterparty = accountCounterparty(transaction.description);
+      var key = [transaction.date, counterparty, transaction.direction,
+        Number(transaction.amount).toFixed(2)].join("|");
+      if (!duplicates[key]) duplicates[key] = [];
+      duplicates[key].push(transaction.id);
+    });
+    var analysis = {};
+    ordered.forEach(function (transaction) {
+      var counterparty = accountCounterparty(transaction.description);
+      var first = firstSeen[counterparty] === undefined;
+      firstSeen[counterparty] = true;
+      var reasons = [];
+      var checks = [];
+      var internal = accountIsInternalMovement(transaction);
+      if ((transaction.flow || "Other") === "Other" &&
+          !accountReviewWhitelisted(transaction)) {
+        reasons.push("Flow is still unclassified");
+        checks.push("unclassified");
+      }
+      if (transaction.direction === "withdrawal" && transaction.flow === "Transfer" &&
+          transaction.amount >= 500) {
+        reasons.push("Large transfer of S$" + Number(transaction.amount).toFixed(2));
+        checks.push("large-transfer");
+      } else if (transaction.direction === "withdrawal" && !internal &&
+                 transaction.amount >= 1000) {
+        reasons.push("Large non-transfer withdrawal of S$" +
+          Number(transaction.amount).toFixed(2));
+        checks.push("large-withdrawal");
+      }
+      if (transaction.direction === "deposit" && transaction.amount >= 1000 &&
+          ["Salary", "Transfer", "Interest", "Fixed deposit"].indexOf(transaction.flow) === -1) {
+        reasons.push("Large deposit outside a known income or transfer flow");
+        checks.push("large-deposit");
+      }
+      if (first && transaction.direction === "withdrawal" && !internal &&
+          transaction.amount >= 500) {
+        reasons.push("First sizeable payment to this counterparty");
+        checks.push("new-counterparty");
+      }
+      var duplicateKey = [transaction.date, counterparty, transaction.direction,
+        Number(transaction.amount).toFixed(2)].join("|");
+      var matching = duplicates[duplicateKey] || [];
+      if (matching.length > 1 && transaction.amount * matching.length >= 40) {
+        reasons.push(matching.length + " identical same-day bank movements");
+        checks.push("possible-duplicate");
+      }
+      if (transaction.amountSource === "balance") {
+        reasons.push("Amount was derived from the running balance");
+        checks.push("derived-amount");
+      }
+      if (transaction.provenance && transaction.provenance.verified === false) {
+        reasons.push("Source has not been reconciled");
+        checks.push("unverified-source");
+      }
+      analysis[transaction.id] = {
+        counterparty: counterparty,
+        firstCounterparty: first,
+        internalMovement: internal,
+        reasons: reasons,
+        checks: checks,
+        requiresReview: reasons.length > 0,
+        reviewed: Boolean(reviewed[transaction.id])
+      };
+    });
+    return analysis;
+  }
+
+  function groupAccountTransactions(rows) {
+    var groups = {};
+    (rows || []).forEach(function (transaction) {
+      var counterparty = transaction.counterparty ||
+        accountCounterparty(transaction.description);
+      var key = [counterparty, transaction.flow, transaction.direction].join("|");
+      if (!groups[key]) {
+        groups[key] = {
+          label: counterparty,
+          flow: transaction.flow || "Other",
+          direction: transaction.direction,
+          count: 0,
+          amount: 0,
+          lastDate: transaction.date || transaction.month,
+          reviewCount: 0
+        };
+      }
+      var group = groups[key];
+      group.count += 1;
+      group.amount += Number(transaction.amount || 0);
+      if (transaction.accountReview && transaction.accountReview.requiresReview &&
+          !transaction.accountReview.reviewed) group.reviewCount += 1;
+      if ((transaction.date || transaction.month) > group.lastDate) {
+        group.lastDate = transaction.date || transaction.month;
+      }
+    });
+    return Object.keys(groups).map(function (key) {
+      groups[key].amount = roundMoney(groups[key].amount);
+      return groups[key];
+    }).sort(function (left, right) {
+      return Math.abs(right.amount) - Math.abs(left.amount) ||
+        right.lastDate.localeCompare(left.lastDate);
+    });
+  }
+
   function groupPurchases(rows) {
     var groups = {};
     rows.forEach(function (transaction) {
@@ -314,26 +486,55 @@
       deposits: 0,
       withdrawals: 0,
       netMovement: 0,
+      nonTransferSpending: 0,
       withdrawalFlows: {},
-      latestBalance: null
+      spendingFlows: {},
+      openingBalance: null,
+      closingBalance: null,
+      latestBalance: null,
+      reconciliationGap: null
     };
-    rows.forEach(function (transaction) {
+    var ordered = rows.slice().sort(function (left, right) {
+      return accountSourceOrder(left).localeCompare(accountSourceOrder(right));
+    });
+    ordered.forEach(function (transaction) {
       if (transaction.direction === "deposit") result.deposits += transaction.amount;
       else result.withdrawals += transaction.amount;
       if (transaction.direction === "withdrawal") {
         result.withdrawalFlows[transaction.flow] =
           (result.withdrawalFlows[transaction.flow] || 0) + transaction.amount;
-      }
-      if (transaction.balance !== undefined && transaction.balance !== null &&
-          (!result.latestBalance || transaction.date >= result.latestBalance.date)) {
-        result.latestBalance = { date: transaction.date, amount: transaction.balance };
+        if (!accountIsInternalMovement(transaction)) {
+          result.nonTransferSpending += transaction.amount;
+          result.spendingFlows[transaction.flow] =
+            (result.spendingFlows[transaction.flow] || 0) + transaction.amount;
+        }
       }
     });
+    if (ordered.length) {
+      var first = ordered[0];
+      var last = ordered[ordered.length - 1];
+      var firstDelta = first.direction === "deposit" ? first.amount : -first.amount;
+      result.openingBalance = roundMoney(first.balance - firstDelta);
+      result.closingBalance = roundMoney(last.balance);
+      result.latestBalance = {
+        date: last.date,
+        amount: result.closingBalance,
+        sourceOrder: accountSourceOrder(last)
+      };
+    }
     result.deposits = roundMoney(result.deposits);
     result.withdrawals = roundMoney(result.withdrawals);
     result.netMovement = roundMoney(result.deposits - result.withdrawals);
+    result.nonTransferSpending = roundMoney(result.nonTransferSpending);
+    if (result.openingBalance !== null && result.closingBalance !== null) {
+      result.reconciliationGap = roundMoney(
+        result.closingBalance - (result.openingBalance + result.netMovement));
+    }
     Object.keys(result.withdrawalFlows).forEach(function (flow) {
       result.withdrawalFlows[flow] = roundMoney(result.withdrawalFlows[flow]);
+    });
+    Object.keys(result.spendingFlows).forEach(function (flow) {
+      result.spendingFlows[flow] = roundMoney(result.spendingFlows[flow]);
     });
     return result;
   }
@@ -352,11 +553,33 @@
     }, 0) / months.length);
   }
 
+  function averageAccountSpending(rows, months) {
+    if (!months.length) return null;
+    var totals = {};
+    months.forEach(function (month) { totals[month] = 0; });
+    rows.forEach(function (transaction) {
+      if (totals[transaction.month] === undefined ||
+          transaction.direction !== "withdrawal" ||
+          accountIsInternalMovement(transaction)) return;
+      totals[transaction.month] += transaction.amount;
+    });
+    return roundMoney(months.reduce(function (sum, month) {
+      return sum + totals[month];
+    }, 0) / months.length);
+  }
+
   return {
+    accountCounterparty: accountCounterparty,
+    accountIsInternalMovement: accountIsInternalMovement,
+    accountReviewWhitelisted: accountReviewWhitelisted,
+    accountSourceOrder: accountSourceOrder,
+    analyzeAccountTransactions: analyzeAccountTransactions,
     averageAccountMovement: averageAccountMovement,
+    averageAccountSpending: averageAccountSpending,
     averageForMonths: averageForMonths,
     bindToggle: bindToggle,
     groupPurchases: groupPurchases,
+    groupAccountTransactions: groupAccountTransactions,
     merchantKey: merchantKey,
     monthLabel: monthLabel,
     settlementPosition: settlementPosition,

@@ -494,6 +494,13 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
 .filters input[type="search"] { flex: 1; min-width: 170px; }
+.bank-review-controls {
+  flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
+  padding: 9px 10px; border: 1px solid var(--border); border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 72%, transparent);
+}
+.bank-review-controls select { min-height: 32px; }
+.bank-internal-toggle { margin-left: auto; }
 .pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .pill {
   border: 1px solid var(--border); background: var(--surface); color: var(--text-2);
@@ -556,6 +563,10 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   grid-template-columns: minmax(150px, 0.72fr) minmax(250px, 1.35fr) minmax(210px, 1fr);
   gap: 14px; margin: 4px 0 18px; padding: 14px;
   border: 1px solid var(--border); border-radius: 11px; background: var(--surface-2);
+}
+.transaction-summary.bank-summary {
+  grid-template-columns: minmax(170px, 0.85fr) minmax(210px, 1fr)
+    minmax(220px, 1.05fr) minmax(170px, 0.8fr);
 }
 .transaction-summary-total,
 .transaction-breakdown { min-width: 0; }
@@ -641,6 +652,12 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .grouped-purchase-row:hover td { background: var(--surface-2); }
 .grouped-count { color: var(--text-2); font-size: 11px; }
 .bank-flow { background: var(--accent-soft); color: var(--accent); }
+.bank-counterparty { font-weight: 600; }
+.bank-description-raw {
+  display: block; margin-top: 2px; overflow: hidden; color: var(--text-3);
+  font-size: 10px; font-weight: 400; line-height: 1.25; text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .bank-balance { color: var(--text-2); font-variant-numeric: tabular-nums; }
 .ledger td.bank-amount { text-align: right; font-variant-numeric: tabular-nums; }
 .ledger td.bank-amount.credit { color: var(--green); }
@@ -655,6 +672,33 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 }
 .bank-direction.money-in { color: var(--green); background: var(--green-soft); }
 .bank-direction.money-out { color: var(--red); background: var(--red-soft); }
+.review-badge {
+  display: inline-flex; margin-left: 7px; padding: 1px 6px; border-radius: 999px;
+  font-size: 9.5px; font-weight: 700; line-height: 1.5; vertical-align: 1px;
+  text-transform: uppercase; letter-spacing: 0.025em;
+}
+.review-badge.reviewed { color: var(--green); background: var(--green-soft); }
+.review-clear { color: var(--green) !important; }
+.review-pending { color: var(--red) !important; }
+.bank-review-summary { display: flex; flex-direction: column; justify-content: center; gap: 5px; }
+.bank-review-summary > strong { font-size: 18px; line-height: 1.15; }
+.bank-review-summary > small { color: var(--text-3); font-size: 10.5px; }
+.bank-review-link {
+  align-self: flex-start; color: var(--accent); font-size: 11px; font-weight: 700;
+  text-decoration: none; text-underline-offset: 3px;
+}
+.bank-review-link:hover { text-decoration: underline; }
+.bank-review-link:focus-visible {
+  border-radius: 4px; outline: 2px solid var(--accent); outline-offset: 3px;
+}
+.bank-review-progress {
+  display: block; width: 100%; height: 6px; margin-top: 4px; overflow: hidden;
+  border-radius: 999px; background: var(--border);
+}
+.bank-review-progress > span {
+  display: block; height: 100%; border-radius: inherit; background: var(--green);
+  transition: width var(--motion-medium) var(--motion-ease);
+}
 .risk-row td:first-child {
   box-shadow: inset 3px 0 0 color-mix(in srgb, var(--red) 62%, transparent);
 }
@@ -1152,6 +1196,9 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .filters input[type="search"] { min-width: 120px; }
   .panel-head-actions { flex-wrap: wrap; }
   .transaction-summary { grid-template-columns: 1fr 1fr; }
+  .transaction-summary.bank-summary { grid-template-columns: 1fr 1fr; }
+  .bank-review-controls { align-items: stretch; }
+  .bank-internal-toggle { margin-left: 0; flex: 1 1 100%; }
   .transaction-summary-total {
     grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) auto;
     align-items: end; padding: 0 0 12px; border-right: 0; border-bottom: 1px solid var(--border);
@@ -1170,6 +1217,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .panel-head-actions { gap: 6px; }
   .history-button { padding-left: 7px; padding-right: 7px; }
   .transaction-summary { grid-template-columns: 1fr; padding: 12px; }
+  .transaction-summary.bank-summary { grid-template-columns: 1fr; }
   .transaction-summary-total { grid-column: 1; display: flex; align-items: flex-start; }
   .transaction-summary-total small { text-align: left; }
   .transaction-average { width: 100%; }
