@@ -7,10 +7,12 @@ window.Charts = (function () {
   var NS = "http://www.w3.org/2000/svg";
   var MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
+  // Colors resolve through CSS custom properties so dark mode supplies its own
+  // validated steps instead of reusing the light hexes.
   var SERIES = [
-    { key: "income", label: "Income", color: "#1baf7a", side: "up" },
-    { key: "spent", label: "Spending", color: "#eb6834", side: "up" },
-    { key: "invested", label: "Invested", color: "#7f77dd", side: "down" }
+    { key: "income", label: "Income", color: "var(--series-income)", side: "up" },
+    { key: "spent", label: "Spending", color: "var(--series-spent)", side: "up" },
+    { key: "invested", label: "Invested", color: "var(--series-invested)", side: "down" }
   ];
 
   function node(tag, attrs) {
@@ -138,7 +140,7 @@ window.Charts = (function () {
 
       function value(x, y, amount, anchor, capped) {
         var t = label(x, y, compact(amount) + (capped ? "↑" : ""),
-          { anchor: anchor || "middle", size: 9 });
+          { anchor: anchor || "middle", size: 10 });
         t.setAttribute("class", "val" + (denseLabels ? " dense" : "") +
           (capped ? " capped" : ""));
         col.appendChild(t);
@@ -150,7 +152,7 @@ window.Charts = (function () {
         col.appendChild(node("rect", {
           class: "chart-bar chart-bar-up",
           x: cx - pairW - 1, y: axisY - hI, width: pairW, height: Math.max(1, hI),
-          rx: 2, fill: "#1baf7a"
+          rx: 2, fill: "var(--series-income)"
         }));
         value(cx - pairW / 2 - 1,
           incomeCapped ? plotTop + 10 : axisY - hI - 4, r.income, "middle", incomeCapped);
@@ -161,7 +163,7 @@ window.Charts = (function () {
         col.appendChild(node("rect", {
           class: "chart-bar chart-bar-up",
           x: cx + 1, y: axisY - hS, width: pairW, height: Math.max(1, hS),
-          rx: 2, fill: "#eb6834"
+          rx: 2, fill: "var(--series-spent)"
         }));
         value(cx + pairW / 2 + 1,
           spentCapped ? plotTop + 10 : axisY - hS - 4, r.spent, "middle", spentCapped);
@@ -171,7 +173,7 @@ window.Charts = (function () {
         col.appendChild(node("rect", {
           class: "chart-bar chart-bar-down",
           x: cx - pairW / 2, y: axisY, width: pairW, height: Math.max(1, hV),
-          rx: 2, fill: "#7f77dd"
+          rx: 2, fill: "var(--series-invested)"
         }));
         value(cx, axisY + hV + 11, r.invested);
       }
