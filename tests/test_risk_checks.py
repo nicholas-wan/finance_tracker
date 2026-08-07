@@ -68,13 +68,19 @@ class RiskCheckTests(unittest.TestCase):
     def test_earlier_credit_cannot_net_a_later_charge(self):
         # A refund reverses an earlier charge. The old abs() window let this
         # credit, four days BEFORE the charges, erase their duplicate signal -
-        # a temporally impossible reversal.
+        # a temporally impossible reversal. The duplicate stays flagged, and
+        # the credit itself is surfaced: it precedes every charge from this
+        # merchant, which is the unmatched-credit shape.
         rows = [
             transaction("tx_r", 960, "refund", date="2026-01-01", description="SHOP"),
             transaction("tx_a", 960, date="2026-01-05", description="SHOP"),
             transaction("tx_b", 960, date="2026-01-05", description="SHOP"),
         ]
-        self.assertEqual(signals(rows)["count"], 1)
+        result = signals(rows)
+        self.assertEqual(
+            checks_of(result),
+            ["first-observed-high-value", "same-day-duplicate",
+             "unmatched-large-credit"])
 
     def test_later_refund_within_a_week_still_nets(self):
         rows = [
@@ -289,10 +295,10 @@ class CategoryOverrideTests(unittest.TestCase):
 
     def test_genuinely_excluded_rule_category_is_still_skipped(self):
         rows = [
-            transaction("tx_a", 70.40, description="PREMIUM",
-                        category="Shopping", rule_category="Insurance"),
-            transaction("tx_b", 70.40, description="PREMIUM",
-                        category="Shopping", rule_category="Insurance"),
+            transaction("tx_a", 70.40, description="CARD BILL",
+                        category="Shopping", rule_category="Payment"),
+            transaction("tx_b", 70.40, description="CARD BILL",
+                        category="Shopping", rule_category="Payment"),
         ]
         self.assertEqual(signals(rows)["count"], 0)
 
@@ -301,6 +307,81 @@ class CategoryOverrideTests(unittest.TestCase):
             transaction("tx_foreign", 240, description="FERRY COMPANY",
                         category="Shopping", rule_category="Travel",
                         foreign="AUD 260.00")
+        ]
+        self.assertEqual(signals(rows)["count"], 0)
+
+
+class DuplicateOnlyCategoryTests(unittest.TestCase):
+    """Insurance and fees run the duplicate checks but not the amount checks."""
+
+    def test_duplicated_insurance_premium_flags(self):
+        rows = [
+            transaction("tx_a", 212.59, description="LIFE INSURER",
+                        category="Insurance"),
+            transaction("tx_b", 212.59, description="LIFE INSURER",
+                        category="Insurance"),
+        ]
+        result = signals(rows)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(checks_of(result), ["same-day-duplicate"])
+
+    def test_large_first_premium_does_not_trip_amount_checks(self):
+        # A first-ever S$2,000 premium is normal for insurance; the same amount
+        # at a shopping merchant fires first-observed-high-value.
+        premium = [transaction("tx_a", 2000, description="LIFE INSURER",
+                               category="Insurance")]
+        self.assertEqual(signals(premium)["count"], 0)
+        shop = [transaction("tx_b", 2000, description="SOME SHOP",
+                            category="Shopping")]
+        self.assertEqual(signals(shop)["count"], 1)
+
+
+class UnmatchedCreditTests(unittest.TestCase):
+    """A material credit from a merchant that never charged this card."""
+
+    def test_large_credit_with_no_charge_history_flags(self):
+        rows = [
+            transaction("tx_cr", 850.0, tx_type="refund",
+                        description="UNKNOWN SELLER"),
+        ]
+        result = signals(rows)
+        self.assertEqual(result["count"], 1)
+        self.assertEqual(checks_of(result), ["unmatched-large-credit"])
+        self.assertEqual(rows[0]["risk"]["severity"], "medium")
+        self.assertTrue(rows[0]["risk"]["primary"])
+
+    def test_credit_over_a_thousand_is_high_severity(self):
+        rows = [
+            transaction("tx_cr", 1500.0, tx_type="refund",
+                        description="UNKNOWN SELLER"),
+        ]
+        result = signals(rows)
+        self.assertEqual(result["high"], 1)
+
+    def test_slow_refund_with_prior_charge_stays_quiet(self):
+        # Charged in January, refunded in March: far outside the netting
+        # window, but the merchant relationship is real.
+        rows = [
+            transaction("tx_buy", 850.0, date="2026-01-05",
+                        description="TRAVEL AGENT"),
+            transaction("tx_cr", 850.0, tx_type="refund", date="2026-03-20",
+                        description="TRAVEL AGENT"),
+        ]
+        result = signals(rows)
+        self.assertEqual(
+            [c for c in checks_of(result) if c == "unmatched-large-credit"], [])
+
+    def test_small_unknown_credit_stays_quiet(self):
+        rows = [
+            transaction("tx_cr", 60.0, tx_type="refund",
+                        description="UNKNOWN SELLER"),
+        ]
+        self.assertEqual(signals(rows)["count"], 0)
+
+    def test_rebate_credits_stay_exempt(self):
+        rows = [
+            transaction("tx_cr", 400.0, tx_type="refund",
+                        description="BANK REBATE", category="Rebates"),
         ]
         self.assertEqual(signals(rows)["count"], 0)
 

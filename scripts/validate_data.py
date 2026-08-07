@@ -15,6 +15,7 @@ from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
+from build_data import tag_key  # noqa: E402
 from risk_checks import signal_key  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -179,6 +180,15 @@ def main():
         os.path.join(MANUAL_DIR, "audit_history.json"), {"entries": []})
     account_review_data = load_optional(
         os.path.join(MANUAL_DIR, "account_reviews.json"), {"reviewedIds": []})
+    salary_data = load_optional(
+        os.path.join(MANUAL_DIR, "salary.json"), {"steps": [], "years": []})
+    game_sales_data = load_optional(
+        os.path.join(MANUAL_DIR, "game_sales.json"), {"sales": []})
+    owner_rules_data = load_optional(
+        os.path.join(MANUAL_DIR, "owner_rules.json"), {"rules": {}, "confirmed": []})
+    manual_settlements = load_optional(
+        os.path.join(MANUAL_DIR, "settlements.json"),
+        {"openingBalances": [], "payments": []})
 
     errors = []
     warnings = []
@@ -540,6 +550,137 @@ def main():
             errors.append("remark %s no longer matches a transaction" % tx_id)
         elif built.get("remark") != remark:
             errors.append("remark %s was not applied" % tx_id)
+
+    # --- Hand-maintained inputs that previously had no validation at all. ---
+    # salary.json, game_sales.json, owner_rules.json, and settlements.json feed
+    # the build directly; a typo in any of them silently skews the dashboard.
+    owner_domain = {"Nic", "Shared", "Yx", "Untagged"}
+
+    def checked_amount(value, label, minimum_exclusive=None):
+        try:
+            amount = float(value)
+            if not math.isfinite(amount):
+                raise ValueError
+            if minimum_exclusive is not None and amount <= minimum_exclusive:
+                raise ValueError
+        except (TypeError, ValueError):
+            errors.append("%s has invalid amount %r" % (label, value))
+
+    salary_steps = salary_data.get("steps")
+    if not isinstance(salary_steps, list):
+        errors.append("salary.steps must be a list")
+        salary_steps = []
+    step_months = []
+    for index, step in enumerate(salary_steps, 1):
+        label = "salary step %d" % index
+        if not isinstance(step, dict):
+            errors.append("%s must be an object" % label)
+            continue
+        if not is_month_key(step.get("from")):
+            errors.append("%s has invalid from month %r" % (label, step.get("from")))
+        else:
+            step_months.append(step["from"])
+        checked_amount(step.get("amount"), label, minimum_exclusive=0)
+    if len(step_months) != len(set(step_months)):
+        errors.append("salary.steps contains duplicate effective months")
+
+    salary_years = salary_data.get("years")
+    if not isinstance(salary_years, list):
+        errors.append("salary.years must be a list")
+        salary_years = []
+    seen_years = set()
+    for index, year_row in enumerate(salary_years, 1):
+        label = "salary year %d" % index
+        if not isinstance(year_row, dict):
+            errors.append("%s must be an object" % label)
+            continue
+        year = year_row.get("year")
+        if not isinstance(year, int) or not 2000 <= year <= 2100:
+            errors.append("%s has invalid year %r" % (label, year))
+        elif year in seen_years:
+            errors.append("salary.years lists %d twice" % year)
+        else:
+            seen_years.add(year)
+        checked_amount(year_row.get("income"), label + " income", minimum_exclusive=0)
+        if year_row.get("tax") is not None:
+            checked_amount(year_row.get("tax"), label + " tax", minimum_exclusive=-1)
+
+    sales = game_sales_data.get("sales")
+    if not isinstance(sales, list):
+        errors.append("game_sales.sales must be a list")
+        sales = []
+    for index, sale in enumerate(sales, 1):
+        label = "game sale %d" % index
+        if not isinstance(sale, dict):
+            errors.append("%s must be an object" % label)
+            continue
+        if not isinstance(sale.get("game"), str) or not sale["game"].strip():
+            errors.append("%s has no game name" % label)
+        if not is_month_key(sale.get("month")):
+            errors.append("%s has invalid month %r" % (label, sale.get("month")))
+        checked_amount(sale.get("amount"), label, minimum_exclusive=0)
+
+    merchant_rules = owner_rules_data.get("rules")
+    if not isinstance(merchant_rules, dict):
+        errors.append("owner_rules.rules must be an object")
+        merchant_rules = {}
+    for merchant, rule_owner in merchant_rules.items():
+        if rule_owner not in owner_domain:
+            errors.append(
+                "owner rule %r assigns unknown owner %r" % (merchant, rule_owner))
+    confirmed = owner_rules_data.get("confirmed", [])
+    if not isinstance(confirmed, list) or any(
+            not isinstance(pattern, str) or not pattern.strip()
+            for pattern in confirmed):
+        errors.append("owner_rules.confirmed must be a list of non-empty patterns")
+
+    # The dashboard reads the settlements copy embedded at build time, not the
+    # manual file, so a drift between them means the build is stale.
+    for field in ("openingBalances", "payments"):
+        embedded = settlements.get(field) if isinstance(settlements, dict) else None
+        if json.dumps(manual_settlements.get(field, []), sort_keys=True) != \
+                json.dumps(embedded, sort_keys=True):
+            errors.append(
+                "settlements.%s in the dashboard differs from manual/settlements.json - "
+                "rebuild before trusting the Split tab" % field)
+
+    # The legacy month|description|amount|direction tags are structurally
+    # validated (a malformed key or unknown owner is an error), but keys that
+    # no longer match a card row are only reported. They accumulate whenever a
+    # statement month is relabeled and are harmless as long as tagsById covers
+    # the affected rows, so they fail no mode; the count keeps the drift visible.
+    legacy_tags = owner_data.get("tags", {})
+    if not isinstance(legacy_tags, dict):
+        errors.append("owner_tags.tags must be an object")
+        legacy_tags = {}
+    card_key_counts = Counter(
+        tag_key(row["month"], row["description"], row["amount"], bool(row.get("credit")))
+        for row in cards.get("transactions", [])
+        if is_month_key(row.get("month")) and isinstance(row.get("description"), str)
+        and isinstance(row.get("amount"), (int, float))
+    )
+    orphaned_tag_keys = 0
+    overfilled_tag_keys = 0
+    for key, owners in legacy_tags.items():
+        parts = key.split("|") if isinstance(key, str) else []
+        if len(parts) != 4 or not is_month_key(parts[0]) or parts[3] not in ("C", "D"):
+            errors.append("legacy owner tag has malformed key %r" % key)
+            continue
+        if not isinstance(owners, list) or not owners or any(
+                owner not in owner_domain for owner in owners):
+            errors.append("legacy owner tag %r has invalid owner list %r" % (key, owners))
+            continue
+        matching_rows = card_key_counts.get(key, 0)
+        if matching_rows == 0:
+            orphaned_tag_keys += 1
+        elif len(owners) > matching_rows:
+            overfilled_tag_keys += 1
+    if orphaned_tag_keys or overfilled_tag_keys:
+        print(
+            "Note: %d legacy owner-tag key(s) match no card row and %d carry more "
+            "owners than matching rows (informational; tagsById is authoritative)"
+            % (orphaned_tag_keys, overfilled_tag_keys)
+        )
 
     # Risk group IDs are recomputed on every build, so they must resolve as well;
     # a group naming a row that is not in the output means the check was raised

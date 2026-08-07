@@ -257,12 +257,23 @@ def write_tree(root, data):
     write(os.path.join(data_dir, "card_transactions.json"), data["cards"])
     write(os.path.join(data_dir, "transactions.json"), data["output"])
     write(os.path.join(manual_dir, "legacy_transactions.json"), data["legacy"])
-    write(os.path.join(manual_dir, "owner_tags.json"), {"tags": {}, "tagsById": {}})
+    write(os.path.join(manual_dir, "owner_tags.json"),
+          data.get("owner_tags", {"tags": {}, "tagsById": {}}))
     write(os.path.join(manual_dir, "transaction_overrides.json"), {"overridesById": {}})
     write(os.path.join(manual_dir, "transaction_remarks.json"), {"remarksById": {}})
     write(os.path.join(manual_dir, "risk_reviews.json"), {"recognizedSignals": []})
     write(os.path.join(manual_dir, "audit_history.json"), {"entries": []})
     write(os.path.join(manual_dir, "account_reviews.json"), {"reviewedIds": []})
+    # Hand-maintained inputs are optional on disk; a test opts in by putting
+    # the payload in its dataset under these keys.
+    for key, filename in (
+        ("salary", "salary.json"),
+        ("game_sales", "game_sales.json"),
+        ("owner_rules", "owner_rules.json"),
+        ("settlements_manual", "settlements.json"),
+    ):
+        if key in data:
+            write(os.path.join(manual_dir, filename), data[key])
     return data_dir, manual_dir
 
 
@@ -616,6 +627,107 @@ class MalformedKeyTests(unittest.TestCase):
         failed, output = run(mutate)
         self.assertTrue(failed)
         self.assertIn("has invalid date", output)
+
+
+class ManualInputTests(unittest.TestCase):
+    """The hand-maintained files that feed the build are validated too."""
+
+    def test_well_formed_manual_files_pass(self):
+        def mutate(data):
+            data["salary"] = {
+                "steps": [{"from": CARD_MONTHS[0], "amount": 5000}],
+                "years": [{"year": 2025, "income": 60000, "tax": 1200}],
+            }
+            data["game_sales"] = {
+                "sales": [{"game": "Synth Quest", "month": CARD_MONTHS[0],
+                           "amount": 120.0}],
+            }
+            data["owner_rules"] = {
+                "rules": {"SYNTH GROCERY": "Shared"}, "confirmed": ["SYNTH GROCERY"],
+            }
+        failed, output = run(mutate)
+        self.assertFalse(failed, output)
+
+    def test_salary_step_with_malformed_month_fails(self):
+        def mutate(data):
+            data["salary"] = {
+                "steps": [{"from": "2026/01", "amount": 5000}], "years": [],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("invalid from month", output)
+
+    def test_duplicate_salary_year_fails(self):
+        def mutate(data):
+            data["salary"] = {
+                "steps": [],
+                "years": [{"year": 2025, "income": 1}, {"year": 2025, "income": 2}],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("lists 2025 twice", output)
+
+    def test_non_positive_game_sale_fails(self):
+        def mutate(data):
+            data["game_sales"] = {
+                "sales": [{"game": "Synth Quest", "month": CARD_MONTHS[0],
+                           "amount": 0}],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("game sale 1 has invalid amount", output)
+
+    def test_owner_rule_with_unknown_owner_fails(self):
+        def mutate(data):
+            data["owner_rules"] = {"rules": {"SYNTH GROCERY": "Everyone"},
+                                   "confirmed": []}
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("unknown owner", output)
+
+    def test_settlement_drift_from_manual_file_fails(self):
+        # The dashboard's embedded copy stays empty while the manual file gains
+        # an opening balance: the build is stale and the Split tab is wrong.
+        def mutate(data):
+            data["settlements_manual"] = {
+                "openingBalances": [
+                    {"from": CARD_MONTHS[0], "youOweYx": 250.0}],
+                "payments": [],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("differs from manual/settlements.json", output)
+
+    def test_malformed_legacy_tag_key_fails(self):
+        def mutate(data):
+            data["owner_tags"] = {
+                "tags": {"not-a-tag-key": ["Nic"]}, "tagsById": {},
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("malformed key", output)
+
+    def test_legacy_tag_with_unknown_owner_fails(self):
+        def mutate(data):
+            data["owner_tags"] = {
+                "tags": {"2020-01|SOME MERCHANT|10.00|D": ["Everyone"]},
+                "tagsById": {},
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("invalid owner list", output)
+
+    def test_orphaned_legacy_tags_note_without_failing(self):
+        # A well-formed key that no longer matches any card row is reported as
+        # a count, not an error: relabeled statement months make these normal.
+        def mutate(data):
+            data["owner_tags"] = {
+                "tags": {"2020-01|LONG GONE MERCHANT|10.00|D": ["Nic"]},
+                "tagsById": {},
+            }
+        failed, output = run(mutate)
+        self.assertFalse(failed, output)
+        self.assertIn("1 legacy owner-tag key(s) match no card row", output)
 
 
 if __name__ == "__main__":

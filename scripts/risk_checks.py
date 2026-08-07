@@ -17,7 +17,15 @@ from datetime import date
 from statistics import median
 
 
-EXCLUDED_CATEGORIES = {"Payment", "Rebates", "Fees & charges", "Insurance"}
+# Card-bill payments and rebates are statement mechanics, not purchases, and
+# every row would otherwise trip the history-based checks.
+EXCLUDED_CATEGORIES = {"Payment", "Rebates"}
+# Premiums and bank fees are large by nature, so the amount-based checks would
+# cry wolf - but a double-billed premium is exactly a duplicate, so these
+# categories run the duplicate/burst checks and skip the amount checks. They
+# used to be excluded outright, which meant a duplicated insurance premium
+# could never flag.
+DUPLICATE_ONLY_CATEGORIES = {"Fees & charges", "Insurance"}
 SEVERITY_RANK = {"low": 1, "medium": 2, "high": 3}
 
 # Card reversals rarely post on the charge date. A week covers the usual
@@ -51,6 +59,11 @@ FOREIGN_MIN_REVIEW = 200.0
 
 # Charges below this are noise for the duplicate check regardless of count.
 DUPLICATE_MIN_TOTAL = 40.0
+
+# A material credit from a merchant that was never charged before is the shape
+# of a fake-refund setup, so it deserves a look. Ordinary slow refunds stay
+# quiet because their merchant has prior charges.
+UNMATCHED_CREDIT_MIN = 200.0
 
 CENT = 0.005
 
@@ -124,6 +137,7 @@ def _collect(transactions, merchant_key):
                 "day": _day_ordinal(when),
                 "amount": round(float(transaction["amount"]), 2),
                 "used": 0.0,
+                "row": transaction,
             })
         elif row_type == "debit":
             debit_groups[(when, key)].append(transaction)
@@ -288,8 +302,12 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
 
         history = merchant_history[key]
         category = _rule_category(debits[0])
+        # Duplicate-only categories still reach this loop for the duplicate and
+        # burst checks above/below, but their amounts are routinely large, so
+        # the history/amount checks would flag every premium.
+        amount_checks = category not in DUPLICATE_ONLY_CATEGORIES
 
-        if not history and net >= 1500:
+        if amount_checks and not history and net >= 1500:
             reasons.append(
                 "First observed day for this merchant in the available history totals S$%.2f"
                 % net
@@ -300,7 +318,7 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
                 "high" if net >= 3000 else "medium",
             )
 
-        if 0 < len(history) < OUTLIER_MIN_HISTORY:
+        if amount_checks and 0 < len(history) < OUTLIER_MIN_HISTORY:
             prior_max = max(history)
             threshold = max(prior_max * SHORT_HISTORY_MULTIPLE, SHORT_HISTORY_FLOOR)
             if net >= threshold:
@@ -318,7 +336,7 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
 
         typical = median(history) if len(history) >= OUTLIER_MIN_HISTORY else None
         ratio = net / max(typical or 0, 0.01)
-        if typical and net >= 300 and ratio >= 10:
+        if amount_checks and typical and net >= 300 and ratio >= 10:
             reasons.append(
                 "S$%.2f net charge is %.0fx this merchant's usual S$%.2f"
                 % (net, ratio, typical)
@@ -370,7 +388,8 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
         unseen = [code for code in currencies if (key, code) not in foreign_history]
         surfaced_foreign = False
         if (
-            unseen
+            amount_checks
+            and unseen
             and net >= FOREIGN_MIN_REVIEW
             and category not in {"Games", "Travel"}
         ):
@@ -417,6 +436,44 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
             "transaction": representative,
             "risk": representative["risk"],
         })
+
+    # Credit-side check: every check above fires on debits, so a fabricated
+    # "refund" from a merchant that never charged this card sailed through.
+    # Ordinary slow refunds are quiet here because their merchant has at least
+    # one charge on or before the credit date.
+    first_debit_day = {}
+    for (when, key) in debit_groups:
+        day = _day_ordinal(when)
+        if day is None:
+            continue
+        if key not in first_debit_day or day < first_debit_day[key]:
+            first_debit_day[key] = day
+
+    for key, pool in refund_pool.items():
+        for refund in pool:
+            if refund["amount"] < UNMATCHED_CREDIT_MIN or refund["day"] is None:
+                continue
+            earliest = first_debit_day.get(key)
+            if earliest is not None and earliest <= refund["day"]:
+                continue
+            row = refund["row"]
+            checks = ["unmatched-large-credit"]
+            group_ids = [row["id"]]
+            identity = signal_key(group_ids, checks)
+            risk = {
+                "key": identity,
+                "severity": "high" if refund["amount"] >= 1000 else "medium",
+                "reasons": [
+                    "S$%.2f credited by a merchant with no earlier charge "
+                    "in the available history" % refund["amount"]
+                ],
+                "checks": checks,
+                "groupIds": group_ids,
+                "reviewAmount": refund["amount"],
+                "recognized": identity in known,
+            }
+            row["risk"] = dict(risk, primary=True)
+            signals.append({"transaction": row, "risk": row["risk"]})
 
     unresolved = [signal for signal in signals if not signal["risk"]["recognized"]]
     severity_counts = {

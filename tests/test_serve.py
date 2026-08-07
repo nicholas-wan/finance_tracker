@@ -320,5 +320,293 @@ class StaticFileGuardTests(unittest.TestCase):
         self.assertNotIn(b"transactions.json", body)
 
 
+class SaveWritePathTests(unittest.TestCase):
+    """The save/build/validate/rollback machinery against a throwaway manual/.
+
+    Stub build and validate scripts stand in for the real pipeline: the build
+    stub copies a pre-staged "rebuilt" transactions file into place and logs
+    each run, and the validate stub either passes or fails on demand. Every
+    test asserts the on-disk state of all files a save touches, because the
+    rollback contract is exactly "all files or none".
+    """
+
+    TX_ID = "tx_write0001"
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="serve-write-"))
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        manual = self.dir / "manual"
+        manual.mkdir()
+        data = self.dir / "data"
+        data.mkdir()
+
+        self.paths = {
+            "OWNER_PATH": manual / "owner_tags.json",
+            "REMARK_PATH": manual / "transaction_remarks.json",
+            "OVERRIDE_PATH": manual / "transaction_overrides.json",
+            "AUDIT_PATH": manual / "audit_history.json",
+            "TRANSACTIONS_PATH": data / "transactions.json",
+        }
+        seeds = {
+            "OWNER_PATH": {"tagsById": {}},
+            "REMARK_PATH": {"remarksById": {}},
+            "OVERRIDE_PATH": {"overridesById": {}},
+            "AUDIT_PATH": {"entries": []},
+            "TRANSACTIONS_PATH": {
+                "transactions": [self.row()],
+                "quality": {"seed": True},
+            },
+        }
+        for name, payload in seeds.items():
+            self.paths[name].write_text(
+                json.dumps(payload, indent=1) + "\n", encoding="utf-8"
+            )
+        self.originals = {
+            name: path.read_bytes() for name, path in self.paths.items()
+        }
+
+        self.log = self.dir / "script_log.txt"
+        self.applied = self.dir / "applied.json"
+        build = self.dir / "stub_build.py"
+        build.write_text(
+            "import pathlib, shutil\n"
+            "here = pathlib.Path(__file__).parent\n"
+            "with (here / 'script_log.txt').open('a') as log:\n"
+            "    log.write('build\\n')\n"
+            "if (here / 'applied.json').exists():\n"
+            "    shutil.copy(here / 'applied.json', here / 'data' / 'transactions.json')\n",
+            encoding="utf-8",
+        )
+        validate_ok = self.dir / "stub_validate_ok.py"
+        validate_ok.write_text(
+            "import pathlib\n"
+            "here = pathlib.Path(__file__).parent\n"
+            "with (here / 'script_log.txt').open('a') as log:\n"
+            "    log.write('validate\\n')\n"
+            "print('All checks passed')\n",
+            encoding="utf-8",
+        )
+        validate_fail = self.dir / "stub_validate_fail.py"
+        validate_fail.write_text(
+            "import sys\n"
+            "print('validation exploded on purpose')\n"
+            "sys.exit(1)\n",
+            encoding="utf-8",
+        )
+        self.scripts = {
+            "build": build, "ok": validate_ok, "fail": validate_fail,
+        }
+
+        self.patched = []
+        for name, path in self.paths.items():
+            self.patch_module(name, path)
+        self.patch_module("BUILD_SCRIPT", build)
+        self.patch_module("VALIDATE_SCRIPT", validate_ok)
+
+    def patch_module(self, name, value):
+        self.patched.append((name, getattr(serve, name)))
+        setattr(serve, name, value)
+        self.addCleanup(lambda n=name: setattr(
+            serve, n, dict(self.patched)[n]))
+
+    def row(self, **overrides):
+        base = {
+            "id": self.TX_ID,
+            "date": "2026-01-02",
+            "description": "REDACTED MERCHANT",
+            "amount": -12.5,
+            "owner": "Nic",
+            "ownerSource": "merchant-rule",
+            "category": "Shopping",
+            "displayName": "",
+            "remark": "",
+        }
+        base.update(overrides)
+        return base
+
+    def stage_rebuild(self, **overrides):
+        """What the stub build will publish as the rebuilt dashboard."""
+        self.applied.write_text(json.dumps({
+            "transactions": [self.row(**overrides)],
+            "quality": {"rebuilt": True},
+        }), encoding="utf-8")
+
+    def script_runs(self):
+        if not self.log.exists():
+            return []
+        return self.log.read_text(encoding="utf-8").split()
+
+    def read(self, name):
+        return json.loads(self.paths[name].read_text(encoding="utf-8"))
+
+    def assert_untouched(self, *names):
+        for name in names:
+            self.assertEqual(
+                self.paths[name].read_bytes(), self.originals[name],
+                "%s should have been rolled back to its original bytes" % name,
+            )
+
+    def assert_backup_matches_original(self, name):
+        backup = self.paths[name].with_suffix(
+            self.paths[name].suffix + ".bak")
+        self.assertTrue(backup.exists(), "%s.bak missing" % name)
+        self.assertEqual(backup.read_bytes(), self.originals[name])
+
+    def test_save_owner_persists_tag_audit_and_reports_quality(self):
+        self.stage_rebuild(owner="Shared", ownerSource="exact-id")
+        result = serve.save_owner(self.TX_ID, "Shared")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["transaction"]["owner"], "Shared")
+        self.assertEqual(result["quality"], {"rebuilt": True})
+        self.assertEqual(self.read("OWNER_PATH")["tagsById"], {self.TX_ID: "Shared"})
+        entries = self.read("AUDIT_PATH")["entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["action"], "Updated owner")
+        self.assertEqual(self.script_runs(), ["build", "validate"])
+        for name in ("OWNER_PATH", "AUDIT_PATH"):
+            self.assert_backup_matches_original(name)
+
+    def test_failed_validation_rolls_back_every_file_and_rebuilds_prior_state(self):
+        self.stage_rebuild(owner="Shared", ownerSource="exact-id")
+        serve.VALIDATE_SCRIPT = self.scripts["fail"]
+        with self.assertRaisesRegex(RuntimeError, "validation exploded"):
+            serve.save_owner(self.TX_ID, "Shared")
+        self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+        # First build applied the edit, second build republished the restored
+        # state - without it app/data keeps serving the rejected edit.
+        self.assertEqual(self.script_runs(), ["build", "build"])
+
+    def test_unapplied_rebuild_rolls_back(self):
+        # The build succeeds but does not carry the new owner into the
+        # dashboard (e.g. a build bug): the save must not stand.
+        self.stage_rebuild(owner="Nic")
+        with self.assertRaisesRegex(RuntimeError, "did not apply"):
+            serve.save_owner(self.TX_ID, "Shared")
+        self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+
+    def test_transaction_detail_failure_restores_all_four_files(self):
+        self.stage_rebuild()
+        serve.VALIDATE_SCRIPT = self.scripts["fail"]
+        with self.assertRaises(RuntimeError):
+            serve.save_transaction_detail(
+                self.TX_ID, "Yx", "Games", "Renamed", "A remark")
+        self.assert_untouched(
+            "OWNER_PATH", "REMARK_PATH", "OVERRIDE_PATH", "AUDIT_PATH")
+
+    def test_all_backups_snapshot_before_any_write(self):
+        # A write that dies on the LAST file must still find every .bak at the
+        # original generation; the old interleaved order left the audit backup
+        # unwritten in this scenario.
+        self.stage_rebuild(owner="Shared", ownerSource="exact-id")
+        real_write = serve.atomic_write_json
+
+        def failing_write(path, payload):
+            if path == serve.AUDIT_PATH:
+                raise RuntimeError("disk full")
+            return real_write(path, payload)
+
+        serve.atomic_write_json = failing_write
+        self.addCleanup(setattr, serve, "atomic_write_json", real_write)
+        with self.assertRaisesRegex(RuntimeError, "disk full"):
+            serve.save_owner(self.TX_ID, "Shared")
+        for name in ("OWNER_PATH", "AUDIT_PATH"):
+            self.assert_backup_matches_original(name)
+        self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+
+    def test_restore_reports_unrestorable_files_and_restores_the_rest(self):
+        good = self.dir / "restorable.json"
+        good.write_text("{}", encoding="utf-8")
+        bad = self.dir / "gone" / "unrestorable.json"  # parent never exists
+        originals = {good: b'{"was": "here"}\n', bad: b"{}"}
+        good.write_text('{"clobbered": true}', encoding="utf-8")
+        failed = serve.restore_originals((good, bad), originals)
+        self.assertEqual(failed, ["unrestorable.json"])
+        self.assertEqual(good.read_bytes(), b'{"was": "here"}\n')
+
+    def test_save_reports_unrestored_files_with_root_cause(self):
+        self.stage_rebuild(owner="Shared", ownerSource="exact-id")
+        serve.VALIDATE_SCRIPT = self.scripts["fail"]
+        real_restore = serve.restore_originals
+
+        def failing_restore(paths, originals):
+            return ["owner_tags.json"]
+
+        serve.restore_originals = failing_restore
+        self.addCleanup(setattr, serve, "restore_originals", real_restore)
+        with self.assertRaisesRegex(
+                RuntimeError, "validation exploded.*owner_tags.json"):
+            serve.save_owner(self.TX_ID, "Shared")
+
+
+class PostEndpointTests(unittest.TestCase):
+    """POST routing through a real server: origin gate, size cap, save wiring."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = Path(tempfile.mkdtemp(prefix="serve-post-"))
+        directory = str(cls.directory)
+
+        class TestHandler(serve.FinanceHandler):
+            def __init__(self, request, client_address, server):
+                super(serve.FinanceHandler, self).__init__(
+                    request, client_address, server, directory=directory
+                )
+
+            def log_message(self, *args):
+                pass
+
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), TestHandler)
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join(timeout=5)
+        cls.server.server_close()
+        shutil.rmtree(cls.directory, ignore_errors=True)
+
+    def post(self, path, body, host=None, origin=None):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            headers = {"Host": host or "127.0.0.1:%d" % self.port,
+                       "Content-Type": "application/json"}
+            if origin:
+                headers["Origin"] = origin
+            connection.request("POST", path, body=body, headers=headers)
+            response = connection.getresponse()
+            return response.status, json.loads(response.read() or b"{}")
+        finally:
+            connection.close()
+
+    def test_cross_origin_post_is_rejected_before_routing(self):
+        # Both a real endpoint and an unknown one must answer identically to a
+        # foreign origin, or the 403/404 split maps the API surface.
+        for path in ("/api/owner", "/api/definitely-not-real"):
+            with self.subTest(path=path):
+                status, body = self.post(
+                    path, '{"id": "tx_x"}', origin="https://evil.com")
+                self.assertEqual(status, 403)
+                self.assertIn("Local requests only", body["error"])
+
+    def test_unknown_endpoint_is_404_for_local_callers(self):
+        status, body = self.post("/api/definitely-not-real", '{"a": 1}')
+        self.assertEqual(status, 404)
+
+    def test_oversized_body_is_rejected(self):
+        status, body = self.post("/api/owner", '{"pad": "%s"}' % ("x" * 4200))
+        self.assertEqual(status, 400)
+        self.assertIn("size", body["error"].lower())
+
+    def test_invalid_owner_payload_is_a_clean_400(self):
+        # Routes through the real TRANSACTIONS_PATH read; the tx id cannot
+        # exist, so this must come back as a validation error, not a 500.
+        status, body = self.post(
+            "/api/owner", json.dumps({"id": "tx_nope", "owner": "Nic"}))
+        self.assertEqual(status, 400)
+        self.assertIn("not present", body["error"])
+
+
 if __name__ == "__main__":
     unittest.main()
