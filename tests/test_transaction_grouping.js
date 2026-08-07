@@ -386,6 +386,51 @@ test("bank review analysis flags conservative explainable cases", function () {
   }), false);
 });
 
+test("trusted counterparties skip amount checks but keep integrity checks", function () {
+  function row(id, description, amount, extra) {
+    return Object.assign({
+      id: id, month: "2026-07", date: "2026-07-0" + id.length,
+      description: description, flow: "Transfer", direction: "withdrawal",
+      amount: amount,
+      provenance: { sourceFile: "JUL.pdf", page: 1, line: id.length, verified: true }
+    }, extra || {});
+  }
+  var rows = [
+    row("a", "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile", 2000),
+    row("ab", "PAYNOW-FAST DESIGN 4 SPACE PTE. LT OTHR Transfer - UEN", 9000),
+    row("abc", "PAYNOW-FAST A STRANGER OTHR Transfer - Mobile", 2000)
+  ];
+  var result = grouping.analyzeAccountTransactions(rows, {});
+  assert.equal(result.a.requiresReview, false);
+  assert.equal(result.ab.requiresReview, false);
+  assert.ok(result.abc.checks.includes("large-transfer"));
+  // Trust does not extend to data quality: an unreconciled source still flags.
+  var unverified = grouping.analyzeAccountTransactions([
+    row("a", "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile", 2000,
+      { provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: false } })
+  ], {});
+  assert.ok(unverified.a.checks.includes("unverified-source"));
+});
+
+test("incoming transfer duplicates stay quiet, outgoing still flag", function () {
+  function pair(direction) {
+    return ["p", "q"].map(function (id) {
+      return {
+        id: direction + id, month: "2026-07", date: "2026-07-04",
+        description: "PAYNOW-FAST SAME PERSON OTHR Transfer - Mobile",
+        flow: "Transfer", direction: direction, amount: 30,
+        provenance: { sourceFile: "JUL.pdf", page: 1,
+          line: id === "p" ? 1 : 2, verified: true }
+      };
+    });
+  }
+  var incoming = grouping.analyzeAccountTransactions(pair("deposit"), {});
+  assert.equal(incoming.depositp.requiresReview, false);
+  assert.equal(incoming.depositq.requiresReview, false);
+  var outgoing = grouping.analyzeAccountTransactions(pair("withdrawal"), {});
+  assert.ok(outgoing.withdrawalp.checks.includes("possible-duplicate"));
+});
+
 test("account spending average excludes internal movements", function () {
   var result = grouping.averageAccountSpending([
     { month: "2026-05", direction: "withdrawal", flow: "Investment", amount: 1000 },

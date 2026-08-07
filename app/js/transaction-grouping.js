@@ -159,6 +159,25 @@
       /^Misc Credit\b/i.test((transaction.description || "").trim());
   }
 
+  // Confirmed-expected recipients: large or first payments to them are
+  // routine, so the counterparty and amount checks stay quiet. Data-quality
+  // checks (unclassified, derived amount, unreconciled source) and the
+  // accidental double-payment check still apply. Matched as a case-insensitive
+  // prefix of the normalized counterparty, because statements truncate
+  // ("Design 4 Space Pte." and "Design 4 Space Pte L" are the same firm).
+  var TRUSTED_COUNTERPARTIES = [
+    "PARTNER FULL NAME",
+    "Yx",
+    "Design 4 Space"
+  ];
+
+  function accountTrustedCounterparty(counterparty) {
+    var name = String(counterparty || "").toLowerCase();
+    return TRUSTED_COUNTERPARTIES.some(function (trusted) {
+      return name.indexOf(trusted.toLowerCase()) === 0;
+    });
+  }
+
   function analyzeAccountTransactions(rows, reviewedIds) {
     var reviewed = reviewedIds || {};
     var ordered = (rows || []).slice().sort(function (left, right) {
@@ -181,27 +200,26 @@
       var reasons = [];
       var checks = [];
       var internal = accountIsInternalMovement(transaction);
+      var trusted = accountTrustedCounterparty(counterparty);
       if ((transaction.flow || "Other") === "Other" &&
           !accountReviewWhitelisted(transaction)) {
         reasons.push("Flow is still unclassified");
         checks.push("unclassified");
       }
-      if (transaction.direction === "withdrawal" && transaction.flow === "Transfer" &&
-          transaction.amount >= 500) {
+      if (!trusted && transaction.direction === "withdrawal" &&
+          transaction.flow === "Transfer" && transaction.amount >= 500) {
         reasons.push("Large transfer of S$" + Number(transaction.amount).toFixed(2));
         checks.push("large-transfer");
-      } else if (transaction.direction === "withdrawal" && !internal &&
+      } else if (!trusted && transaction.direction === "withdrawal" && !internal &&
                  transaction.amount >= 1000) {
         reasons.push("Large non-transfer withdrawal of S$" +
           Number(transaction.amount).toFixed(2));
         checks.push("large-withdrawal");
       }
-      if (transaction.direction === "deposit" && transaction.amount >= 1000 &&
-          ["Salary", "Transfer", "Interest", "Fixed deposit"].indexOf(transaction.flow) === -1) {
-        reasons.push("Large deposit outside a known income or transfer flow");
-        checks.push("large-deposit");
-      }
-      if (first && transaction.direction === "withdrawal" && !internal &&
+      // Money arriving is never treated as suspicious - deposits only carry
+      // data-quality flags (unclassified flow, derived amount, unreconciled
+      // source), not amount or duplicate checks.
+      if (!trusted && first && transaction.direction === "withdrawal" && !internal &&
           transaction.amount >= 500) {
         reasons.push("First sizeable payment to this counterparty");
         checks.push("new-counterparty");
@@ -209,7 +227,8 @@
       var duplicateKey = [transaction.date, counterparty, transaction.direction,
         Number(transaction.amount).toFixed(2)].join("|");
       var matching = duplicates[duplicateKey] || [];
-      if (matching.length > 1 && transaction.amount * matching.length >= 40) {
+      if (transaction.direction !== "deposit" && matching.length > 1 &&
+          transaction.amount * matching.length >= 40) {
         reasons.push(matching.length + " identical same-day bank movements");
         checks.push("possible-duplicate");
       }
@@ -248,14 +267,18 @@
           count: 0,
           amount: 0,
           lastDate: transaction.date || transaction.month,
-          reviewCount: 0
+          reviewCount: 0,
+          reviewIds: []
         };
       }
       var group = groups[key];
       group.count += 1;
       group.amount += Number(transaction.amount || 0);
       if (transaction.accountReview && transaction.accountReview.requiresReview &&
-          !transaction.accountReview.reviewed) group.reviewCount += 1;
+          !transaction.accountReview.reviewed) {
+        group.reviewCount += 1;
+        group.reviewIds.push(transaction.id);
+      }
       if ((transaction.date || transaction.month) > group.lastDate) {
         group.lastDate = transaction.date || transaction.month;
       }

@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260807-12">
+<link rel="stylesheet" href="css/styles.css?v=20260807-17">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -244,6 +244,12 @@
           </div>
         </div>
         <input type="search" id="search" placeholder="Search transactions" aria-label="Search transactions">
+        <button class="pill suspicious-pill" id="suspicious-filter" type="button" aria-pressed="false"
+          title="Show only transactions the checks flagged and you have not reviewed">
+          <svg class="icon"><use href="#i-target"/></svg>Suspicious only
+        </button>
+        <button class="pill view-all-pill hidden" id="view-all-filter" type="button"
+          title="Keep this review filter and widen the period to the whole history">All time</button>
         <div class="pills" id="owner-pills"></div>
         <select id="category-filter" aria-label="Filter by category"></select>
         <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label>
@@ -265,6 +271,32 @@
           </label>
         </div>
       </div>
+      <!-- Threshold values mirror the documented constants in
+           scripts/risk_checks.py and app/js/transaction-grouping.js;
+           update both places together. -->
+      <details class="rules-details" id="transaction-rules">
+        <summary>How the numbers and checks work</summary>
+        <div class="rules-body" id="card-rules">
+          <ul>
+            <li>Card <strong>Payment</strong> and <strong>Rebates</strong> rows are excluded from spending; refunds reduce totals. A refund nets against the same merchant's charges on its own day first, then up to 7 earlier days.</li>
+            <li>6M/12M figures are means over prior complete statement months; the current partial month is excluded.</li>
+            <li><strong>Suspicious checks:</strong> unreversed same-day duplicates (≥ S$40 total); a first-seen merchant day ≥ S$1,500; a charge ≥ 4× anything in a short history (and ≥ S$500); ≥ 10× the merchant's median once 10 rows exist (and ≥ S$300); 5+ same-day charges ≥ S$300; a stable subscription jumping in price; a first foreign-currency charge ≥ S$200 (Games and Travel exempt); a credit ≥ S$200 from a merchant that never charged this card.</li>
+            <li>Insurance and Fees &amp; charges run only the duplicate and burst checks — premiums are large by nature.</li>
+            <li>Checks read the merchant-rule category, so re-labelling a transaction never silences its signal. Recognition is per signal: a new kind of alert on the same rows re-surfaces.</li>
+          </ul>
+          <p>Review prompts use statement history only and are not fraud verdicts.</p>
+        </div>
+        <div class="rules-body hidden" id="bank-rules">
+          <ul>
+            <li>Transfers, investments, SRS, fixed deposits, and card-bill payments are movements of money, not bank-account spending.</li>
+            <li><strong>Flagged for review:</strong> unclassified flows; outgoing transfers ≥ S$500; other withdrawals ≥ S$1,000; a first sizeable payment (≥ S$500) to a new counterparty; identical same-day outgoing movements ≥ S$40 total; amounts derived from the running balance; unreconciled sources.</li>
+            <li>Money in is never treated as suspicious — deposits carry only data-quality flags.</li>
+            <li>Trusted counterparties (PARTNER FULL NAME, Yx, Design 4 Space) skip the amount and new-counterparty checks; data-quality checks still apply.</li>
+            <li>6M/12M spending averages are means over prior complete statement months and exclude internal movements.</li>
+          </ul>
+          <p>Review prompts use statement history only and are not fraud verdicts.</p>
+        </div>
+      </details>
       <section class="transaction-summary" id="transaction-summary"
         aria-label="Transaction cost breakdown"></section>
       <table class="ledger">
@@ -320,9 +352,9 @@
   </aside>
 </div>
 
-<script src="js/charts.js?v=20260807-12"></script>
-<script src="js/insights.js?v=20260807-12"></script>
-<script src="js/transaction-grouping.js?v=20260807-12"></script>
-<script src="js/app.js?v=20260807-12"></script>
+<script src="js/charts.js?v=20260807-17"></script>
+<script src="js/insights.js?v=20260807-17"></script>
+<script src="js/transaction-grouping.js?v=20260807-17"></script>
+<script src="js/app.js?v=20260807-17"></script>
 </body>
 </html>

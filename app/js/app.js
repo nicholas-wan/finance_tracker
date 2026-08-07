@@ -391,6 +391,43 @@
       showToast(error.message, "error");
     });
   }
+  function saveAccountReviewBatch(ids, button) {
+    var total = ids.length;
+    if (!total) return;
+    button.disabled = true;
+    var saved = 0;
+    var chain = Promise.resolve();
+    ids.forEach(function (id) {
+      chain = chain.then(function () {
+        button.textContent = "Reviewing " + (saved + 1) + "/" + total + "...";
+        return fetch("api/account-review", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: id, reviewed: true })
+        }).then(function (response) {
+          return response.json().catch(function () {
+            return { error: "The local server returned an unreadable response." };
+          }).then(function (payload) {
+            if (!response.ok) throw new Error(payload.error || "Bank review save failed.");
+            accountReviewedIds[id] = true;
+            saved += 1;
+          });
+        });
+      });
+    });
+    chain.then(function () {
+      refreshAccountAnalysis();
+      renderLedger();
+      showToast(saved + " bank transaction" + (saved === 1 ? "" : "s") +
+        " marked as reviewed.", "success");
+    }).catch(function (error) {
+      // Each save is atomic on the server, so a mid-batch failure leaves the
+      // earlier decisions safely recorded; the re-render shows what is left.
+      refreshAccountAnalysis();
+      renderLedger();
+      showToast(saved + " of " + total + " saved, then: " + error.message, "error");
+    });
+  }
   function buildAccountReviewEditor(t) {
     var review = t.accountReview || { reasons: [], reviewed: false };
     var wrap = el("div", "risk-editor account-review-editor" +
@@ -938,6 +975,8 @@
     document.getElementById("owner-pills").classList.toggle("hidden", bank);
     document.getElementById("show-excluded-label").classList.toggle("hidden", bank);
     document.getElementById("bank-review-controls").classList.toggle("hidden", !bank);
+    document.getElementById("card-rules").classList.toggle("hidden", bank);
+    document.getElementById("bank-rules").classList.toggle("hidden", !bank);
     document.getElementById("group-purchases-label").textContent = state.groupPurchases
       ? "Show individual"
       : (bank ? "Group counterparties" : "Group purchases");
@@ -2649,8 +2688,19 @@
         (group.direction === "deposit" ? "money-in" : "money-out"),
         group.direction === "deposit" ? "Money in" : "Money out"));
       tr.appendChild(direction);
-      tr.appendChild(el("td", "col-remark grouped-count",
-        group.count + " row" + (group.count === 1 ? "" : "s")));
+      var countCell = el("td", "col-remark grouped-count",
+        group.count + " row" + (group.count === 1 ? "" : "s"));
+      if (group.reviewCount && editor.available) {
+        var batch = el("button", "batch-review-button",
+          "Review all " + group.reviewCount);
+        batch.title = "Mark every flagged row from " + group.label + " as reviewed";
+        batch.addEventListener("click", function (event) {
+          event.stopPropagation();
+          saveAccountReviewBatch(group.reviewIds.slice(), batch);
+        });
+        countCell.appendChild(batch);
+      }
+      tr.appendChild(countCell);
       tr.appendChild(el("td", "col-amt bank-amount" +
         (group.direction === "deposit" ? " credit" : ""),
         (group.direction === "deposit" ? "+" : "−") +
@@ -2815,7 +2865,37 @@
       " · grouped by merchant";
   }
 
+  function syncSuspiciousFilterButton() {
+    var button = document.getElementById("suspicious-filter");
+    if (!button) return;
+    var active = state.transactionSource === "bank"
+      ? state.bankReview === "needs-review"
+      : state.reviewMode === "suspicious";
+    button.classList.toggle("active", active);
+    setPressed(button, active);
+    // While a review filter narrows the ledger to one statement month, offer
+    // the whole history in a click: suspicious rows are rare, so the natural
+    // next question is "and across all time?".
+    var filtered = state.transactionSource === "bank"
+      ? state.bankReview !== "all"
+      : state.reviewMode === "suspicious";
+    var viewAll = document.getElementById("view-all-filter");
+    if (!viewAll) return;
+    var show = filtered && state.period.mode === "month";
+    viewAll.classList.toggle("hidden", !show);
+    if (!show) return;
+    var allTime = state.transactionSource === "bank"
+      ? account.transactions.filter(function (t) {
+          return matchesAccountLedgerFilters(t, true);
+        }).length
+      : data.transactions.filter(function (t) {
+          return matchesLedgerFilters(t, true);
+        }).length;
+    viewAll.textContent = "All time (" + allTime + ")";
+  }
+
   function renderLedger() {
+    syncSuspiciousFilterButton();
     var body = document.getElementById("ledger-body");
     clear(body);
     if (state.transactionSource === "bank") {
@@ -3084,6 +3164,27 @@
       state.ledgerLimit = LEDGER_CAP;
       renderLedger();
     });
+    // One button, one meaning per view: unresolved card checks, or bank rows
+    // still needing review. It drives the same state the dropdown and the
+    // overview drill-down use, so all three stay in sync.
+    document.getElementById("suspicious-filter").addEventListener("click", function () {
+      if (state.transactionSource === "bank") {
+        state.bankReview = state.bankReview === "needs-review" ? "all" : "needs-review";
+        bankReviewFilter.value = state.bankReview;
+      } else {
+        state.reviewMode = state.reviewMode === "suspicious" ? null : "suspicious";
+      }
+      state.ledgerLimit = LEDGER_CAP;
+      renderLedger();
+    });
+    document.getElementById("view-all-filter").addEventListener("click", function () {
+      // Widen the period, keep the review filter: the point is to see every
+      // suspicious row in the history, not to drop the filter.
+      state.period = { mode: "all", year: state.period.year, month: state.period.month };
+      state.ledgerLimit = LEDGER_CAP;
+      renderPeriod();
+      renderLedger();
+    });
 
     var pills = document.getElementById("owner-pills");
     ["All"].concat(OWNER_ORDER).forEach(function (o) {
@@ -3091,7 +3192,9 @@
       setPressed(b, o === state.owner);
       b.addEventListener("click", function () {
         state.owner = o;
-        state.reviewMode = null;
+        // Insight drill-down modes end when the user re-filters, but the
+        // suspicious toggle is an ordinary filter and survives.
+        if (state.reviewMode !== "suspicious") state.reviewMode = null;
         state.ledgerLimit = LEDGER_CAP;
         Array.prototype.forEach.call(pills.children, function (c) {
           var active = c.textContent === o;
@@ -3107,7 +3210,7 @@
     populateTransactionCategoryFilter();
     catSel.addEventListener("change", function () {
       state.category = catSel.value;
-      state.reviewMode = null;
+      if (state.reviewMode !== "suspicious") state.reviewMode = null;
       state.ledgerLimit = LEDGER_CAP;
       renderLedger();
     });
