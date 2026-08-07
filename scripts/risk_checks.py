@@ -178,8 +178,11 @@ def _allocate_refunds(debit_groups, refunds):
                 day = _day_ordinal(group_id[0])
                 if day is None:
                     continue
-                distance = abs(day - refund["day"])
-                if distance <= REFUND_WINDOW_DAYS:
+                # A refund reverses an earlier charge, never a later one. The
+                # old abs() window let a credit suppress signals on charges up
+                # to a week in its future - a temporally impossible reversal.
+                distance = refund["day"] - day
+                if 0 < distance <= REFUND_WINDOW_DAYS:
                     candidates.append((distance, group_id[0], group_id))
             for _, _, group_id in sorted(candidates):
                 if refund["amount"] - refund["used"] < REFUND_CROSS_DAY_MIN:

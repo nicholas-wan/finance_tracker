@@ -233,6 +233,68 @@ class CardCsvFallbackTests(ParserTestCase):
         self.assertEqual([row["amount"] for row in rows], [25.0, 25.0, 25.0])
         self.assertEqual([row["credit"] for row in rows], [True, True, False])
 
+    def test_header_drift_fails_closed_instead_of_emptying_the_month(self):
+        # A re-saved export with renamed columns used to make every row look
+        # like furniture: zero rows, zero failures, and a silently missing
+        # month in the published data.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = os.path.join(tmp, "UOB_CC_2026_06.csv")
+            with open(path, "w", encoding="utf-8", newline="") as handle:
+                handle.write("Post Date,Trans Date,Description,Amount\n")
+                handle.write('"10 JUN","10 JUN","REDACTED MERCHANT A","25.00"\n')
+            _, rows, failures = parse_cc.parse_csv(path)
+        self.assertEqual(rows, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("missing expected columns", failures[0]["reason"])
+
+    def test_all_rows_read_as_furniture_is_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_csv(tmp, [
+                ("", "", "PREVIOUS BALANCE", "100.00"),
+                ("", "", "SUB TOTAL", "100.00"),
+            ])
+            _, rows, failures = parse_cc.parse_csv(path)
+        self.assertEqual(rows, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("no transactions parsed", failures[0]["reason"])
+
+    def test_dated_row_with_empty_description_is_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_csv(tmp, [
+                ("10 JUN", "10 JUN", "", "25.00"),
+            ])
+            _, rows, failures = parse_cc.parse_csv(path)
+        self.assertEqual(rows, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("empty description", failures[0]["reason"])
+
+    def test_malformed_comma_grouping_is_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = self.write_csv(tmp, [
+                ("10 JUN", "10 JUN", "REDACTED MERCHANT A", "1,2,3.45"),
+            ])
+            _, rows, failures = parse_cc.parse_csv(path)
+        self.assertEqual(rows, [])
+        self.assertEqual(len(failures), 1)
+        self.assertIn("no usable amount", failures[0]["reason"])
+
+
+class StatementCycleDateTests(ParserTestCase):
+    def test_same_month_and_adjacent_months(self):
+        cycle = parse_cc.date_in_statement_cycle
+        self.assertEqual(cycle(2026, 7, 15, 7), "2026-07-15")
+        self.assertEqual(cycle(2026, 7, 28, 6), "2026-06-28")
+        self.assertEqual(cycle(2026, 1, 30, 12), "2025-12-30")
+        self.assertEqual(cycle(2025, 12, 2, 1), "2026-01-02")
+
+    def test_lagged_row_months_stay_in_the_past(self):
+        # A late December reversal on a February statement was dated ten
+        # months into the future by the old adjacent-Dec/Jan special case.
+        cycle = parse_cc.date_in_statement_cycle
+        self.assertEqual(cycle(2026, 2, 30, 12), "2025-12-30")
+        self.assertEqual(cycle(2026, 3, 15, 11), "2025-11-15")
+        self.assertEqual(cycle(2026, 8, 1, 10), "2025-10-01")
+
 
 class AccountParserTests(ParserTestCase):
     def test_direction_classification_and_visible_override(self):

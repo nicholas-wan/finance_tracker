@@ -219,13 +219,16 @@ window.Insights = (function () {
     }).filter(function (h) { return h.months >= 6 && h.count >= 12; });
     habits.sort(function (a, b) { return b.total - a.total; });
     habits.slice(0, 3).forEach(function (h) {
+      // The window shrinks near the start of the data; dividing by a
+      // hard-coded 12 understated the monthly figure and mislabelled the span.
       out.push({
         kind: "info",
         icon: "repeat",
         scope: "yearly",
-        title: h.name + ": " + money(h.total) + " over 12 months",
+        title: h.name + ": " + money(h.total) + " over " + last12.length +
+          (last12.length === 1 ? " month" : " months"),
         detail: h.count + " charges averaging " + money(h.total / h.count) + ", about " +
-          money(h.total / 12) + " a month.",
+          money(h.total / last12.length) + " a month.",
         ids: h.ids,
         filterLabel: h.name,
       });

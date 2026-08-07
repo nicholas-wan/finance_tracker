@@ -21,12 +21,18 @@ DATE_RE = re.compile(r"^(\d{1,2})\s+(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV
 AMOUNT_RE = re.compile(r"(?<![\w.,])(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})(?![\d])")
 PERIOD_RE = re.compile(r"Period:\s*\d{1,2}\s+(\w{3})\s+(\d{4})", re.I)
 
+# classify() matches these against the description padded with one leading and
+# one trailing space, so a pattern written with an edge space is anchored to a
+# word edge. Short tokens must use that: bare "FAST" classified THE BREAKFAST
+# CLUB as a transfer, bare "FWD"/"AIA"/"INCOME" turned unrelated PayNow rows
+# into insurance. Longer patterns keep plain substring semantics ("UOB CARD"
+# must still match "UOB CARDS").
 FLOW_RULES = [
     # "PHILLIP SECURITIES" is the full brokerage name; the bare surname is left out
     # on purpose because PayNow transfers to a person called Phillip would collide.
     ("Investment", ["INTERACTIVE BROKERS", "IBKR", "TIGER BROKERS", "MOOMOO", "SAXO", "ENDOWUS", "SYFE",
                     "PHILLIP SECURITIES", "PHILLIP SEC"]),
-    ("Retirement (SRS)", ["SRS"]),
+    ("Retirement (SRS)", [" SRS", "-SRS"]),
     ("Fixed deposit", ["FCFD", "FIXED DEPOSIT", "PRINCIPAL CREDIT", "TO 0000000000"]),
     ("Credit card bill", ["UOB CARD", "CARD PAYMENT", "PAYMENT TO CARD", "IB CARD PAYMENT", "CREDIT CARD",
                           "HSBC CC", "MBK-HSBC"]),
@@ -34,16 +40,16 @@ FLOW_RULES = [
     # IRAS prints as "INLAND REVENUE AUTHO..." over PayNow, which never says IRAS.
     ("Tax", ["IRAS", "INCOME TAX", "TAXS", "INLAND REVENUE"]),
     ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST", "INTEREST CREDIT"]),
-    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", "FWD", "GREAT EASTERN", "AIA", "AVIVA", "INCOME"]),
+    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", "GREAT EASTERN", " AIA ", "AVIVA", " INCOME "]),
     ("Mortgage & home", ["HDB", "MORTGAGE", "HOME LOAN", "TOWN COUNCIL", "SP SERVICES", "SP DIGITAL"]),
-    ("CPF", ["CPF"]),
-    ("Transfer", ["PAYNOW", "FAST", "GIRO", "TRANSFER", "IBG"]),
-    ("Cash & NETS", ["NETS", "ATM", "CASH WITHDRAWAL"]),
+    ("CPF", [" CPF"]),
+    ("Transfer", ["PAYNOW", " FAST ", "-FAST", "GIRO", "TRANSFER", " IBG", "-IBG"]),
+    ("Cash & NETS", [" NETS", "-NETS", " ATM ", "-ATM", "CASH WITHDRAWAL"]),
 ]
 
 
 def classify(description):
-    d = " ".join(description.split()).upper()
+    d = " " + " ".join(description.split()).upper() + " "
     for name, patterns in FLOW_RULES:
         for p in patterns:
             if p in d:

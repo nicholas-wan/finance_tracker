@@ -59,8 +59,9 @@ review-status filters.
 - **Review transaction** opens the exact bank row needing attention. Review prompts
   explain their reason and are not fraud verdicts. Decisions are saved and audited.
   Recognition is per signal, not per transaction: a new kind of alert on an already
-  recognized transaction re-surfaces. Card checks net refunds against charges within
-  a week per merchant before flagging.
+  recognized transaction re-surfaces. Card checks net refunds against charges from
+  the preceding week per merchant before flagging; a credit never nets a charge
+  that came after it.
 - Opening any transaction shows its original statement description and provenance.
   Card transactions also support display-name, category, owner, and remark edits.
 - **History** shows recorded manual changes.

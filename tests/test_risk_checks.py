@@ -65,6 +65,25 @@ class RiskCheckTests(unittest.TestCase):
         ]
         self.assertEqual(signals(rows)["count"], 0)
 
+    def test_earlier_credit_cannot_net_a_later_charge(self):
+        # A refund reverses an earlier charge. The old abs() window let this
+        # credit, four days BEFORE the charges, erase their duplicate signal -
+        # a temporally impossible reversal.
+        rows = [
+            transaction("tx_r", 960, "refund", date="2026-01-01", description="SHOP"),
+            transaction("tx_a", 960, date="2026-01-05", description="SHOP"),
+            transaction("tx_b", 960, date="2026-01-05", description="SHOP"),
+        ]
+        self.assertEqual(signals(rows)["count"], 1)
+
+    def test_later_refund_within_a_week_still_nets(self):
+        rows = [
+            transaction("tx_a", 960, date="2026-01-05", description="SHOP"),
+            transaction("tx_b", 960, date="2026-01-05", description="SHOP"),
+            transaction("tx_r", 960, "refund", date="2026-01-10", description="SHOP"),
+        ]
+        self.assertEqual(signals(rows)["count"], 0)
+
     def test_ignores_small_repeats(self):
         rows = [
             transaction("tx_a", 6),

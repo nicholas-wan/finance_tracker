@@ -29,7 +29,9 @@ AMOUNT_RE = re.compile(
     r"(?<![\w.,])(\d{1,3}(?:,\d{3})+\.\d{2}|\d+\.\d{2})\s*(CR)?\s*$", re.I)
 STATEMENT_DATE_RE = re.compile(r"Statement Date\s+(\d{1,2})\s+(%s)\s+(\d{4})" % MON_RE, re.I)
 # Foreign charges print the original amount on its own line above the SGD one.
-FX_RE = re.compile(r"^[A-Z]{3}\s+[\d,]+\.\d{2}$")
+# The lookahead rejects wrapped description tails such as "PTE 12.00" or
+# "GST 5.00", which are not currency codes but match the shape.
+FX_RE = re.compile(r"^(?!PTE\b|LTD\b|GST\b)[A-Z]{3}\s+[\d,]+\.\d{2}$")
 CARD_RE = re.compile(r"^(UOB [A-Z' ]*CARD|LADY'S SOLITAIRE\s*CARD|[A-Z' ]+CARD)\s*$", re.I)
 # Every alternative is either a bare column header (anchored to end of line) or a
 # statement-furniture phrase that cannot begin a merchant name. The old version
@@ -96,14 +98,17 @@ def clean(desc):
 
 
 def date_in_statement_cycle(year, month, day, row_month):
-    y, mo = year, month
-    if row_month != month:
-        if row_month == 12 and month == 1:
-            y -= 1
-        elif row_month == 1 and month == 12:
-            y += 1
-        mo = row_month
-    return "%04d-%02d-%02d" % (y, mo, day)
+    # A row's month names the most recent occurrence of that month at or before
+    # the statement month, except one month ahead (a Dec statement carrying an
+    # early-Jan posting) which wraps forward. The old adjacent-Dec/Jan special
+    # case dated a lagged December refund on a Feb statement ten months into the
+    # future.
+    delta = (month - row_month) % 12
+    if delta == 11:
+        y = year + (1 if month == 12 else 0)
+    else:
+        y = year - (1 if row_month > month else 0)
+    return "%04d-%02d-%02d" % (y, row_month, day)
 
 
 def parse_pdf(path):
@@ -271,8 +276,16 @@ CSV_MARKER_RE = re.compile(
     r"^(?:PREVIOUS BALANCE|SUB ?TOTAL|GRAND TOTAL|NEW BALANCE|TOTAL|"
     r"Description of Transaction)\s*$"
     r"|^(?:TOTAL BALANCE FOR|TOTAL AMOUNT DUE|MINIMUM PAYMENT)\b", re.I)
-CSV_FX_RE = re.compile(r"^[A-Z]{3}\s+[\d,]+\.\d{2}$")
-CSV_AMOUNT_RE = re.compile(r"^(-)?\s*([\d,]+\.\d{2})\s*(CR)?$", re.I)
+CSV_FX_RE = re.compile(r"^(?!PTE\b|LTD\b|GST\b)[A-Z]{3}\s+[\d,]+\.\d{2}$")
+# Grouping is strict so a mangled export like "1,2,3.45" fails instead of
+# silently parsing as 123.45; CSV months have no subtotal reconciliation to
+# catch a bad amount later.
+CSV_AMOUNT_RE = re.compile(
+    r"^(-)?\s*(\d{1,3}(?:,\d{3})*\.\d{2}|\d+\.\d{2})\s*(CR)?$", re.I)
+# parse_csv trusts these column names; if the exporter or a spreadsheet re-save
+# renames them, every row would look like furniture and vanish. Checked
+# explicitly so header drift fails the run instead of emptying a month.
+CSV_REQUIRED_COLUMNS = ("Trans", "Description of Transaction", "Transaction Amount")
 
 
 def csv_month(path):
@@ -311,8 +324,17 @@ def parse_csv(path):
             "text": " | ".join("%s=%s" % (k, v) for k, v in row.items() if v)[:160],
         })
 
+    data_rows = 0
     with open(path, encoding="utf-8", errors="replace") as f:
-        for row_no, row in enumerate(csv.DictReader(f), 2):
+        reader = csv.DictReader(f)
+        header = reader.fieldnames or []
+        missing = [c for c in CSV_REQUIRED_COLUMNS if c not in header]
+        if missing:
+            fail(1, "missing expected columns %s in header %r"
+                 % (", ".join(missing), header[:6]), {})
+            return month_key, [], failures
+        for row_no, row in enumerate(reader, 2):
+            data_rows += 1
             desc = (row.get("Description of Transaction") or "").strip()
             raw = (row.get("Transaction Amount") or "").strip()
             trans = (row.get("Trans") or "").strip()
@@ -324,6 +346,11 @@ def parse_csv(path):
                 if not desc or CSV_MARKER_RE.match(desc) or CSV_FX_RE.match(desc):
                     continue
                 fail(row_no, "row has no usable transaction date %r" % trans, row)
+                continue
+            if not desc:
+                # The PDF path fails closed on a dated row with no description;
+                # the CSV path must not be laxer.
+                fail(row_no, "dated row has empty description", row)
                 continue
             m = CSV_AMOUNT_RE.match(raw)
             if not m:
@@ -353,6 +380,11 @@ def parse_csv(path):
                 "foreign": None,
                 "_sourceLine": row_no,
             })
+    if data_rows and not txs and not failures:
+        # Every row was classified as furniture. A real export always holds at
+        # least one transaction, so this is a parser/format mismatch, not an
+        # empty month - refuse to succeed silently.
+        fail(1, "no transactions parsed from %d rows" % data_rows, {})
     assign_provenance(txs, "card-csv", source_name(path), verified=False)
     return month_key, txs, failures
 
@@ -381,6 +413,17 @@ def main():
         os.path.join(REPO_ROOT, "Archive", "UOB_CC*.pdf"),
     ]
     files = sorted({f for p in patterns for f in glob.glob(p, recursive=True)})
+    # Statement PDFs that no parser will ever open deserve a loud notice:
+    # UOB_LADY_2024_12.pdf sat unread for years because only UOB_CC*/UOB_ONE*
+    # are globbed. Non-fatal, because the combined CC statement may already
+    # cover the same rows.
+    all_statement_pdfs = glob.glob(
+        os.path.join(REPO_ROOT, "statements", "**", "UOB_*.pdf"), recursive=True)
+    for path in sorted(all_statement_pdfs):
+        base = os.path.basename(path).upper()
+        if not (base.startswith("UOB_CC") or base.startswith("UOB_ONE")):
+            print("WARNING: %s is not ingested by any parser "
+                  "(only UOB_CC*/UOB_ONE* are read)" % os.path.basename(path))
     all_txs, months, failed, balances = [], {}, [], {}
     row_failures = []
     for path in files:
@@ -410,13 +453,20 @@ def main():
         os.path.join(REPO_ROOT, "Archive", "UOB_CC*.csv"),
     ]
     from_csv = []
+    pdf_months = set(months)
     for path in sorted({f for p in csv_patterns for f in glob.glob(p, recursive=True)}):
         ym = csv_month(path)
         if not ym:
             continue
         month_key = "%04d-%02d" % ym
-        if month_key in months:
+        if month_key in pdf_months:
             continue          # a real statement beats the old CSV export
+        if month_key in months:
+            # Two CSVs claiming one month would double every row; unlike the
+            # PDF-beats-CSV rule this is a conflict, not a fallback.
+            failed.append((os.path.basename(path),
+                           "month %s already read from %s" % (month_key, months[month_key])))
+            continue
         try:
             month_key, txs, failures = parse_csv(path)
         except Exception as exc:
@@ -427,6 +477,8 @@ def main():
             months[month_key] = os.path.basename(path)
             from_csv.append(month_key)
             all_txs.extend(txs)
+        elif not failures:
+            failed.append((os.path.basename(path), "no transactions parsed"))
 
     # Identical charges on one day are real (three S$6.00 ActiveSG bookings, four
     # kuro games top-ups), so rows are never collapsed. Double-ingest is prevented

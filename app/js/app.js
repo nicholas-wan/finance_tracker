@@ -230,78 +230,6 @@
       "unassigned": "not assigned"
     }[source] || "unknown";
   }
-  function saveOwner(t, owner, button, status) {
-    button.disabled = true;
-    status.textContent = "Saving, rebuilding and validating...";
-    fetch("api/owner", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: t.id, owner: owner })
-    }).then(function (response) {
-      return response.json().catch(function () {
-        return { error: "The local server returned an unreadable response." };
-      }).then(function (payload) {
-        if (!response.ok) throw new Error(payload.error || "Owner save failed.");
-        return payload;
-      });
-    }).then(function () {
-      return loadJson("data/transactions.json?updated=" + Date.now());
-    }).then(function (fresh) {
-      data = fresh;
-      renderAll();
-      setTab("transactions");
-      var updated = data.transactions.find(function (row) { return row.id === t.id; });
-      if (updated && editor.drawerTransactionId === t.id) openTransactionDrawer(updated);
-      showToast(
-        (owner === "Untagged" ? "Owner cleared" : "Owner saved as " + owner) +
-        ". Data rebuilt and validated.",
-        "success"
-      );
-    }).catch(function (error) {
-      status.textContent = error.message;
-      button.disabled = false;
-      showToast(error.message, "error");
-    });
-  }
-  function buildOwnerEditor(t) {
-    var wrap = el("div", "owner-editor");
-    var copy = el("div", "owner-editor-copy");
-    copy.appendChild(el("strong", "", "Owner assignment"));
-    copy.appendChild(el("span", "", "Current source: " + ownerSourceLabel(t.ownerSource)));
-    wrap.appendChild(copy);
-    var controls = el("div", "owner-editor-controls");
-    var select = document.createElement("select");
-    select.setAttribute("aria-label", "Owner for " + t.description);
-    [
-      ["Nic", "Nic"],
-      ["Shared", "Shared"],
-      ["Yx", "Yx"],
-      ["Untagged", "Unassigned"]
-    ].forEach(function (item) {
-      var option = document.createElement("option");
-      option.value = item[0];
-      option.textContent = item[1];
-      select.appendChild(option);
-    });
-    select.value = t.owner;
-    select.disabled = !editor.available;
-    controls.appendChild(select);
-    var save = el("button", "owner-save", t.ownerSource === "exact-id"
-      ? "Update owner" : "Confirm owner");
-    save.disabled = !editor.available;
-    var status = el("span", "owner-save-status", editor.available
-      ? "" : "Start scripts/serve.py to enable editing.");
-    save.addEventListener("click", function (event) {
-      event.stopPropagation();
-      saveOwner(t, select.value, save, status);
-    });
-    select.addEventListener("click", function (event) { event.stopPropagation(); });
-    select.addEventListener("keydown", function (event) { event.stopPropagation(); });
-    controls.appendChild(save);
-    wrap.appendChild(controls);
-    wrap.appendChild(status);
-    return wrap;
-  }
   function normalizeRemark(value) {
     return value.trim().replace(/\s+/g, " ");
   }
@@ -884,6 +812,11 @@
     tr.classList.add("tx-row");
     tr.tabIndex = 0;
     tr.setAttribute("aria-haspopup", "dialog");
+    // A focusable <tr> announces nothing on its own; the label names the
+    // action and the row so the focus stop is meaningful. role="button" is
+    // deliberately not used because it would strip the row/cell semantics.
+    tr.setAttribute("aria-label", "Open transaction details for " +
+      (t.displayName || t.description || t.counterparty || "transaction"));
     tr.title = "Open transaction details";
     tr.addEventListener("click", function () { openTransactionDrawer(t); });
     tr.addEventListener("keydown", function (e) {
@@ -1064,6 +997,24 @@
     state.search = options.search || "";
     state.reviewMode = options.reviewMode || null;
     state.showExcluded = false;
+    // Bank-only filters reset with everything else; a drill-down that landed
+    // on the bank view used to inherit a leftover "needs review" or direction
+    // filter and silently hide most of the month.
+    state.bankReview = "all";
+    state.bankDirection = "all";
+    state.bankExcludeInternal = false;
+    var bankReviewFilter = document.getElementById("bank-review-filter");
+    if (bankReviewFilter) bankReviewFilter.value = "all";
+    var bankExcludeBox = document.getElementById("bank-exclude-internal");
+    if (bankExcludeBox) bankExcludeBox.checked = false;
+    var bankPills = document.getElementById("bank-direction-pills");
+    if (bankPills) {
+      Array.prototype.forEach.call(bankPills.children, function (button) {
+        var active = button.textContent === "All";
+        button.classList.toggle("active", active);
+        setPressed(button, active);
+      });
+    }
     setIdFilter(options.ids, options.filterLabel);
     // Grouping is a view mode like any other filter here: a drill-down that
     // resets owner, category, search and review must reset it too, or the
@@ -1394,7 +1345,15 @@
       activeMonth: state.month,
       visible: state.series,
       onMonth: function (month) {
-        openTransactions({ month: month });
+        // Account-only months (2022-12, 2023-01) have no card statement; the
+        // card ledger would render empty with a dangling period label, so
+        // open the bank view for those instead.
+        openTransactions(
+          data.months.indexOf(month) === -1
+            ? { source: "bank", month: month,
+                period: { mode: "month", year: month.slice(0, 4), month: month.slice(5) } }
+            : { month: month }
+        );
       },
       onToggle: function (key) {
         // Clicking a series isolates it; clicking the isolated one brings the rest back.
@@ -2068,20 +2027,13 @@
       warning.appendChild(warningText);
       var review = el("button", "link-button", "Review unassigned");
       review.addEventListener("click", function () {
-        state.owner = "Untagged";
-        state.category = "All";
-        state.search = "";
-        state.reviewMode = null;
-        state.showExcluded = false;
-        state.period = { mode: "year", year: state.splitYear, month: null };
-        state.ledgerLimit = LEDGER_CAP;
-        syncOwnerPills();
-        document.getElementById("category-filter").value = "All";
-        document.getElementById("search").value = "";
-        document.getElementById("show-excluded").checked = false;
-        renderPeriod();
-        renderLedger();
-        setTab("transactions");
+        // Route through openTransactions like every other drill-down: the
+        // hand-rolled version left a bank source or a stale insight id-filter
+        // in place and showed the wrong rows entirely.
+        openTransactions({
+          owner: "Untagged",
+          period: { mode: "year", year: state.splitYear, month: null }
+        });
       });
       warning.appendChild(review);
       summary.appendChild(warning);
@@ -2108,7 +2060,10 @@
     ));
     audit.appendChild(auditRow(
       "−", "Your credit for shared spending",
-      "50% of " + fmt(totals.Shared),
+      // Each month's half is rounded before summing (cent-level settling), so
+      // this is not always exactly 50% of the shared total; the label must not
+      // claim otherwise.
+      "Half of each month's share of " + fmt(totals.Shared),
       fmt(sharedHalf), "", false
     ));
     audit.appendChild(auditRow(
@@ -2380,8 +2335,13 @@
       return;
     }
     var grid = el("div", "transaction-average-grid");
+    var renderedSpans = [];
     [6, 12].forEach(function (requestedMonths) {
       var priorMonths = allPriorMonths.slice(-requestedMonths);
+      // With under 12 months of history both windows hold the same months and
+      // the "12M" tile rendered as a duplicate of the 6M one.
+      if (renderedSpans.indexOf(priorMonths.length) !== -1) return;
+      renderedSpans.push(priorMonths.length);
       var comparisonRows = data.transactions.filter(function (transaction) {
         return priorMonths.indexOf(transaction.month) !== -1 &&
           matchesLedgerFilters(transaction, true);
@@ -2510,8 +2470,12 @@
       return;
     }
     var grid = el("div", "transaction-average-grid");
+    var renderedSpans = [];
     [6, 12].forEach(function (requestedMonths) {
       var priorMonths = allPriorMonths.slice(-requestedMonths);
+      // Same guard as the card tiles: short history makes both windows equal.
+      if (renderedSpans.indexOf(priorMonths.length) !== -1) return;
+      renderedSpans.push(priorMonths.length);
       var rows = account.transactions.filter(function (transaction) {
         return priorMonths.indexOf(transaction.month) !== -1;
       });
@@ -2592,6 +2556,10 @@
         state.bankExcludeInternal = false;
         state.category = "All";
         state.search = "";
+        // Grouping must reset with the other filters: a grouped ledger shows
+        // counterparty rollups, not the individual rows needing review.
+        state.groupPurchases = false;
+        if (groupToggle) groupToggle.set(false);
         state.ledgerLimit = LEDGER_CAP;
         document.getElementById("bank-review-filter").value = state.bankReview;
         document.getElementById("bank-exclude-internal").checked = false;
@@ -3308,8 +3276,12 @@
         " · generated " + data.generatedAt;
     })
     .catch(function (err) {
-      document.querySelector("main").innerHTML =
-        '<p class="empty">Could not load data (' + err.message +
-        "). Run scripts/build_data.py and scripts/parse_one.py, then serve this folder over HTTP.</p>";
+      var main = document.querySelector("main");
+      main.textContent = "";
+      var notice = document.createElement("p");
+      notice.className = "empty";
+      notice.textContent = "Could not load data (" + err.message +
+        "). Run scripts/build_data.py and scripts/parse_one.py, then serve this folder over HTTP.";
+      main.appendChild(notice);
     });
 })();

@@ -13,6 +13,8 @@ import calendar
 import json
 import os
 import re
+import tempfile
+import time
 from datetime import datetime
 
 from data_ids import assign_provenance
@@ -120,8 +122,10 @@ CATEGORY_RULES = [
                        "TROPICO KOPI", "HOONG YING ENTERPRISE", "KEIJO SDN BHD",
                        "TINO JC", "Q'SON GROUP", "AURESYS PL", "ABBA OL2",
                        "SB125-AEON BUKIT INDAH", "AIF 111-ORH006", "ANDO.SG"]),
-    ("Games", ["HOYOVERSE", "COGNOSPHERE", "G2G.COM", "ZEUSX", "STEAM", "PLAYSTATION", "NINTENDO",
-               "RIOT", "INCEPTION SG", "KURO GAMES", "GARENA", "CODASHOP", "UNIPIN", "SEA GAMER",
+    # "STEAM" and "RIOT" must stay anchored to the biller strings: bare
+    # substrings filed steamboat restaurants and MARRIOTT hotels under Games.
+    ("Games", ["HOYOVERSE", "COGNOSPHERE", "G2G.COM", "ZEUSX", "STEAMGAMES", "PLAYSTATION", "NINTENDO",
+               "RIOT GAMES", "RIOTGAMES", "RIOT*", "INCEPTION SG", "KURO GAMES", "GARENA", "CODASHOP", "UNIPIN", "SEA GAMER",
                "ROBLOX", "EPIC GAMES", "XBOX", "BLIZZARD", "G2A", "MIHOYO", "XSOLLA",
                "XD ENTERTAINMENT", "2C2P*MYCARD", "PAYPAL *SPUUKYAZ",
                "PAYPAL *FIKRIFERDINAN61"]),
@@ -148,7 +152,7 @@ CATEGORY_RULES = [
 GAME_RULES = [
     ("HoYoverse", ["HOYOVERSE", "COGNOSPHERE", "MIHOYO"]),
     ("Kuro Games", ["KURO GAMES"]),
-    ("Steam", ["STEAM"]),
+    ("Steam", ["STEAMGAMES"]),
     ("G2G marketplace", ["G2G.COM"]),
     ("ZeusX marketplace", ["ZEUSX"]),
     ("Inception SG", ["INCEPTION SG"]),
@@ -156,7 +160,7 @@ GAME_RULES = [
     ("Nintendo", ["NINTENDO"]),
     ("Xbox", ["XBOX"]),
     ("Epic Games", ["EPIC GAMES"]),
-    ("Riot Games", ["RIOT"]),
+    ("Riot Games", ["RIOT GAMES", "RIOTGAMES", "RIOT*"]),
     ("Garena", ["GARENA"]),
     ("Roblox", ["ROBLOX"]),
     ("Top-up sites", ["CODASHOP", "UNIPIN", "SEA GAMER", "G2A"]),
@@ -485,23 +489,39 @@ def main():
     }
 
     os.makedirs(DATA_DIR, exist_ok=True)
-    # Write through a temp file so an interrupted build can never leave a
-    # truncated transactions.json for the dashboard and server to load.
-    tmp_path = OUT_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump({
-            "currency": "SGD",
-            "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
-            "months": months,
-            "salarySteps": salary.get("steps", []),
-            "salaryYears": salary.get("years", []),
-            "gameSales": sales,
-            "settlements": settlements,
-            "freshness": freshness,
-            "quality": quality,
-            "transactions": transactions,
-        }, f, indent=1)
-    os.replace(tmp_path, OUT_PATH)
+    # Write through a per-process temp file so an interrupted build can never
+    # leave a truncated transactions.json, and so a manual run racing the
+    # server's rebuild subprocess cannot interleave writes into one shared
+    # OUT_PATH + ".tmp". os.replace is retried because on Windows it fails
+    # while a reader (a second browser tab mid-refresh) still holds the
+    # destination open; serve.py has the same guard.
+    descriptor, tmp_path = tempfile.mkstemp(
+        prefix=os.path.basename(OUT_PATH) + ".", suffix=".tmp", dir=DATA_DIR)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            json.dump({
+                "currency": "SGD",
+                "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "months": months,
+                "salarySteps": salary.get("steps", []),
+                "salaryYears": salary.get("years", []),
+                "gameSales": sales,
+                "settlements": settlements,
+                "freshness": freshness,
+                "quality": quality,
+                "transactions": transactions,
+            }, f, indent=1)
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, OUT_PATH)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
 
     spend = sum(t["amount"] for t in transactions if t["type"] == "debit")
     refunds = sum(t["amount"] for t in transactions if t["type"] == "refund")

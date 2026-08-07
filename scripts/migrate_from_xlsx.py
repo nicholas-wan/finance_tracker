@@ -11,6 +11,7 @@ import glob
 import json
 import os
 import re
+import tempfile
 from datetime import datetime
 
 import openpyxl
@@ -93,9 +94,18 @@ def load_existing(name):
 
 
 def write(name, payload):
+    # Write through a temp file: truncating in place meant a crash mid-write
+    # destroyed the only copy of a manual file.
     path = os.path.join(MANUAL_DIR, name)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(payload, f, indent=1, ensure_ascii=False)
+    descriptor, tmp_path = tempfile.mkstemp(
+        prefix=name + ".", suffix=".tmp", dir=MANUAL_DIR)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as f:
+            json.dump(payload, f, indent=1, ensure_ascii=False)
+        os.replace(tmp_path, path)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
     print("wrote", os.path.relpath(path, REPO_ROOT))
 
 
@@ -167,7 +177,12 @@ def main():
     steps.sort(key=lambda s: s["from"])
     years.sort(key=lambda y: y["year"])
 
-    old_tags = load_existing("owner_tags.json").get("tags", {})
+    # Rewrites merge into the existing file so a re-run cannot destroy keys
+    # later migrations or the user added (tagsById, confirmed rules). This
+    # script used to emit only _comment + its own key and silently deleted
+    # everything else, despite the "safe to re-run" promise.
+    tag_file = load_existing("owner_tags.json")
+    old_tags = tag_file.get("tags", {})
     merged_tags = dict(tags)
     dropped = 0
     for key, value in old_tags.items():
@@ -179,21 +194,22 @@ def main():
         merged_tags[key] = value if isinstance(value, list) else [value]
     if dropped:
         print("dropped %d owner tag(s) in the old key format" % dropped)
-    write("owner_tags.json", {
-        "_comment": "Owner tags. Key: month|DESCRIPTION|amount|D or C. Each key holds a "
-                    "list because a merchant can be charged the same amount twice in a "
-                    "month; build_data.py assigns them one per matching row. Edit freely.",
-        "tags": dict(sorted(merged_tags.items()))
-    })
+    tag_file["_comment"] = (
+        "Owner tags. Key: month|DESCRIPTION|amount|D or C. Each key holds a "
+        "list because a merchant can be charged the same amount twice in a "
+        "month; build_data.py assigns them one per matching row. Edit freely.")
+    tag_file["tags"] = dict(sorted(merged_tags.items()))
+    write("owner_tags.json", tag_file)
 
-    old_rules = load_existing("owner_rules.json").get("rules", {})
+    rule_file = load_existing("owner_rules.json")
+    old_rules = rule_file.get("rules", {})
     merged_rules = dict(rules)
     merged_rules.update(old_rules)
-    write("owner_rules.json", {
-        "_comment": "Fallback owner per merchant, used when a transaction has no exact tag. "
-                    "Derived from history where one owner held at least 80% of rows.",
-        "rules": dict(sorted(merged_rules.items()))
-    })
+    rule_file["_comment"] = (
+        "Fallback owner per merchant, used when a transaction has no exact tag. "
+        "Derived from history where one owner held at least 80% of rows.")
+    rule_file["rules"] = dict(sorted(merged_rules.items()))
+    write("owner_rules.json", rule_file)
 
     write("legacy_transactions.json", {
         "_comment": "Card rows straight from the spreadsheet. build_data.py uses these only "

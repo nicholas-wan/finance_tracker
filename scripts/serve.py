@@ -99,6 +99,30 @@ def atomic_write_json(path, payload):
     atomic_write_bytes(path, content)
 
 
+def snapshot_backups(paths):
+    # Every .bak is taken before any live file changes. Interleaving backup and
+    # write per file left mixed-generation backups when a save died midway, so
+    # "copy the .bak files back" could reconstruct a state that never existed.
+    for path in paths:
+        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+
+
+def restore_originals(paths, originals):
+    """Restore every path, even when one restore fails.
+
+    A single unguarded loop used to abandon the remaining files on the first
+    PermissionError, leaving manual/ half old and half rejected-new with no
+    record of which was which. Returns the names that could not be restored.
+    """
+    failed = []
+    for path in paths:
+        try:
+            atomic_write_bytes(path, originals[path])
+        except Exception:
+            failed.append(path.name)
+    return failed
+
+
 def make_audit_entry(transaction, action, changes, transaction_ids=None):
     if not changes:
         return None
@@ -298,9 +322,8 @@ def save_owner(tx_id, owner):
         payloads = {OWNER_PATH: owner_data, AUDIT_PATH: audit_data}
 
         try:
+            snapshot_backups(paths)
             for path in paths:
-                backup_path = path.with_suffix(path.suffix + ".bak")
-                shutil.copy2(path, backup_path)
                 atomic_write_json(path, payloads[path])
             build_output = run_script(BUILD_SCRIPT)
             validation_output = run_script(VALIDATE_SCRIPT)
@@ -311,9 +334,17 @@ def save_owner(tx_id, owner):
             )
             if not updated or updated.get("owner") != owner:
                 raise RuntimeError("The rebuilt dashboard did not apply the saved owner.")
-        except Exception:
-            for path in paths:
-                atomic_write_bytes(path, originals[path])
+        except Exception as save_error:
+            failed_restores = restore_originals(paths, originals)
+            if failed_restores:
+                # Keep the root cause visible: hiding it behind the restore
+                # message left the user with no idea why the save failed.
+                raise RuntimeError(
+                    "Save failed (%s) AND these manual files could not be "
+                    "restored, so they may still hold the rejected edit: %s. "
+                    "Copy their .bak files back before saving again."
+                    % (save_error, ", ".join(failed_restores))
+                )
             try:
                 run_script(BUILD_SCRIPT)
             except Exception as rollback_error:
@@ -347,10 +378,17 @@ def save_risk_review(ids, recognized, key=None):
             {"ids": ids, "recognized": recognized, "key": key}, transactions
         )
         current = next(
-            row for row in transactions.values()
-            if row.get("risk", {}).get("key") == key
-            and row.get("risk", {}).get("primary", True)
+            (row for row in transactions.values()
+             if row.get("risk", {}).get("key") == key
+             and row.get("risk", {}).get("primary", True)),
+            None,
         )
+        if current is None:
+            # Bare next() here let StopIteration escape as an empty 500.
+            raise ValueError(
+                "That transaction check has no primary row in the current build. "
+                "Reload the dashboard and review it again."
+            )
         paths = (RISK_REVIEW_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
         risk_data = json.loads(originals[RISK_REVIEW_PATH].decode("utf-8"))
@@ -393,9 +431,8 @@ def save_risk_review(ids, recognized, key=None):
         payloads = {RISK_REVIEW_PATH: risk_data, AUDIT_PATH: audit_data}
 
         try:
+            snapshot_backups(paths)
             for path in paths:
-                backup_path = path.with_suffix(path.suffix + ".bak")
-                shutil.copy2(path, backup_path)
                 atomic_write_json(path, payloads[path])
             build_output = run_script(BUILD_SCRIPT)
             validation_output = run_script(VALIDATE_SCRIPT)
@@ -410,9 +447,17 @@ def save_risk_review(ids, recognized, key=None):
             if (not updated or
                     updated.get("risk", {}).get("recognized") is not recognized):
                 raise RuntimeError("The rebuilt dashboard did not apply the review decision.")
-        except Exception:
-            for path in paths:
-                atomic_write_bytes(path, originals[path])
+        except Exception as save_error:
+            failed_restores = restore_originals(paths, originals)
+            if failed_restores:
+                # Keep the root cause visible: hiding it behind the restore
+                # message left the user with no idea why the save failed.
+                raise RuntimeError(
+                    "Save failed (%s) AND these manual files could not be "
+                    "restored, so they may still hold the rejected edit: %s. "
+                    "Copy their .bak files back before saving again."
+                    % (save_error, ", ".join(failed_restores))
+                )
             try:
                 run_script(BUILD_SCRIPT)
             except Exception as rollback_error:
@@ -466,9 +511,8 @@ def save_remark(tx_id, remark):
         payloads = {REMARK_PATH: remark_data, AUDIT_PATH: audit_data}
 
         try:
+            snapshot_backups(paths)
             for path in paths:
-                backup_path = path.with_suffix(path.suffix + ".bak")
-                shutil.copy2(path, backup_path)
                 atomic_write_json(path, payloads[path])
             build_output = run_script(BUILD_SCRIPT)
             validation_output = run_script(VALIDATE_SCRIPT)
@@ -479,9 +523,17 @@ def save_remark(tx_id, remark):
             )
             if not updated or updated.get("remark", "") != remark:
                 raise RuntimeError("The rebuilt dashboard did not apply the saved remark.")
-        except Exception:
-            for path in paths:
-                atomic_write_bytes(path, originals[path])
+        except Exception as save_error:
+            failed_restores = restore_originals(paths, originals)
+            if failed_restores:
+                # Keep the root cause visible: hiding it behind the restore
+                # message left the user with no idea why the save failed.
+                raise RuntimeError(
+                    "Save failed (%s) AND these manual files could not be "
+                    "restored, so they may still hold the rejected edit: %s. "
+                    "Copy their .bak files back before saving again."
+                    % (save_error, ", ".join(failed_restores))
+                )
             try:
                 run_script(BUILD_SCRIPT)
             except Exception as rollback_error:
@@ -579,9 +631,8 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             AUDIT_PATH: audit_data,
         }
         try:
+            snapshot_backups(paths)
             for path in paths:
-                backup_path = path.with_suffix(path.suffix + ".bak")
-                shutil.copy2(path, backup_path)
                 atomic_write_json(path, payloads[path])
             build_output = run_script(BUILD_SCRIPT)
             validation_output = run_script(VALIDATE_SCRIPT)
@@ -600,9 +651,17 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                 raise RuntimeError(
                     "The rebuilt dashboard did not apply all transaction details."
                 )
-        except Exception:
-            for path in paths:
-                atomic_write_bytes(path, originals[path])
+        except Exception as save_error:
+            failed_restores = restore_originals(paths, originals)
+            if failed_restores:
+                # Keep the root cause visible: hiding it behind the restore
+                # message left the user with no idea why the save failed.
+                raise RuntimeError(
+                    "Save failed (%s) AND these manual files could not be "
+                    "restored, so they may still hold the rejected edit: %s. "
+                    "Copy their .bak files back before saving again."
+                    % (save_error, ", ".join(failed_restores))
+                )
             try:
                 run_script(BUILD_SCRIPT)
             except Exception as rollback_error:
@@ -659,13 +718,21 @@ def save_account_review(tx_id, reviewed):
         )
         payloads = {ACCOUNT_REVIEW_PATH: review_data, AUDIT_PATH: audit_data}
         try:
+            snapshot_backups(paths)
             for path in paths:
-                shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
                 atomic_write_json(path, payloads[path])
             validation_output = run_script(VALIDATE_SCRIPT)
-        except Exception:
-            for path in paths:
-                atomic_write_bytes(path, originals[path])
+        except Exception as save_error:
+            failed_restores = restore_originals(paths, originals)
+            if failed_restores:
+                # Keep the root cause visible: hiding it behind the restore
+                # message left the user with no idea why the save failed.
+                raise RuntimeError(
+                    "Save failed (%s) AND these manual files could not be "
+                    "restored, so they may still hold the rejected edit: %s. "
+                    "Copy their .bak files back before saving again."
+                    % (save_error, ", ".join(failed_restores))
+                )
             raise
         return {
             "ok": True,
@@ -779,6 +846,12 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         super().do_GET()
 
     def do_POST(self):
+        # The origin gate comes first, as in do_GET/do_HEAD: answering 404 vs
+        # 403 before the check let a cross-origin page probe which endpoints
+        # exist.
+        if not self.local_request():
+            self.send_json(403, {"ok": False, "error": "Local requests only."})
+            return
         endpoint = self.path.split("?", 1)[0]
         if endpoint not in {
             "/api/owner",
@@ -788,9 +861,6 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             "/api/account-review",
         }:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint."})
-            return
-        if not self.local_request():
-            self.send_json(403, {"ok": False, "error": "Local requests only."})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))
@@ -802,31 +872,31 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if endpoint == "/api/account-review":
-                account_data = load_json(ACCOUNT_TRANSACTIONS_PATH)
-                account_transactions = {
-                    row.get("id"): row for row in account_data.get("transactions", [])
-                }
-                tx_id, reviewed = validate_account_review_request(
-                    payload, account_transactions)
-                result = save_account_review(tx_id, reviewed)
+                # save_account_review re-validates under WRITE_LOCK; the early
+                # validation the card endpoints do here is only a fast reject,
+                # so this branch defers entirely to the save function.
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                result = save_account_review(
+                    payload.get("id"), payload.get("reviewed"))
             else:
                 transaction_data = load_json(TRANSACTIONS_PATH)
                 transactions = {
                     row.get("id"): row for row in transaction_data.get("transactions", [])
                 }
-            if endpoint == "/api/owner":
-                tx_id, owner = validate_owner_request(payload, transactions)
-                result = save_owner(tx_id, owner)
-            elif endpoint == "/api/risk-review":
-                ids, recognized, key, _ = validate_risk_review_request(
-                    payload, transactions)
-                result = save_risk_review(ids, recognized, key)
-            elif endpoint == "/api/remark":
-                tx_id, remark = validate_remark_request(payload, transactions)
-                result = save_remark(tx_id, remark)
-            elif endpoint == "/api/transaction-detail":
-                details = validate_transaction_detail_request(payload, transactions)
-                result = save_transaction_detail(*details)
+                if endpoint == "/api/owner":
+                    tx_id, owner = validate_owner_request(payload, transactions)
+                    result = save_owner(tx_id, owner)
+                elif endpoint == "/api/risk-review":
+                    ids, recognized, key, _ = validate_risk_review_request(
+                        payload, transactions)
+                    result = save_risk_review(ids, recognized, key)
+                elif endpoint == "/api/remark":
+                    tx_id, remark = validate_remark_request(payload, transactions)
+                    result = save_remark(tx_id, remark)
+                else:
+                    details = validate_transaction_detail_request(payload, transactions)
+                    result = save_transaction_detail(*details)
         except ValueError as error:
             self.send_json(400, {"ok": False, "error": str(error)})
             return
@@ -842,6 +912,11 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("X-Content-Type-Options", "nosniff")
         self.send_header("Referrer-Policy", "no-referrer")
+        # Framing is forbidden: an embedded dashboard sends no Origin header on
+        # the iframe navigation, so a hostile page could clickjack review
+        # buttons whose fetches are then genuinely same-origin.
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
         super().end_headers()
 
 
