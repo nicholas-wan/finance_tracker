@@ -1,6 +1,8 @@
 # Extracts account transactions from the UOB ONE statement PDFs.
 # Withdrawal vs deposit is decided by the direction the running balance moves,
 # because the text layer does not preserve which column an amount sat in.
+# The holder name and own-account numbers are private, so they are read from
+# the git-ignored manual/identity.json rather than written into this file.
 # Usage: python tracker/parse_one.py
 
 import glob
@@ -33,7 +35,9 @@ FLOW_RULES = [
     ("Investment", ["INTERACTIVE BROKERS", "IBKR", "TIGER BROKERS", "MOOMOO", "SAXO", "ENDOWUS", "SYFE",
                     "PHILLIP SECURITIES", "PHILLIP SEC"]),
     ("Retirement (SRS)", [" SRS", "-SRS"]),
-    ("Fixed deposit", ["FCFD", "FIXED DEPOSIT", "PRINCIPAL CREDIT", "TO 0000000000"]),
+    # The own fixed-deposit account numbers are private and are folded in at
+    # runtime by flow_rules(); see manual/identity.json.
+    ("Fixed deposit", ["FCFD", "FIXED DEPOSIT", "PRINCIPAL CREDIT"]),
     ("Credit card bill", ["UOB CARD", "CARD PAYMENT", "PAYMENT TO CARD", "IB CARD PAYMENT", "CREDIT CARD",
                           "HSBC CC", "MBK-HSBC"]),
     ("Salary", ["SALARY", "PAYROLL", "GIRO SALARY"]),
@@ -48,13 +52,71 @@ FLOW_RULES = [
 ]
 
 
-def classify(description):
+def identity_path():
+    """Where the private identity file lives, resolved against REPO_ROOT."""
+    return os.path.join(REPO_ROOT, "manual", "identity.json")
+
+
+def load_identity(path=None):
+    """Read manual/identity.json, the git-ignored home of the private literals.
+
+    The statement holder's legal name and the own-account numbers must not sit
+    in tracked source, so the parser is handed them at runtime. An absent file
+    returns {}; main() decides that this is fatal, because a missing name
+    filter changes every description instead of failing loudly.
+    """
+    path = path or identity_path()
+    if not os.path.exists(path):
+        return {}
+    with open(path, encoding="utf-8") as handle:
+        data = json.load(handle)
+    return data if isinstance(data, dict) else {}
+
+
+def flow_rules(identity=None):
+    """FLOW_RULES with the identity's fixed-deposit account numbers folded in.
+
+    A transfer into an own fixed deposit prints as "TO <account>" and carries
+    no other marker, so the number itself is the rule.
+    """
+    accounts = (identity or {}).get("fixedDepositAccounts") or []
+    extra = ["TO %s" % str(account).strip().upper()
+             for account in accounts if str(account).strip()]
+    if not extra:
+        return FLOW_RULES
+    return [(name, list(patterns) + extra if name == "Fixed deposit" else patterns)
+            for name, patterns in FLOW_RULES]
+
+
+def classify(description, identity=None):
     d = " " + " ".join(description.split()).upper() + " "
-    for name, patterns in FLOW_RULES:
+    for name, patterns in flow_rules(identity):
         for p in patterns:
             if p in d:
                 return name
     return "Other"
+
+
+def header_skip_re(identity=None):
+    """Lines that are page furniture rather than part of a transaction.
+
+    The name filter must match the whole page-header name, not the bare first
+    name: self-transfer recipient lines ("<first name> DBS", "<first name>
+    CIMB") start the same way, and a first-name-only prefix silently erased
+    the recipient from every transfer to an own account. So the pattern uses
+    statementHolderName from manual/identity.json verbatim, escaped; without
+    an identity it simply omits that alternative rather than guessing.
+    """
+    name = " ".join(str((identity or {}).get("statementHolderName") or "").split())
+    alternatives = [r"Page \d"]
+    if name:
+        alternatives.append(re.escape(name))
+    alternatives.extend([
+        r"Date Description", r"One Account", r"Account Transaction", r"Total\b",
+        r"Please note that you are bound\b", r"omissions or unauthorised debits\b",
+        r"-{5,}",
+    ])
+    return re.compile(r"^(" + "|".join(alternatives) + r")", re.I)
 
 
 def printed_sign(text, match):
@@ -99,7 +161,7 @@ def statement_month(reader, path):
     return None
 
 
-def parse_pdf(path):
+def parse_pdf(path, identity=None):
     reader = PdfReader(path)
     ym = statement_month(reader, path)
     if not ym:
@@ -121,9 +183,7 @@ def parse_pdf(path):
             lines = lines[:i]
             break
 
-    SKIP_RE = re.compile(
-        r"^(Page \d|NICHOLAS|Date Description|One Account|Account Transaction|Total\b|"
-        r"Please note that you are bound\b|omissions or unauthorised debits\b|-{5,})", re.I)
+    SKIP_RE = header_skip_re(identity)
 
     entries = []
     current = None
@@ -255,7 +315,7 @@ def parse_pdf(path):
             "description": desc[:120],
             "amount": round(amount, 2),
             "direction": direction,
-            "flow": classify(desc),
+            "flow": classify(desc, identity),
             "balance": round(new_balance, 2),
             "amountSource": "balance" if overridden else "printed",
             "_sourcePage": e["page"],
@@ -290,6 +350,18 @@ def write_output(payload, ok):
 
 
 def main():
+    # Fail closed rather than parse without the name filter. A missing holder
+    # name does not break the run, it quietly leaves the page-header name in
+    # every description that follows one - a silent change to published data.
+    identity = load_identity()
+    if not str(identity.get("statementHolderName") or "").strip():
+        print("FAIL: %s is missing or has no statementHolderName; nothing was written."
+              % os.path.relpath(identity_path(), REPO_ROOT))
+        print('      Create it with {"statementHolderName": "<name exactly as the '
+              'statement page header prints it>"}. Without it the header name is '
+              "not filtered and every description silently changes.")
+        raise SystemExit(1)
+
     patterns = [
         os.path.join(REPO_ROOT, "statements", "**", "UOB_ONE*.pdf"),
         os.path.join(REPO_ROOT, "UOB_ONE*.pdf"),
@@ -304,7 +376,7 @@ def main():
     row_failures = []
     for path in files:
         try:
-            month_key, txs, overrides, failures, anchor = parse_pdf(path)
+            month_key, txs, overrides, failures, anchor = parse_pdf(path, identity)
         except Exception as exc:
             failed.append((os.path.basename(path), str(exc)[:60]))
             continue

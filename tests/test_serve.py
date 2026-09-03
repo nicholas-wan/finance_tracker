@@ -18,13 +18,50 @@ serve = importlib.import_module("serve")
 
 class OwnerApiValidationTests(unittest.TestCase):
     def setUp(self):
-        self.transactions = {"tx_abc123": {"id": "tx_abc123"}}
+        self.transactions = {
+            "tx_abc123": {"id": "tx_abc123"},
+            "tx_def456": {"id": "tx_def456"},
+        }
 
     def test_accepts_supported_owner_and_current_transaction(self):
         result = serve.validate_owner_request(
             {"id": "tx_abc123", "owner": "Shared"}, self.transactions
         )
-        self.assertEqual(result, ("tx_abc123", "Shared"))
+        # A single "id" still resolves, as a one-element batch.
+        self.assertEqual(result, (["tx_abc123"], "Shared"))
+
+    def test_accepts_a_batch_of_ids(self):
+        result = serve.validate_owner_request(
+            {"ids": ["tx_def456", "tx_abc123"], "owner": "Nic"}, self.transactions
+        )
+        self.assertEqual(result, (["tx_abc123", "tx_def456"], "Nic"))
+
+    def test_collapses_a_repeated_id(self):
+        # A duplicate would otherwise be counted twice in the audit row list.
+        result = serve.validate_owner_request(
+            {"ids": ["tx_abc123", "tx_abc123"], "owner": "Nic"}, self.transactions
+        )
+        self.assertEqual(result, (["tx_abc123"], "Nic"))
+
+    def test_rejects_an_empty_batch(self):
+        with self.assertRaisesRegex(ValueError, "Between 1 and"):
+            serve.validate_owner_request(
+                {"ids": [], "owner": "Nic"}, self.transactions
+            )
+
+    def test_rejects_a_batch_over_the_limit(self):
+        oversized = ["tx_%06d" % n for n in range(serve.MAX_OWNER_BATCH + 1)]
+        with self.assertRaisesRegex(ValueError, "Between 1 and"):
+            serve.validate_owner_request(
+                {"ids": oversized, "owner": "Nic"}, self.transactions
+            )
+
+    def test_rejects_a_batch_holding_an_unknown_transaction(self):
+        with self.assertRaisesRegex(ValueError, "not present"):
+            serve.validate_owner_request(
+                {"ids": ["tx_abc123", "tx_missing"], "owner": "Nic"},
+                self.transactions,
+            )
 
     def test_rejects_unknown_transaction(self):
         with self.assertRaisesRegex(ValueError, "not present"):
@@ -331,6 +368,7 @@ class SaveWritePathTests(unittest.TestCase):
     """
 
     TX_ID = "tx_write0001"
+    SECOND_ID = "tx_write0002"
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="serve-write-"))
@@ -426,10 +464,22 @@ class SaveWritePathTests(unittest.TestCase):
 
     def stage_rebuild(self, **overrides):
         """What the stub build will publish as the rebuilt dashboard."""
+        self.stage_rebuild_rows([self.row(**overrides)])
+
+    def stage_rebuild_rows(self, rows):
         self.applied.write_text(json.dumps({
-            "transactions": [self.row(**overrides)],
+            "transactions": rows,
             "quality": {"rebuilt": True},
         }), encoding="utf-8")
+
+    def write_transactions(self, rows):
+        """Replace the pre-save dashboard the save path reads current state from."""
+        path = self.paths["TRANSACTIONS_PATH"]
+        path.write_text(
+            json.dumps({"transactions": rows, "quality": {"seed": True}}, indent=1),
+            encoding="utf-8",
+        )
+        self.originals["TRANSACTIONS_PATH"] = path.read_bytes()
 
     def script_runs(self):
         if not self.log.exists():
@@ -465,6 +515,92 @@ class SaveWritePathTests(unittest.TestCase):
         self.assertEqual(self.script_runs(), ["build", "validate"])
         for name in ("OWNER_PATH", "AUDIT_PATH"):
             self.assert_backup_matches_original(name)
+
+    def test_save_owner_tags_a_batch_under_one_rebuild_and_one_audit_entry(self):
+        self.write_transactions([
+            self.row(),
+            self.row(id=self.SECOND_ID, owner="Untagged", ownerSource="unassigned"),
+        ])
+        self.stage_rebuild_rows([
+            self.row(owner="Shared", ownerSource="exact-id"),
+            self.row(id=self.SECOND_ID, owner="Shared", ownerSource="exact-id"),
+        ])
+        result = serve.save_owner([self.TX_ID, self.SECOND_ID], "Shared")
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [row["id"] for row in result["transactions"]],
+            [self.TX_ID, self.SECOND_ID],
+        )
+        self.assertEqual(
+            self.read("OWNER_PATH")["tagsById"],
+            {self.TX_ID: "Shared", self.SECOND_ID: "Shared"},
+        )
+        entries = self.read("AUDIT_PATH")["entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(
+            entries[0]["transactionIds"], [self.TX_ID, self.SECOND_ID])
+        owner_change = next(
+            c for c in entries[0]["changes"] if c["field"] == "Owner")
+        # The batch spanned two starting owners; the audit records both.
+        self.assertEqual(owner_change["before"], "Nic, Untagged")
+        self.assertEqual(owner_change["after"], "Shared")
+        # One rebuild for the whole batch, not one per row.
+        self.assertEqual(self.script_runs(), ["build", "validate"])
+
+    def test_unassigning_removes_the_tag_instead_of_pinning_untagged(self):
+        # A literal "Untagged" tag outranks manual/owner_rules.json forever, so
+        # clearing a tag must delete it and let the fallbacks speak again - even
+        # when a fallback then names an owner.
+        self.paths["OWNER_PATH"].write_text(
+            json.dumps({"tagsById": {self.TX_ID: "Yx"}}, indent=1), encoding="utf-8")
+        self.write_transactions([self.row(owner="Yx", ownerSource="exact-id")])
+        self.stage_rebuild(owner="Nic", ownerSource="merchant-rule")
+        result = serve.save_owner(self.TX_ID, "Untagged")
+        self.assertTrue(result["ok"])
+        self.assertEqual(self.read("OWNER_PATH")["tagsById"], {})
+
+    def test_unassign_rolls_back_when_the_tag_survives_the_rebuild(self):
+        self.paths["OWNER_PATH"].write_text(
+            json.dumps({"tagsById": {self.TX_ID: "Yx"}}, indent=1), encoding="utf-8")
+        self.originals["OWNER_PATH"] = self.paths["OWNER_PATH"].read_bytes()
+        self.write_transactions([self.row(owner="Yx", ownerSource="exact-id")])
+        self.stage_rebuild(owner="Yx", ownerSource="exact-id")
+        with self.assertRaisesRegex(RuntimeError, "did not apply"):
+            serve.save_owner(self.TX_ID, "Untagged")
+        self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+
+    def test_batch_rolls_back_when_any_row_comes_back_untagged(self):
+        self.write_transactions([
+            self.row(),
+            self.row(id=self.SECOND_ID, owner="Untagged", ownerSource="unassigned"),
+        ])
+        # The rebuild applies the tag to only one of the two rows.
+        self.stage_rebuild_rows([
+            self.row(owner="Shared", ownerSource="exact-id"),
+            self.row(id=self.SECOND_ID, owner="Untagged", ownerSource="unassigned"),
+        ])
+        with self.assertRaisesRegex(RuntimeError, "did not apply"):
+            serve.save_owner([self.TX_ID, self.SECOND_ID], "Shared")
+        self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+
+    def test_category_only_detail_save_does_not_pin_an_owner_tag(self):
+        # An explicit "Untagged" tag outranks manual/owner_rules.json forever,
+        # so a save that never touched the owner select must not write one.
+        self.write_transactions(
+            [self.row(owner="Untagged", ownerSource="unassigned")])
+        self.stage_rebuild(
+            owner="Untagged", ownerSource="unassigned", category="Games")
+        serve.save_transaction_detail(self.TX_ID, "Untagged", "Games", "", "")
+        self.assertEqual(self.read("OWNER_PATH")["tagsById"], {})
+        self.assertEqual(
+            self.read("OVERRIDE_PATH")["overridesById"],
+            {self.TX_ID: {"category": "Games"}},
+        )
+
+    def test_detail_save_still_writes_the_tag_when_the_owner_changes(self):
+        self.stage_rebuild(owner="Yx", ownerSource="exact-id")
+        serve.save_transaction_detail(self.TX_ID, "Yx", "Shopping", "", "")
+        self.assertEqual(self.read("OWNER_PATH")["tagsById"], {self.TX_ID: "Yx"})
 
     def test_failed_validation_rolls_back_every_file_and_rebuilds_prior_state(self):
         self.stage_rebuild(owner="Shared", ownerSource="exact-id")
@@ -556,6 +692,19 @@ class PostEndpointTests(unittest.TestCase):
                 pass
 
         cls.server = ThreadingHTTPServer(("127.0.0.1", 0), TestHandler)
+        cls.lifecycle_calls = []
+
+        class LifecycleRecorder:
+            def touch(self, client_id):
+                cls.lifecycle_calls.append(("touch", client_id))
+                return 1
+
+            def disconnect(self, client_id):
+                cls.lifecycle_calls.append(("disconnect", client_id))
+                return 0
+
+        cls.server.auto_stop = True
+        cls.server.dashboard_lifecycle = LifecycleRecorder()
         cls.port = cls.server.server_address[1]
         cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
         cls.thread.start()
@@ -606,6 +755,36 @@ class PostEndpointTests(unittest.TestCase):
             "/api/owner", json.dumps({"id": "tx_nope", "owner": "Nic"}))
         self.assertEqual(status, 400)
         self.assertIn("not present", body["error"])
+
+    def test_browser_lifecycle_heartbeat_and_disconnect(self):
+        client_id = "3ecadfb6-1d6b-4f7a-8b5c-2a4373ec2e13"
+        status, body = self.post(
+            "/api/client-heartbeat", json.dumps({"clientId": client_id}))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["activeClients"], 1)
+        status, body = self.post(
+            "/api/client-disconnect", json.dumps({"clientId": client_id}))
+        self.assertEqual(status, 200)
+        self.assertEqual(body["activeClients"], 0)
+        self.assertEqual(self.lifecycle_calls[-2:], [
+            ("touch", client_id), ("disconnect", client_id)
+        ])
+
+    def test_browser_lifecycle_rejects_invalid_client_id(self):
+        status, body = self.post(
+            "/api/client-heartbeat", json.dumps({"clientId": "not-a-uuid"}))
+        self.assertEqual(status, 400)
+        self.assertIn("UUID", body["error"])
+
+
+class DashboardLifecycleTests(unittest.TestCase):
+    def test_disconnect_makes_launcher_server_eligible_to_stop(self):
+        lifecycle = serve.DashboardLifecycle(
+            object(), stale_after=60, empty_grace=0, startup_grace=60)
+        client_id = "3ecadfb6-1d6b-4f7a-8b5c-2a4373ec2e13"
+        self.assertEqual(lifecycle.touch(client_id), 1)
+        self.assertEqual(lifecycle.disconnect(client_id), 0)
+        self.assertTrue(lifecycle._should_shutdown())
 
 
 if __name__ == "__main__":

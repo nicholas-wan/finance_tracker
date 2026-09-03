@@ -6,6 +6,7 @@
 #   manual/legacy_transactions.json   spreadsheet rows for months with no statement
 #   manual/salary.json                salary steps, annual income and tax
 #   manual/game_sales.json            game account sales
+#   manual/identity.json              own-account labels and trusted counterparties
 #
 # Run parse_cc.py and parse_one.py first, then this.
 
@@ -121,13 +122,17 @@ CATEGORY_RULES = [
                        "AWFULLY CHOCOLATE", "XW WESTERN GRILL", "JIA XIANG SARAWAK",
                        "TROPICO KOPI", "HOONG YING ENTERPRISE", "KEIJO SDN BHD",
                        "TINO JC", "Q'SON GROUP", "AURESYS PL", "ABBA OL2",
+                       # Inception SG bills the Starbucks drink kiosk, not a game store.
+                       "INCEPTION SG",
                        "SB125-AEON BUKIT INDAH", "AIF 111-ORH006", "ANDO.SG"]),
     # "STEAM" and "RIOT" must stay anchored to the biller strings: bare
     # substrings filed steamboat restaurants and MARRIOTT hotels under Games.
     ("Games", ["HOYOVERSE", "COGNOSPHERE", "G2G.COM", "ZEUSX", "STEAMGAMES", "PLAYSTATION", "NINTENDO",
-               "RIOT GAMES", "RIOTGAMES", "RIOT*", "INCEPTION SG", "KURO GAMES", "GARENA", "CODASHOP", "UNIPIN", "SEA GAMER",
+               "RIOT GAMES", "RIOTGAMES", "RIOT*", "KURO GAMES", "GARENA", "CODASHOP", "UNIPIN", "SEA GAMER",
                "ROBLOX", "EPIC GAMES", "XBOX", "BLIZZARD", "G2A", "MIHOYO", "XSOLLA",
                "XD ENTERTAINMENT", "2C2P*MYCARD", "PAYPAL *SPUUKYAZ",
+               # MEP* is the payment processor; bahjasuq is the game-top-up storefront.
+               "BAHJASUQ",
                "PAYPAL *FIKRIFERDINAN61"]),
     ("Shopping", ["SHOPEE", "LAZADA", "AMAZON", "QOO10", "TAOBAO", "NTE* ORDER", "ORDER 20",
                   "UNIQLO", "IKEA", "JANNPAUL", "COURTS SINGAPORE", "CAPITALAND VOUCHER",
@@ -155,7 +160,6 @@ GAME_RULES = [
     ("Steam", ["STEAMGAMES"]),
     ("G2G marketplace", ["G2G.COM"]),
     ("ZeusX marketplace", ["ZEUSX"]),
-    ("Inception SG", ["INCEPTION SG"]),
     ("PlayStation", ["PLAYSTATION", "PSN"]),
     ("Nintendo", ["NINTENDO"]),
     ("Xbox", ["XBOX"]),
@@ -163,6 +167,8 @@ GAME_RULES = [
     ("Riot Games", ["RIOT GAMES", "RIOTGAMES", "RIOT*"]),
     ("Garena", ["GARENA"]),
     ("Roblox", ["ROBLOX"]),
+    # Billed as "MEP*bahjasuq"/"bahjasuq"; MEP* is the processor, bahjasuq the storefront.
+    ("Chaos Zero Nightmare", ["BAHJASUQ"]),
     ("Top-up sites", ["CODASHOP", "UNIPIN", "SEA GAMER", "G2A"]),
 ]
 
@@ -353,6 +359,14 @@ def main():
     salary = manual("salary.json", {})
     sales = manual("game_sales.json", {}).get("sales", [])
     settlements = manual("settlements.json", {"openingBalances": []})
+    # Only the two fields the dashboard actually reads are published. The
+    # holder's name and the fixed-deposit account numbers stay in manual/,
+    # because nothing in app/ needs them and app/data/ is easy to copy around.
+    identity_file = manual("identity.json", {})
+    identity = {
+        "knownAccounts": identity_file.get("knownAccounts") or {},
+        "trustedCounterparties": identity_file.get("trustedCounterparties") or [],
+    }
     for s in sales:
         s["publisher"] = publisher_of(s.get("game", ""))
     sales.sort(key=lambda s: (s.get("month", ""), s.get("game", "")))
@@ -507,6 +521,7 @@ def main():
                 "salaryYears": salary.get("years", []),
                 "gameSales": sales,
                 "settlements": settlements,
+                "identity": identity,
                 "freshness": freshness,
                 "quality": quality,
                 "transactions": transactions,

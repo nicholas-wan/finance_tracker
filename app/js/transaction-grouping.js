@@ -109,10 +109,54 @@
       pad(provenance.page, 4) + "|" + pad(provenance.line, 6);
   }
 
+  // Identity is runtime configuration, not source: the generated data file
+  // carries the account numbers and names, so no personal detail lives here.
+  // Both default to empty, which is also what an older data file without an
+  // "identity" key produces - the dashboard then simply knows no accounts and
+  // trusts nobody.
+  var knownAccountNames = {};
+  var trustedCounterparties = [];
+
+  function configure(identity) {
+    var config = identity || {};
+    var accounts = config.knownAccounts || {};
+    knownAccountNames = {};
+    Object.keys(accounts).forEach(function (number) {
+      knownAccountNames[String(number)] = String(accounts[number]);
+    });
+    // An empty name would prefix-match every counterparty and silence the
+    // amount checks entirely, so it is dropped rather than trusted.
+    trustedCounterparties = (config.trustedCounterparties || [])
+      .map(String).filter(function (name) { return name.length > 0; });
+  }
+
+  function getIdentity() {
+    var accounts = {};
+    Object.keys(knownAccountNames).forEach(function (number) {
+      accounts[number] = knownAccountNames[number];
+    });
+    return {
+      knownAccounts: accounts,
+      trustedCounterparties: trustedCounterparties.slice()
+    };
+  }
+
+  // mBK funds-transfer references carry the destination account number and
+  // nothing else. A configured own/household account resolves to its name; any
+  // other destination surfaces as the formatted account number, so an
+  // unknown transfer target is never hidden behind a generic "Funds" label.
   function accountCounterparty(description) {
     var original = String(description || "").replace(
       /\s*Please note that you are bound\b.*$/i, "").trim();
     var upper = original.toUpperCase();
+    var mbk = original.match(/\bmBK-(\d{8,})\b/i);
+    if (mbk) {
+      if (Object.prototype.hasOwnProperty.call(knownAccountNames, mbk[1])) {
+        return knownAccountNames[mbk[1]];
+      }
+      return "UOB account " + mbk[1].replace(
+        /^(\d{3})(\d{3})(\d{3})(\d+)$/, "$1-$2-$3-$4");
+    }
     if (/INTERACTIVE BROKERS/.test(upper)) return "Interactive Brokers";
     if (/PHILLIP SECURITIES/.test(upper)) return "Phillip Securities";
     if (/TIGER BROKERS/.test(upper)) return "Tiger Brokers";
@@ -159,28 +203,20 @@
       /^Misc Credit\b/i.test((transaction.description || "").trim());
   }
 
-  // Confirmed-expected recipients: large or first payments to them are
-  // routine, so the counterparty and amount checks stay quiet. Data-quality
-  // checks (unclassified, derived amount, unreconciled source) and the
-  // accidental double-payment check still apply. Matched as a case-insensitive
-  // prefix of the normalized counterparty, because statements truncate
-  // ("Design 4 Space Pte." and "Design 4 Space Pte L" are the same firm).
-  var TRUSTED_COUNTERPARTIES = [
-    "PARTNER FULL NAME",
-    "Yx",
-    "Mei",
-    "Design 4 Space"
-  ];
-
-  // Everyday-sized outgoing movements repeat legitimately - two S$25 PayNow
-  // splits at dinner are not a double-charge. Identical same-day outflows
-  // below this amount stay quiet unless there are many of them.
+  // Outgoing movements below this are everyday spending - hawker meals,
+  // drinks, split bills - and never enter the review queue, whatever the
+  // checks say. Their notes stay visible in the transaction details.
   var SMALL_OUTFLOW_AMOUNT = 50.0;
-  var SMALL_OUTFLOW_MAX_COUNT = 3;
 
+  // Confirmed-expected recipients, supplied by configure(): large or first
+  // payments to them are routine, so the counterparty and amount checks stay
+  // quiet. Data-quality checks (unclassified, derived amount, unreconciled
+  // source) and the accidental double-payment check still apply. Matched as a
+  // case-insensitive prefix of the normalized counterparty, because statements
+  // truncate a long name ("... Pte." and "... Pte L" are the same firm).
   function accountTrustedCounterparty(counterparty) {
     var name = String(counterparty || "").toLowerCase();
-    return TRUSTED_COUNTERPARTIES.some(function (trusted) {
+    return trustedCounterparties.some(function (trusted) {
       return name.indexOf(trusted.toLowerCase()) === 0;
     });
   }
@@ -234,10 +270,8 @@
       var duplicateKey = [transaction.date, counterparty, transaction.direction,
         Number(transaction.amount).toFixed(2)].join("|");
       var matching = duplicates[duplicateKey] || [];
-      var smallRoutineOutflow = transaction.amount < SMALL_OUTFLOW_AMOUNT &&
-        matching.length <= SMALL_OUTFLOW_MAX_COUNT;
-      if (transaction.direction !== "deposit" && !smallRoutineOutflow &&
-          matching.length > 1 && transaction.amount * matching.length >= 40) {
+      if (transaction.direction !== "deposit" && matching.length > 1 &&
+          transaction.amount * matching.length >= 40) {
         reasons.push(matching.length + " identical same-day bank movements");
         checks.push("possible-duplicate");
       }
@@ -255,7 +289,15 @@
         internalMovement: internal,
         reasons: reasons,
         checks: checks,
-        requiresReview: reasons.length > 0,
+        // Money in never enters the review queue. Small outgoing movements
+        // are everyday food-sized spending and stay out too - except when
+        // they repeat on the same day, because a double charge is worth a
+        // look at any size. Suppressed notes remain visible in the drawer
+        // and the dedicated dropdown filters.
+        requiresReview: reasons.length > 0 &&
+          transaction.direction !== "deposit" &&
+          (Number(transaction.amount) >= SMALL_OUTFLOW_AMOUNT ||
+            checks.indexOf("possible-duplicate") !== -1),
         reviewed: Boolean(reviewed[transaction.id])
       };
     });
@@ -338,6 +380,9 @@
           label: merchantLabel(transaction),
           category: transaction.category,
           owner: transaction.owner,
+          // The key includes the owner, so every row here shares one owner and
+          // the ledger can retag the whole group in a single click.
+          ids: [],
           lastDate: transaction.date || transaction.month,
           count: 0,
           purchaseCount: 0,
@@ -351,6 +396,7 @@
         fallbackNames[key] = {};
       }
       var group = groups[key];
+      group.ids.push(transaction.id);
       group.count += 1;
       group.amount += signed(transaction);
       if (transaction.type === "debit") group.purchaseCount += 1;
@@ -727,6 +773,8 @@
     averageAccountSpending: averageAccountSpending,
     averageForMonths: averageForMonths,
     bindToggle: bindToggle,
+    configure: configure,
+    getIdentity: getIdentity,
     groupCountLabel: groupCountLabel,
     groupPurchases: groupPurchases,
     groupAccountTransactions: groupAccountTransactions,

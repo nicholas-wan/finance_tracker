@@ -189,6 +189,9 @@ def main():
     manual_settlements = load_optional(
         os.path.join(MANUAL_DIR, "settlements.json"),
         {"openingBalances": [], "payments": []})
+    manual_identity = load_optional(
+        os.path.join(MANUAL_DIR, "identity.json"),
+        {"knownAccounts": {}, "trustedCounterparties": []})
 
     errors = []
     warnings = []
@@ -643,6 +646,43 @@ def main():
             errors.append(
                 "settlements.%s in the dashboard differs from manual/settlements.json - "
                 "rebuild before trusting the Split tab" % field)
+
+    # Own-account labels and trusted counterparties are private, so they live
+    # in manual/identity.json and reach the dashboard only through the copy
+    # embedded at build time. Same drift risk as settlements: a stale copy
+    # silently labels a transfer with the wrong account or trusts the wrong
+    # name, so the two must agree.
+    manual_known = manual_identity.get("knownAccounts", {})
+    if not isinstance(manual_known, dict):
+        errors.append("identity.knownAccounts in manual/identity.json must be an object")
+        manual_known = {}
+    for known_account, label in manual_known.items():
+        if not (isinstance(known_account, str) and known_account.isdigit()):
+            errors.append(
+                "identity.knownAccounts key %r is not an account number" % known_account)
+        if not isinstance(label, str) or not label.strip():
+            errors.append("identity.knownAccounts[%r] has no label" % known_account)
+    manual_trusted = manual_identity.get("trustedCounterparties", [])
+    if not isinstance(manual_trusted, list) or any(
+            not isinstance(name, str) or not name.strip() for name in manual_trusted):
+        errors.append(
+            "identity.trustedCounterparties in manual/identity.json must be a list "
+            "of non-empty names")
+        manual_trusted = []
+
+    embedded_identity = output.get("identity", {})
+    if not isinstance(embedded_identity, dict):
+        errors.append("identity must be an object")
+        embedded_identity = {}
+    # An absent key reads as empty, so a tree with no identity at all is only
+    # flagged once manual/identity.json actually holds something.
+    for field, expected, empty in (("knownAccounts", manual_known, {}),
+                                   ("trustedCounterparties", manual_trusted, [])):
+        if json.dumps(expected, sort_keys=True) != \
+                json.dumps(embedded_identity.get(field, empty), sort_keys=True):
+            errors.append(
+                "identity.%s in the dashboard differs from manual/identity.json - "
+                "re-run scripts/build_data.py" % field)
 
     # The legacy month|description|amount|direction tags are structurally
     # validated (a malformed key or unknown owner is an error), but keys that

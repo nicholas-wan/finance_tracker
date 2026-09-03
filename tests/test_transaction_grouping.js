@@ -4,6 +4,24 @@ var assert = require("node:assert/strict");
 var test = require("node:test");
 var grouping = require("../app/js/transaction-grouping.js");
 
+// Identity is runtime configuration loaded from the generated data file, so
+// the tests supply their own placeholders and never carry real names or
+// account numbers.
+var PLACEHOLDER_IDENTITY = {
+  knownAccounts: {
+    "1111111111": "Own Savings A/c",
+    "2222222222": "Own Stash A/c (closed)"
+  },
+  trustedCounterparties: [
+    "Partner Full Name",
+    "Yx",
+    "Nickname",
+    "Own Savings",
+    "Own Stash",
+    "Trusted Vendor"
+  ]
+};
+
 function transaction(overrides) {
   return Object.assign({
     description: "GRAB* GPC-AB1234",
@@ -387,6 +405,7 @@ test("bank review analysis flags conservative explainable cases", function () {
 });
 
 test("trusted counterparties skip amount checks but keep integrity checks", function () {
+  grouping.configure(PLACEHOLDER_IDENTITY);
   function row(id, description, amount, extra) {
     return Object.assign({
       id: id, month: "2026-07", date: "2026-07-0" + id.length,
@@ -397,7 +416,9 @@ test("trusted counterparties skip amount checks but keep integrity checks", func
   }
   var rows = [
     row("a", "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile", 2000),
-    row("ab", "PAYNOW-FAST DESIGN 4 SPACE PTE. LT OTHR Transfer - UEN", 9000),
+    // A truncated trailing word still matches, because the trusted name is a
+    // prefix of the normalized counterparty.
+    row("ab", "PAYNOW-FAST TRUSTED VENDOR PTE. LT OTHR Transfer - UEN", 9000),
     row("abc", "PAYNOW-FAST A STRANGER OTHR Transfer - Mobile", 2000)
   ];
   var result = grouping.analyzeAccountTransactions(rows, {});
@@ -410,9 +431,46 @@ test("trusted counterparties skip amount checks but keep integrity checks", func
       { provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: false } })
   ], {});
   assert.ok(unverified.a.checks.includes("unverified-source"));
+  grouping.configure({});
 });
 
-test("small routine outflow duplicates stay quiet until there are many", function () {
+test("without configuration nobody is trusted and every mBK number is shown raw", function () {
+  grouping.configure();
+  assert.deepEqual(grouping.getIdentity(),
+    { knownAccounts: {}, trustedCounterparties: [] });
+  assert.equal(grouping.accountCounterparty("Funds Transfer mBK-1111111111"),
+    "UOB account 111-111-111-1");
+  var result = grouping.analyzeAccountTransactions([{
+    id: "n1", month: "2026-07", date: "2026-07-11",
+    description: "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile",
+    flow: "Transfer", direction: "withdrawal", amount: 2000,
+    provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
+  }], {});
+  assert.ok(result.n1.checks.includes("large-transfer"));
+  assert.equal(result.n1.requiresReview, true);
+});
+
+test("getIdentity returns the configured values and not the live state", function () {
+  grouping.configure(PLACEHOLDER_IDENTITY);
+  var identity = grouping.getIdentity();
+  assert.deepEqual(identity.knownAccounts, PLACEHOLDER_IDENTITY.knownAccounts);
+  assert.deepEqual(identity.trustedCounterparties,
+    PLACEHOLDER_IDENTITY.trustedCounterparties);
+  // A caller that renders the list must not be able to edit the module state.
+  identity.trustedCounterparties.push("Intruder");
+  identity.knownAccounts["3333333333"] = "Injected A/c";
+  assert.deepEqual(grouping.getIdentity().trustedCounterparties,
+    PLACEHOLDER_IDENTITY.trustedCounterparties);
+  assert.equal(grouping.accountCounterparty("Funds Transfer mBK-3333333333"),
+    "UOB account 333-333-333-3");
+  // A partial identity keeps the missing half empty rather than stale.
+  grouping.configure({ trustedCounterparties: ["Someone"] });
+  assert.deepEqual(grouping.getIdentity(),
+    { knownAccounts: {}, trustedCounterparties: ["Someone"] });
+  grouping.configure({});
+});
+
+test("outflows under S$50 never require review, whatever the checks say", function () {
   function rows(count, amount) {
     var list = [];
     for (var index = 0; index < count; index += 1) {
@@ -425,25 +483,73 @@ test("small routine outflow duplicates stay quiet until there are many", functio
     }
     return list;
   }
-  // Two S$25 same-day transfers: everyday splitting, no flag.
-  var pair = grouping.analyzeAccountTransactions(rows(2, 25), {});
-  assert.equal(pair.s0.requiresReview, false);
-  // Four identical small ones exceed the small-quantity allowance.
+  // Repeated identical payments are a possible double charge and still
+  // demand review even below the small-outflow floor.
   var burst = grouping.analyzeAccountTransactions(rows(4, 25), {});
   assert.ok(burst.s0.checks.includes("possible-duplicate"));
-  // Two S$60 duplicates are above the small-outflow amount and still flag.
+  assert.equal(burst.s0.requiresReview, true);
   var large = grouping.analyzeAccountTransactions(rows(2, 60), {});
   assert.ok(large.s0.checks.includes("possible-duplicate"));
+  assert.equal(large.s0.requiresReview, true);
+  // A small unclassified outflow also stays out of the queue.
+  var unclassified = grouping.analyzeAccountTransactions([{
+    id: "u1", month: "2026-07", date: "2026-07-06",
+    description: "NETS Debit-Consumer NOODLE STALL10142900 xxxxxx5080",
+    flow: "Other", direction: "withdrawal", amount: 6.5,
+    provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
+  }], {});
+  assert.ok(unclassified.u1.checks.includes("unclassified"));
+  assert.equal(unclassified.u1.requiresReview, false);
 });
 
-test("Mei is a trusted counterparty", function () {
+test("mBK references resolve to account names or formatted numbers", function () {
+  grouping.configure(PLACEHOLDER_IDENTITY);
+  assert.equal(grouping.accountCounterparty("Funds Transfer mBK-1111111111"),
+    "Own Savings A/c");
+  assert.equal(grouping.accountCounterparty("Funds Transfer mBK-2222222222"),
+    "Own Stash A/c (closed)");
+  assert.equal(grouping.accountCounterparty("Funds Transfer mBK-1234567890"),
+    "UOB account 123-456-789-0");
+  // Card bill payments carry mBK- followed by text, not an account number.
+  assert.equal(grouping.accountCounterparty(
+    "Bill Payment mBK-UOB Cards 5522532030690754"), "UOB Cards");
+  // A transfer to a known own account is trusted; an unknown one still flags.
+  function transfer(id, reference) {
+    return {
+      id: id, month: "2026-07", date: "2026-07-10",
+      description: "Funds Transfer mBK-" + reference,
+      flow: "Transfer", direction: "withdrawal", amount: 10000,
+      provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
+    };
+  }
+  var known = grouping.analyzeAccountTransactions([transfer("k1", "1111111111")], {});
+  assert.equal(known.k1.requiresReview, false);
+  var unknown = grouping.analyzeAccountTransactions([transfer("u1", "1234567890")], {});
+  assert.ok(unknown.u1.checks.includes("large-transfer"));
+  grouping.configure({});
+});
+
+test("a configured nickname is a trusted counterparty", function () {
+  grouping.configure(PLACEHOLDER_IDENTITY);
   var result = grouping.analyzeAccountTransactions([{
     id: "m1", month: "2026-07", date: "2026-07-15",
-    description: "PAYNOW-FAST PIB2503305595567963 Mei OTHR SOMEONE",
+    description: "PAYNOW-FAST PIB2503305595567963 Nickname OTHR SOMEONE",
     flow: "Transfer", direction: "withdrawal", amount: 800,
     provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
   }], {});
   assert.equal(result.m1.requiresReview, false);
+  grouping.configure({});
+});
+
+test("deposits never require review, but keep their data-quality notes", function () {
+  var result = grouping.analyzeAccountTransactions([{
+    id: "d1", month: "2026-07", date: "2026-07-08",
+    description: "UNKNOWN CREDIT", flow: "Other", direction: "deposit",
+    amount: 250,
+    provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
+  }], {});
+  assert.ok(result.d1.checks.includes("unclassified"));
+  assert.equal(result.d1.requiresReview, false);
 });
 
 test("incoming transfer duplicates stay quiet, outgoing still flag", function () {
@@ -675,6 +781,38 @@ test("every live grouped label accounts for all of its rows", function () {
     assert.ok(!/^0 /.test(grouping.groupCountLabel(group)),
       "a group should never report zero of anything as its whole label");
   });
+});
+
+test("a group carries the id of every row it covers, and no others", function () {
+  // One click on a group's owner chip retags exactly these ids, so a missing
+  // or foreign id would silently skip or mistag a real transaction.
+  var rows = [
+    transaction({ id: "tx_1", description: "SHOPEE SG MP SINGAPORE", owner: "Nic" }),
+    transaction({ id: "tx_2", description: "SHOPEE SG MP SINGAPORE", owner: "Nic" }),
+    transaction({ id: "tx_3", description: "SHOPEE SG MP SINGAPORE", owner: "Shared" })
+  ];
+  var groups = grouping.groupPurchases(rows);
+  var seen = [];
+  groups.forEach(function (group) {
+    assert.equal(group.ids.length, group.count);
+    // The grouping key includes the owner, so one group never mixes owners.
+    group.ids.forEach(function (id) {
+      var row = rows.find(function (r) { return r.id === id; });
+      assert.equal(row.owner, group.owner);
+      seen.push(id);
+    });
+  });
+  assert.deepEqual(seen.sort(), ["tx_1", "tx_2", "tx_3"]);
+});
+
+test("every live group's ids reconcile to its own count", function () {
+  var data = require("../app/data/transactions.json");
+  var total = 0;
+  grouping.groupPurchases(data.transactions).forEach(function (group) {
+    assert.equal(group.ids.length, group.count);
+    total += group.ids.length;
+  });
+  assert.equal(total, data.transactions.length);
 });
 
 // ---------- Excluded rows are reported, never re-netted ----------

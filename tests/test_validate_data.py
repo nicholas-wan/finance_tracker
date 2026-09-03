@@ -271,6 +271,7 @@ def write_tree(root, data):
         ("game_sales", "game_sales.json"),
         ("owner_rules", "owner_rules.json"),
         ("settlements_manual", "settlements.json"),
+        ("identity_manual", "identity.json"),
     ):
         if key in data:
             write(os.path.join(manual_dir, filename), data[key])
@@ -697,6 +698,73 @@ class ManualInputTests(unittest.TestCase):
         failed, output = run(mutate)
         self.assertTrue(failed)
         self.assertIn("differs from manual/settlements.json", output)
+
+    def test_matching_identity_copy_passes(self):
+        def mutate(data):
+            data["identity_manual"] = {
+                "statementHolderName": "REDACTED HOLDER NAME",
+                "knownAccounts": {"1111111111": "Redacted Savings A/c"},
+                "fixedDepositAccounts": ["2222222222"],
+                "trustedCounterparties": ["Redacted Person"],
+            }
+            data["output"]["identity"] = {
+                "knownAccounts": {"1111111111": "Redacted Savings A/c"},
+                "trustedCounterparties": ["Redacted Person"],
+            }
+        failed, output = run(mutate)
+        self.assertFalse(failed, output)
+
+    def test_identity_drift_from_manual_file_fails(self):
+        # Own-account labels and trusted names are private, so the dashboard
+        # only ever sees the copy embedded at build time. A stale copy labels a
+        # transfer with the wrong account and trusts the wrong counterparty.
+        def mutate(data):
+            data["identity_manual"] = {
+                "knownAccounts": {"1111111111": "Redacted Savings A/c"},
+                "trustedCounterparties": ["Redacted Person"],
+            }
+            data["output"]["identity"] = {
+                "knownAccounts": {"1111111111": "Stale Label"},
+                "trustedCounterparties": ["Redacted Person"],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("identity.knownAccounts in the dashboard differs from "
+                      "manual/identity.json", output)
+
+    def test_identity_trusted_counterparty_drift_fails(self):
+        def mutate(data):
+            data["identity_manual"] = {
+                "knownAccounts": {},
+                "trustedCounterparties": ["Redacted Person"],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("identity.trustedCounterparties in the dashboard differs from "
+                      "manual/identity.json", output)
+
+    def test_identity_account_key_that_is_not_a_number_fails(self):
+        def mutate(data):
+            data["identity_manual"] = {
+                "knownAccounts": {"Lady's account": "Redacted Savings A/c"},
+                "trustedCounterparties": [],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("is not an account number", output)
+
+    def test_identity_with_a_blank_trusted_counterparty_fails(self):
+        # An empty name would match every counterparty and silence the
+        # new-counterparty check outright.
+        def mutate(data):
+            data["identity_manual"] = {
+                "knownAccounts": {},
+                "trustedCounterparties": ["Redacted Person", "  "],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("trustedCounterparties in manual/identity.json must be a list",
+                      output)
 
     def test_malformed_legacy_tag_key_fails(self):
         def mutate(data):

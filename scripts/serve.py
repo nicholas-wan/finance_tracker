@@ -34,6 +34,9 @@ ACCOUNT_TRANSACTIONS_PATH = APP_DIR / "data" / "account_transactions.json"
 BUILD_SCRIPT = REPO_ROOT / "scripts" / "build_data.py"
 VALIDATE_SCRIPT = REPO_ROOT / "scripts" / "validate_data.py"
 ALLOWED_OWNERS = {"Nic", "Shared", "Yx", "Untagged"}
+# One-click tagging posts whole merchant groups and whole filtered pages.
+# The cap keeps a batch inside the 4KB request-body limit do_POST enforces.
+MAX_OWNER_BATCH = 100
 ALLOWED_CATEGORIES = {
     "Bills & utilities",
     "Entertainment",
@@ -148,17 +151,32 @@ def append_audit_entry(audit_data, entry):
 
 
 def validate_owner_request(payload, transactions):
+    """Resolve a posted owner decision to rows in the current build.
+
+    ``id`` tags one row; ``ids`` tags a batch under a single rebuild, which is
+    what the ledger's merchant-group and "tag everything shown" controls post.
+    Both forms return a list so the save path never has to branch on shape.
+    """
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object.")
-    tx_id = payload.get("id")
     owner = payload.get("owner")
-    if not isinstance(tx_id, str) or not tx_id.startswith("tx_"):
+    if "ids" in payload:
+        ids = payload.get("ids")
+        if not isinstance(ids, list) or not ids or len(ids) > MAX_OWNER_BATCH:
+            raise ValueError(
+                "Between 1 and %d transaction IDs are required." % MAX_OWNER_BATCH)
+    else:
+        ids = [payload.get("id")]
+    if any(not isinstance(tx_id, str) or not tx_id.startswith("tx_")
+           for tx_id in ids):
         raise ValueError("A valid transaction ID is required.")
     if owner not in ALLOWED_OWNERS:
         raise ValueError("Owner must be Nic, Shared, Yx, or Unassigned.")
-    if tx_id not in transactions:
+    # Deduplicated, so a repeated ID cannot double-count in the audit row list.
+    ids = sorted(set(ids))
+    if any(tx_id not in transactions for tx_id in ids):
         raise ValueError("That transaction is not present in the current build.")
-    return tx_id, owner
+    return ids, owner
 
 
 def is_signal_key(value):
@@ -288,36 +306,62 @@ def run_script(script):
     return output
 
 
-def save_owner(tx_id, owner):
+def save_owner(tx_ids, owner):
+    """Tag one row or a batch of rows, under a single rebuild and audit entry."""
+    if isinstance(tx_ids, str):
+        tx_ids = [tx_ids]
     with WRITE_LOCK:
         transaction_data = load_json(TRANSACTIONS_PATH)
         transactions = {
             row.get("id"): row for row in transaction_data.get("transactions", [])
         }
-        validate_owner_request({"id": tx_id, "owner": owner}, transactions)
-        current = transactions[tx_id]
+        tx_ids, owner = validate_owner_request(
+            {"ids": list(tx_ids), "owner": owner}, transactions)
+        rows = [transactions[tx_id] for tx_id in tx_ids]
+        current = rows[0]
         paths = (OWNER_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
         owner_data = json.loads(originals[OWNER_PATH].decode("utf-8"))
-        owner_data.setdefault("tagsById", {})[tx_id] = owner
-        owner_data["tagsById"] = dict(sorted(owner_data["tagsById"].items()))
+        tags = owner_data.setdefault("tagsById", {})
+        # "Untagged" means "drop my tag and let the merchant fallbacks decide
+        # again", not "pin this row as unassigned". Writing the literal value
+        # would shadow manual/owner_rules.json for the life of the transaction.
+        for tx_id in tx_ids:
+            if owner == "Untagged":
+                tags.pop(tx_id, None)
+            else:
+                tags[tx_id] = owner
+        owner_data["tagsById"] = dict(sorted(tags.items()))
         changes = []
-        if current.get("owner") != owner:
+        # A batch spans rows that may have started from different owners, so the
+        # audit records the set it moved from rather than one row's value.
+        previous = sorted({row.get("owner") or "Unassigned" for row in rows})
+        if previous != [owner]:
             changes.append({
                 "field": "Owner",
-                "before": current.get("owner", "Unassigned"),
+                "before": ", ".join(previous),
                 "after": owner,
             })
-        if current.get("ownerSource") != "exact-id":
+        unconfirmed = sorted({
+            row.get("ownerSource") or "unassigned" for row in rows
+            if row.get("ownerSource") != "exact-id"
+        })
+        if unconfirmed:
             changes.append({
                 "field": "Owner source",
-                "before": current.get("ownerSource", "unassigned"),
+                "before": ", ".join(unconfirmed),
                 "after": "confirmed manually",
             })
         audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
         append_audit_entry(
             audit_data,
-            make_audit_entry(current, "Updated owner", changes),
+            make_audit_entry(
+                current,
+                "Updated owner" if len(tx_ids) == 1
+                else "Updated owner for %d transactions" % len(tx_ids),
+                changes,
+                transaction_ids=tx_ids,
+            ),
         )
         payloads = {OWNER_PATH: owner_data, AUDIT_PATH: audit_data}
 
@@ -328,12 +372,24 @@ def save_owner(tx_id, owner):
             build_output = run_script(BUILD_SCRIPT)
             validation_output = run_script(VALIDATE_SCRIPT)
             refreshed = load_json(TRANSACTIONS_PATH)
-            updated = next(
-                (row for row in refreshed.get("transactions", []) if row.get("id") == tx_id),
-                None,
-            )
-            if not updated or updated.get("owner") != owner:
+            rebuilt = {
+                row.get("id"): row for row in refreshed.get("transactions", [])
+            }
+            # Every row in the batch must have landed. A partially applied batch
+            # is rolled back whole, so the page never shows some rows tagged.
+            updated_rows = [rebuilt.get(tx_id) for tx_id in tx_ids]
+            # Clearing a tag hands the row back to the merchant fallbacks, which
+            # may legitimately name an owner; what must be gone is the stable-ID
+            # tag itself. Setting an owner must land as that exact owner.
+            def applied(row):
+                if row is None:
+                    return False
+                if owner == "Untagged":
+                    return row.get("ownerSource") != "exact-id"
+                return row.get("owner") == owner
+            if not all(applied(row) for row in updated_rows):
                 raise RuntimeError("The rebuilt dashboard did not apply the saved owner.")
+            updated = updated_rows[0]
         except Exception as save_error:
             failed_restores = restore_originals(paths, originals)
             if failed_restores:
@@ -356,11 +412,21 @@ def save_owner(tx_id, owner):
 
         return {
             "ok": True,
+            # "transaction" stays for single-row callers; "transactions" carries
+            # the whole batch so the page can repaint every row it just tagged.
             "transaction": {
                 "id": updated["id"],
                 "owner": updated["owner"],
                 "ownerSource": updated.get("ownerSource"),
             },
+            "transactions": [
+                {
+                    "id": row["id"],
+                    "owner": row["owner"],
+                    "ownerSource": row.get("ownerSource"),
+                }
+                for row in updated_rows
+            ],
             "quality": refreshed.get("quality", {}),
             "build": build_output.splitlines()[0] if build_output else "Build completed.",
             "validation": validation_output.splitlines()[0]
@@ -579,8 +645,15 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         originals = {path: path.read_bytes() for path in paths}
 
         owner_data = json.loads(originals[OWNER_PATH].decode("utf-8"))
-        owner_data.setdefault("tagsById", {})[tx_id] = owner
-        owner_data["tagsById"] = dict(sorted(owner_data["tagsById"].items()))
+        tags = owner_data.setdefault("tagsById", {})
+        # Only a real owner change may write a tag. Stamping the value the form
+        # happened to be showing turned a category-only edit into an explicit
+        # tag, and an explicit "Untagged" then permanently shadows the merchant
+        # fallbacks in manual/owner_rules.json.
+        owner_changed = current.get("owner", "Untagged") != owner
+        if owner_changed:
+            tags[tx_id] = owner
+        owner_data["tagsById"] = dict(sorted(tags.items()))
 
         remark_data = json.loads(originals[REMARK_PATH].decode("utf-8"))
         remarks = remark_data.setdefault("remarksById", {})
@@ -613,7 +686,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         for field, before, after in comparisons:
             if before != after:
                 changes.append({"field": field, "before": before, "after": after})
-        if current.get("ownerSource") != "exact-id":
+        if owner_changed and current.get("ownerSource") != "exact-id":
             changes.append({
                 "field": "Owner source",
                 "before": current.get("ownerSource", "unassigned"),
@@ -798,6 +871,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             self.send_json(200, {
                 "ok": True,
                 "editable": True,
+                "autoStop": bool(getattr(self.server, "auto_stop", False)),
                 "riskReviews": True,
                 "remarks": True,
                 "transactionDetails": True,
@@ -854,6 +928,8 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             return
         endpoint = self.path.split("?", 1)[0]
         if endpoint not in {
+            "/api/client-heartbeat",
+            "/api/client-disconnect",
             "/api/owner",
             "/api/risk-review",
             "/api/remark",
@@ -871,7 +947,22 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            if endpoint == "/api/account-review":
+            if endpoint in {"/api/client-heartbeat", "/api/client-disconnect"}:
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                try:
+                    client_id = str(uuid.UUID(payload.get("clientId", "")))
+                except (ValueError, TypeError, AttributeError):
+                    raise ValueError("clientId must be a UUID.")
+                lifecycle = getattr(self.server, "dashboard_lifecycle", None)
+                if lifecycle:
+                    active = (lifecycle.touch(client_id)
+                              if endpoint == "/api/client-heartbeat"
+                              else lifecycle.disconnect(client_id))
+                else:
+                    active = 0
+                result = {"ok": True, "activeClients": active}
+            elif endpoint == "/api/account-review":
                 # save_account_review re-validates under WRITE_LOCK; the early
                 # validation the card endpoints do here is only a fast reject,
                 # so this branch defers entirely to the save function.
@@ -885,8 +976,8 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                     row.get("id"): row for row in transaction_data.get("transactions", [])
                 }
                 if endpoint == "/api/owner":
-                    tx_id, owner = validate_owner_request(payload, transactions)
-                    result = save_owner(tx_id, owner)
+                    tx_ids, owner = validate_owner_request(payload, transactions)
+                    result = save_owner(tx_ids, owner)
                 elif endpoint == "/api/risk-review":
                     ids, recognized, key, _ = validate_risk_review_request(
                         payload, transactions)
@@ -920,18 +1011,87 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         super().end_headers()
 
 
+class DashboardLifecycle:
+    """Stop a launcher-owned server after its last browser tab disappears."""
+
+    def __init__(self, server, stale_after=120, empty_grace=3, startup_grace=120):
+        self.server = server
+        self.stale_after = stale_after
+        self.empty_grace = empty_grace
+        self.startup_grace = startup_grace
+        self.started_at = time.monotonic()
+        self.empty_since = self.started_at
+        self.clients = {}
+        self.ever_connected = False
+        self.lock = threading.Lock()
+        self.stop_event = threading.Event()
+        self.thread = threading.Thread(target=self._monitor, daemon=True)
+
+    def start(self):
+        self.thread.start()
+
+    def stop(self):
+        self.stop_event.set()
+        if self.thread.is_alive() and threading.current_thread() is not self.thread:
+            self.thread.join(timeout=2)
+
+    def touch(self, client_id):
+        with self.lock:
+            self.clients[client_id] = time.monotonic()
+            self.ever_connected = True
+            return len(self.clients)
+
+    def disconnect(self, client_id):
+        with self.lock:
+            self.clients.pop(client_id, None)
+            if not self.clients:
+                self.empty_since = time.monotonic()
+            return len(self.clients)
+
+    def _should_shutdown(self):
+        now = time.monotonic()
+        with self.lock:
+            stale = [client_id for client_id, seen in self.clients.items()
+                     if now - seen >= self.stale_after]
+            for client_id in stale:
+                self.clients.pop(client_id, None)
+            if stale and not self.clients:
+                self.empty_since = now
+            if self.clients:
+                return False
+            if self.ever_connected:
+                return now - self.empty_since >= self.empty_grace
+            return now - self.started_at >= self.startup_grace
+
+    def _monitor(self):
+        while not self.stop_event.wait(1):
+            if self._should_shutdown():
+                self.server.shutdown()
+                return
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=3402)
+    parser.add_argument("--auto-stop", action="store_true",
+                        help="stop after the last dashboard tab closes")
     args = parser.parse_args()
     server = ThreadingHTTPServer(("127.0.0.1", args.port), FinanceHandler)
+    server.auto_stop = args.auto_stop
+    lifecycle = DashboardLifecycle(server) if args.auto_stop else None
+    server.dashboard_lifecycle = lifecycle
     print("Editable finance dashboard: http://localhost:%d" % args.port)
     print("Owner, remark, and transaction-review changes are rebuilt and validated.")
+    if lifecycle:
+        print("Auto-stop is enabled; closing the last dashboard tab stops the server.")
+        lifecycle.start()
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
     finally:
+        if lifecycle:
+            lifecycle.stop()
         server.server_close()
 
 

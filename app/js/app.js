@@ -123,6 +123,13 @@
   function transactionName(t) {
     return t.displayName || t.description;
   }
+  // Known accounts and trusted counterparties live in the generated data file,
+  // not in the source, so they have to be pushed into the grouping module every
+  // time `data` is replaced - before anything reads a counterparty from it. An
+  // older file without an "identity" key simply configures nothing.
+  function applyIdentity() {
+    window.FinanceGrouping.configure((data && data.identity) || {});
+  }
   function refreshAccountAnalysis() {
     var analysis = window.FinanceGrouping.analyzeAccountTransactions(
       account.transactions, accountReviewedIds);
@@ -250,6 +257,7 @@
       return loadJson("data/transactions.json?updated=" + Date.now());
     }).then(function (fresh) {
       data = fresh;
+      applyIdentity();
       renderAll();
       setTab("transactions");
       showToast(remark ? "Remark saved." : "Remark removed.", "success");
@@ -293,6 +301,106 @@
     input.addEventListener("blur", commit);
     return input;
   }
+  // One-click owner tagging. Opening the drawer, changing the select, saving
+  // and closing it cost five clicks per row; these chips cost one, and post the
+  // owner-only endpoint so a tag never rewrites a category, name or remark.
+  var OWNER_CHOICES = [["Nic", "Nic"], ["Shared", "Shared"], ["Yx", "Yx"]];
+  var OWNER_BATCH_LIMIT = 100;
+  function saveOwner(ids, owner, picker, describe) {
+    var buttons = picker.querySelectorAll("button");
+    var scrollTop = window.scrollY;
+    picker.classList.add("owner-picker-saving");
+    Array.prototype.forEach.call(buttons, function (button) { button.disabled = true; });
+    function release() {
+      picker.classList.remove("owner-picker-saving");
+      Array.prototype.forEach.call(buttons, function (button) { button.disabled = false; });
+    }
+    fetch("api/owner", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // A single row keeps posting "id" so the request stays the shape the
+      // endpoint has always accepted; only batches need the list form.
+      body: JSON.stringify(ids.length === 1
+        ? { id: ids[0], owner: owner }
+        : { ids: ids, owner: owner })
+    }).then(function (response) {
+      return response.json().catch(function () {
+        return { error: "The local server returned an unreadable response." };
+      }).then(function (payload) {
+        if (!response.ok) throw new Error(payload.error || "Owner save failed.");
+        return payload;
+      });
+    }).then(function () {
+      return loadJson("data/transactions.json?updated=" + Date.now());
+    }).then(function (fresh) {
+      data = fresh;
+      applyIdentity();
+      renderAll();
+      setTab("transactions");
+      // Tagging runs down a list, so the page must not jump back to the top
+      // between rows the way a plain re-render would leave it.
+      window.scrollTo(0, scrollTop);
+      showToast(
+        (ids.length === 1 ? describe : ids.length + " transactions") + " -> " +
+        (owner === "Untagged" ? "unassigned" : owner) + ".", "success");
+    }).catch(function (error) {
+      release();
+      showToast(error.message, "error");
+    });
+  }
+  function buildOwnerPicker(ids, owner, describe) {
+    var picker = el("div", "owner-picker");
+    if (!editor.available || !ids.length) {
+      picker.appendChild(el("span", "owner-tag", owner === "Untagged" ? "—" : owner));
+      if (!editor.available) picker.title = "Start scripts/serve.py to enable editing.";
+      return picker;
+    }
+    picker.setAttribute("role", "group");
+    picker.setAttribute("aria-label", "Owner for " + describe);
+    OWNER_CHOICES.forEach(function (choice) {
+      var active = owner === choice[0];
+      var button = el("button", "owner-chip" + (active ? " is-active" : ""), choice[1]);
+      button.type = "button";
+      button.setAttribute("aria-pressed", active ? "true" : "false");
+      button.title = (active ? "Assigned to " + choice[1] + ". Click to unassign."
+        : "Assign to " + choice[1] + ".") +
+        (ids.length > 1 ? " Applies to all " + ids.length + " transactions." : "");
+      button.addEventListener("click", function (event) {
+        // The row itself opens the drawer; a chip must not do both.
+        event.stopPropagation();
+        var next = active ? "Untagged" : choice[0];
+        if (ids.length > 1 && !window.confirm(
+            "Set " + ids.length + " transactions in \"" + describe + "\" to " +
+            (next === "Untagged" ? "unassigned" : next) + "?")) return;
+        saveOwner(ids, next, picker, describe);
+      });
+      picker.appendChild(button);
+    });
+    return picker;
+  }
+  function buildOwnerBulkAction(rows) {
+    if (!editor.available || !rows.length) return null;
+    var ids = rows.slice(0, OWNER_BATCH_LIMIT).map(function (t) { return t.id; });
+    var wrap = el("div", "owner-bulk");
+    wrap.appendChild(el("span", "owner-bulk-label",
+      ids.length < rows.length
+        ? "Tag first " + ids.length + " shown as"
+        : "Tag all " + ids.length + " shown as"));
+    var picker = el("div", "owner-picker");
+    OWNER_CHOICES.forEach(function (choice) {
+      var button = el("button", "owner-chip", choice[1]);
+      button.type = "button";
+      button.title = "Assign " + ids.length + " filtered transaction(s) to " + choice[1] + ".";
+      button.addEventListener("click", function () {
+        if (!window.confirm(
+            "Set " + ids.length + " transaction(s) to " + choice[0] + "?")) return;
+        saveOwner(ids, choice[0], picker, ids.length + " transactions");
+      });
+      picker.appendChild(button);
+    });
+    wrap.appendChild(picker);
+    return wrap;
+  }
   function saveRiskReview(t, recognized, button, status) {
     button.disabled = true;
     status.textContent = "Saving review...";
@@ -318,6 +426,7 @@
       return loadJson("data/transactions.json?updated=" + Date.now());
     }).then(function (fresh) {
       data = fresh;
+      applyIdentity();
       var updated = data.transactions.find(function (row) { return row.id === t.id; });
       renderAll();
       setTab("transactions");
@@ -494,6 +603,7 @@
       return loadJson("data/transactions.json?updated=" + Date.now());
     }).then(function (fresh) {
       data = fresh;
+      applyIdentity();
       var updated = data.transactions.find(function (row) { return row.id === t.id; });
       renderAll();
       if (updated) openTransactionDrawer(updated);
@@ -962,8 +1072,30 @@
       ? "Filter by bank flow" : "Filter by category");
   }
 
+  // The bank rules describe configuration, so they are written from it rather
+  // than spelled out in the markup.
+  function renderBankRules() {
+    var identity = window.FinanceGrouping.getIdentity();
+    var names = identity.trustedCounterparties;
+    var list = document.getElementById("trusted-counterparties-list");
+    if (list) {
+      list.textContent = names.length
+        ? names.slice(0, -1).join(", ") +
+          (names.length > 1 ? " and " : "") + names[names.length - 1]
+        : "none configured";
+    }
+    var accounts = document.getElementById("known-accounts-count");
+    if (accounts) {
+      var count = Object.keys(identity.knownAccounts).length;
+      accounts.textContent = count
+        ? count + (count === 1 ? " account is" : " accounts are") + " configured by name."
+        : "No accounts are configured by name.";
+    }
+  }
+
   function syncTransactionSourceControls() {
     var bank = state.transactionSource === "bank";
+    renderBankRules();
     Array.prototype.forEach.call(
       document.getElementById("transaction-source-pills").children,
       function (button) {
@@ -2828,8 +2960,7 @@
       category.appendChild(el("span", "cat-pill " + catClass(group.category), group.category));
       tr.appendChild(category);
       var owner = el("td", "col-owner");
-      owner.appendChild(el("span", "owner-tag",
-        group.owner === "Untagged" ? "—" : group.owner));
+      owner.appendChild(buildOwnerPicker(group.ids || [], group.owner, group.label));
       tr.appendChild(owner);
       tr.appendChild(el("td", "col-remark grouped-count",
         window.FinanceGrouping.groupCountLabel(group)));
@@ -2937,7 +3068,7 @@
       tdCat.appendChild(el("span", "cat-pill " + catClass(t.category), t.category));
       tr.appendChild(tdCat);
       var tdOwner = el("td", "col-owner");
-      tdOwner.appendChild(el("span", "owner-tag", t.owner === "Untagged" ? "—" : t.owner));
+      tdOwner.appendChild(buildOwnerPicker([t.id], t.owner, transactionName(t)));
       tr.appendChild(tdOwner);
       var tdRemark = el("td", "col-remark");
       tdRemark.appendChild(buildRemarkInput(t));
@@ -2984,6 +3115,10 @@
     var shown = Math.min(rows.length, state.ledgerLimit);
     if (rows.length > shown) left += " (showing " + shown + ")";
     foot.appendChild(el("span", "", left));
+    // Filter down to a review queue, then clear it in one click instead of one
+    // drawer round trip per row.
+    var bulk = buildOwnerBulkAction(rows);
+    if (bulk) foot.appendChild(bulk);
     if (rows.length > shown) {
       var more = el("button", "ledger-more", "Load " +
         Math.min(LEDGER_CAP, rows.length - shown) + " more");
@@ -3006,6 +3141,7 @@
   // ---------- Shell ----------
 
   function renderAll() {
+    renderBankRules();
     renderFreshness();
     renderKpis();
     renderDataQuality();
@@ -3345,6 +3481,7 @@
   loadJson("data/transactions.json")
     .then(function (json) {
       data = json;
+      applyIdentity();
       return loadJson("data/account_transactions.json").catch(function () {
         return { months: [], transactions: [] };
       });

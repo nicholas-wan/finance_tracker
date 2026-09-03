@@ -14,6 +14,18 @@ python scripts/serve.py
 Open http://localhost:3402. The editable server binds only to `127.0.0.1` and is
 required for saving edits and review decisions.
 
+### Desktop or taskbar launcher
+
+The repository includes `scripts/launch_dashboard.vbs` and
+`scripts/launch_dashboard.ps1`. The desktop **Finances** shortcut runs them without
+opening a PowerShell window, starts one editable server, and opens the dashboard.
+Right-click the shortcut and choose **Show more options → Pin to taskbar**.
+
+Launcher-started servers track open dashboard tabs. Closing the last tab normally
+stops the server within a few seconds; after a browser crash, the heartbeat timeout
+stops it within about two minutes. Multiple dashboard tabs are supported. Running
+`python scripts/serve.py` manually remains persistent until `Ctrl+C`.
+
 For a view-only dashboard:
 
 ```powershell
@@ -62,8 +74,17 @@ review-status filters.
   recognized transaction re-surfaces. Card checks net refunds against charges from
   the preceding week per merchant before flagging; a credit never nets a charge
   that came after it.
+- Owner chips in the Owner column tag a row in one click. Clicking the chip that
+  is already active clears the tag, handing the row back to the merchant
+  fallbacks in `manual/owner_rules.json` rather than pinning it as unassigned.
+  With **Group purchases** on, one chip retags every row in the merchant group,
+  and the table footer can tag the whole filtered list (up to 100 rows) at once.
+  Batches save under a single rebuild and a single audit entry, and roll back
+  whole if any row fails to apply.
 - Opening any transaction shows its original statement description and provenance.
   Card transactions also support display-name, category, owner, and remark edits.
+  A drawer save only writes an owner tag when the owner itself changed, so
+  editing a category no longer silently confirms the owner it was showing.
 - **History** shows recorded manual changes.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
@@ -89,6 +110,11 @@ generated-data rebuilds are atomic and roll back if validation fails.
 - Game seller rules: `GAME_RULES` in `scripts/build_data.py`
 - Salary history: `manual/salary.json`
 - Game-account sales: `manual/game_sales.json`
+- Statement-holder name, own-account labels, fixed-deposit accounts, and trusted
+  counterparties: `manual/identity.json`. It is Git-ignored, so a fresh clone has
+  none: `parse_one.py` refuses to run without `statementHolderName` (the page
+  header would otherwise stay in every description), while `build_data.py`
+  publishes only the account labels and trusted names the dashboard reads.
 - Owner-policy preview: `python scripts/assign_unassigned.py` (add `--apply` to save)
 - Suspicious-check thresholds: documented constants at the top of
   `scripts/risk_checks.py` (card) and in `analyzeAccountTransactions` in
@@ -99,7 +125,7 @@ generated-data rebuilds are atomic and roll back if validation fails.
 | Path | Purpose |
 |---|---|
 | `statements/<year>/` | Source PDFs and older CSV exports |
-| `manual/` | Owners, overrides, remarks, reviews, settlements, salary, and game sales |
+| `manual/` | Owners, overrides, remarks, reviews, settlements, salary, game sales, and `identity.json` |
 | `scripts/` | Parsers, data builder, validation, and local server |
 | `app/` | Dashboard source and generated `app/data/` JSON |
 | `tests/` | Parser, classification, API, risk, and grouping regression tests |

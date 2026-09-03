@@ -692,7 +692,7 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .ledger tr:hover td { background: var(--surface-2); }
 .col-date { width: 78px; }
 .col-cat { width: 128px; }
-.col-owner { width: 84px; }
+.col-owner { width: 138px; }
 .col-remark { width: 180px; }
 .col-amt { width: 96px; text-align: right; }
 .ledger td.col-date { color: var(--text-3); font-variant-numeric: tabular-nums; }
@@ -774,6 +774,28 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .risk-badge.risk-low { background: var(--accent-soft); color: var(--accent); }
 .cat-pill { font-size: var(--fs-caption); padding: 2px 8px; border-radius: 999px; white-space: nowrap; }
 .owner-tag { font-size: var(--fs-small); color: var(--text-2); }
+/* One-click owner tagging in the ledger. Sized to sit inside a table row
+   without changing the row height the rest of the table is built around. */
+.owner-picker { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.owner-chip {
+  border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
+  color: var(--text-2); padding: 2px 7px; font: inherit; font-size: var(--fs-caption);
+  line-height: 1.5; cursor: pointer; white-space: nowrap;
+  transition: border-color var(--motion-fast) ease, background-color var(--motion-fast) ease,
+    color var(--motion-fast) ease;
+}
+.owner-chip:hover:not(:disabled) {
+  border-color: var(--accent); background: var(--accent-soft); color: var(--accent);
+}
+.owner-chip:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.owner-chip.is-active {
+  border-color: var(--accent); background: var(--accent); color: var(--surface);
+  font-weight: 600;
+}
+.owner-chip:disabled { opacity: 0.5; cursor: progress; }
+.owner-picker-saving { opacity: 0.7; }
+.owner-bulk { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.owner-bulk-label { color: var(--text-2); font-size: var(--fs-small); }
 .remark-input {
   width: 100%; min-width: 0; height: 28px; box-sizing: border-box;
   border: 1px solid transparent; border-radius: 8px; background: transparent;

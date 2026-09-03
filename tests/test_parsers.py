@@ -33,17 +33,39 @@ class FakeReader:
         self.pages = [FakePage(page) for page in pages]
 
 
+# The real holder name and account numbers live in the git-ignored
+# manual/identity.json. Tests hand the parser this fabricated stand-in, whose
+# first word is deliberately the first word of the fixture's recipient line so
+# the full-name-versus-first-name regression stays reproducible.
+TEST_IDENTITY = {
+    "statementHolderName": "REDACTED HOLDER NAME",
+    "knownAccounts": {"1111111111": "Redacted Savings A/c"},
+    "fixedDepositAccounts": ["2222222222"],
+    "trustedCounterparties": ["Redacted Person"],
+}
+
+
 class ParserTestCase(unittest.TestCase):
     def fixture(self, name):
         return (FIXTURES / name).read_text(encoding="utf-8")
+
+    def write_identity(self, root, identity=None):
+        """Seed a throwaway tree with the identity file main() insists on."""
+        manual_dir = os.path.join(root, "manual")
+        os.makedirs(manual_dir, exist_ok=True)
+        with open(os.path.join(manual_dir, "identity.json"), "w",
+                  encoding="utf-8") as handle:
+            json.dump(TEST_IDENTITY if identity is None else identity, handle)
 
     def parse_card(self, name):
         with patch.object(parse_cc, "PdfReader", return_value=FakeReader(self.fixture(name))):
             return parse_cc.parse_pdf("UOB_CC_REDACTED.pdf")
 
-    def parse_account(self, name):
+    def parse_account(self, name, identity=None):
         with patch.object(parse_one, "PdfReader", return_value=FakeReader(self.fixture(name))):
-            return parse_one.parse_pdf("UOB_ONE_REDACTED.pdf")
+            return parse_one.parse_pdf(
+                "UOB_ONE_REDACTED.pdf",
+                TEST_IDENTITY if identity is None else identity)
 
     def run_card_main(self, fixture_name):
         """Run parse_cc.main() over one synthetic statement in a throwaway tree.
@@ -312,6 +334,28 @@ class AccountParserTests(ParserTestCase):
         self.assertEqual(len(overrides), 1)
         self.assertTrue(all(row["provenance"]["verified"] for row in rows))
 
+    def test_self_transfer_recipient_survives_the_header_name_filter(self):
+        # The page-header name is boilerplate, but "Redacted DBS" is the
+        # recipient of a transfer to an own account: a filter on the first word
+        # of the holder name used to erase it and leave "Unknown counterparty".
+        month, rows, overrides, failures, _ = self.parse_account(
+            "account_self_transfer_redacted.txt")
+        self.assertEqual(failures, [])
+        self.assertEqual(len(rows), 1)
+        self.assertIn("Redacted DBS", rows[0]["description"])
+        self.assertNotIn("HOLDER NAME", rows[0]["description"])
+
+    def test_header_name_is_only_filtered_when_the_identity_supplies_it(self):
+        # The name comes from manual/identity.json, so a parse without one must
+        # not invent a filter (and must not match every line with an empty
+        # alternative in the skip pattern).
+        _, rows, _, failures, _ = self.parse_account(
+            "account_self_transfer_redacted.txt", identity={})
+        self.assertEqual(failures, [])
+        self.assertEqual(len(rows), 1)
+        self.assertIn("REDACTED HOLDER NAME", rows[0]["description"])
+        self.assertIn("Redacted DBS", rows[0]["description"])
+
     def test_printed_opening_balance_is_exported_as_an_anchor(self):
         # The first movement on a statement seeds the balance chain from its own
         # balance, so nothing inside the statement can contradict it. The printed
@@ -359,7 +403,8 @@ class AccountParserTests(ParserTestCase):
             "End of Transaction Details",
         )
         with patch.object(parse_one, "PdfReader", return_value=FakeReader(text)):
-            _, rows, _, failures, _ = parse_one.parse_pdf("UOB_ONE_REDACTED.pdf")
+            _, rows, _, failures, _ = parse_one.parse_pdf(
+                "UOB_ONE_REDACTED.pdf", TEST_IDENTITY)
         self.assertEqual(failures, [])
         self.assertTrue(rows)
         self.assertTrue(all("Please note" not in row["description"] for row in rows))
@@ -378,7 +423,8 @@ class AccountParserTests(ParserTestCase):
         )
         with patch.object(parse_one, "PdfReader",
                           return_value=FakeReader([first_page, second_page])):
-            _, rows, _, failures, _ = parse_one.parse_pdf("UOB_ONE_REDACTED.pdf")
+            _, rows, _, failures, _ = parse_one.parse_pdf(
+                "UOB_ONE_REDACTED.pdf", TEST_IDENTITY)
         self.assertEqual(failures, [])
         self.assertEqual(len(rows), 4)
         self.assertEqual(rows[2]["description"], "REDACTED TRANSFER")
@@ -388,6 +434,7 @@ class AccountParserTests(ParserTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "statements"))
             open(os.path.join(tmp, "statements", "UOB_ONE_2026_06.pdf"), "w").close()
+            self.write_identity(tmp)
             out_path = os.path.join(tmp, "app", "data", "account_transactions.json")
             with patch.object(parse_one, "REPO_ROOT", tmp), \
                     patch.object(parse_one, "OUT_PATH", out_path), \
@@ -407,6 +454,7 @@ class AccountParserTests(ParserTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             os.makedirs(os.path.join(tmp, "statements"))
             open(os.path.join(tmp, "statements", "UOB_ONE_2026_06.pdf"), "w").close()
+            self.write_identity(tmp)
             out_path = os.path.join(tmp, "app", "data", "account_transactions.json")
             with patch.object(parse_one, "REPO_ROOT", tmp), \
                     patch.object(parse_one, "OUT_PATH", out_path), \
@@ -418,6 +466,69 @@ class AccountParserTests(ParserTestCase):
                     parse_one.main()
             self.assertFalse(os.path.exists(out_path))
             self.assertFalse(os.path.exists(out_path + ".tmp"))
+
+    def test_main_fails_closed_without_an_identity_file(self):
+        # Without the holder name nothing crashes: the header line simply stops
+        # being filtered and every description that follows one changes. That is
+        # worse than an abort, so the run refuses to start.
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "statements"))
+            open(os.path.join(tmp, "statements", "UOB_ONE_2026_06.pdf"), "w").close()
+            out_path = os.path.join(tmp, "app", "data", "account_transactions.json")
+            stdout = io.StringIO()
+            with patch.object(parse_one, "REPO_ROOT", tmp), \
+                    patch.object(parse_one, "OUT_PATH", out_path), \
+                    patch.object(parse_one, "PdfReader",
+                                 return_value=FakeReader(
+                                     self.fixture("account_statement_redacted.txt"))), \
+                    contextlib.redirect_stdout(stdout):
+                with self.assertRaises(SystemExit) as raised:
+                    parse_one.main()
+            self.assertEqual(raised.exception.code, 1)
+            self.assertIn("identity.json", stdout.getvalue())
+            self.assertIn("statementHolderName", stdout.getvalue())
+            self.assertFalse(os.path.exists(out_path))
+
+    def test_main_fails_closed_when_the_identity_has_no_holder_name(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            os.makedirs(os.path.join(tmp, "statements"))
+            open(os.path.join(tmp, "statements", "UOB_ONE_2026_06.pdf"), "w").close()
+            self.write_identity(tmp, {"knownAccounts": {}, "statementHolderName": "  "})
+            out_path = os.path.join(tmp, "app", "data", "account_transactions.json")
+            with patch.object(parse_one, "REPO_ROOT", tmp), \
+                    patch.object(parse_one, "OUT_PATH", out_path), \
+                    patch.object(parse_one, "PdfReader",
+                                 return_value=FakeReader(
+                                     self.fixture("account_statement_redacted.txt"))), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                with self.assertRaises(SystemExit) as raised:
+                    parse_one.main()
+            self.assertEqual(raised.exception.code, 1)
+            self.assertFalse(os.path.exists(out_path))
+
+    def test_load_identity_reads_the_manual_file_and_tolerates_its_absence(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with patch.object(parse_one, "REPO_ROOT", tmp):
+                self.assertEqual(parse_one.load_identity(), {})
+                self.write_identity(tmp)
+                self.assertEqual(
+                    parse_one.load_identity()["statementHolderName"],
+                    "REDACTED HOLDER NAME")
+
+    def test_fixed_deposit_accounts_come_from_the_identity(self):
+        # The account number is private, so the rule table cannot hold it. With
+        # no identity the transfer is just a transfer; with one it is savings.
+        description = "Funds Trf - FAST TO 2222222222 OTHR"
+        self.assertEqual(parse_one.classify(description), "Transfer")
+        self.assertEqual(
+            parse_one.classify(description, TEST_IDENTITY), "Fixed deposit")
+        # The published rule table itself is never mutated by a parse.
+        self.assertNotIn(
+            "TO 2222222222",
+            dict(parse_one.FLOW_RULES)["Fixed deposit"])
+        # The name-independent rules keep working either way.
+        self.assertEqual(
+            parse_one.classify("UOB FCFD PLACEMENT", TEST_IDENTITY), "Fixed deposit")
 
     def test_flow_rules_for_broker_and_tax_authority(self):
         self.assertEqual(
