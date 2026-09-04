@@ -1,7 +1,7 @@
 # UOB finance tracker
 
 A private local dashboard for UOB credit-card and ONE account statements. It tracks
-spending, income, investments, shared expenses with Yx, game sales, balances, data
+spending, income, investments, insurance, shared household expenses, game sales, balances, data
 quality, and suspicious-transaction reviews. The app is plain HTML, CSS, and
 JavaScript with no build step or external CDN.
 
@@ -34,6 +34,31 @@ For a view-only dashboard:
 ```powershell
 python -m http.server 3402 --directory app
 ```
+
+## Create a separate household copy
+
+Use a separate clone rather than putting two people's source data in one working
+directory. Private inputs and generated output are Git-ignored, so an ordinary
+clone copies the application but not `statements/`, `manual/`, `app/data/`, or
+backups from this tracker.
+
+```powershell
+git clone <repository-url> UOB_finance_yx
+Set-Location UOB_finance_yx
+New-Item -ItemType Directory -Force manual | Out-Null
+Copy-Item examples/identity.example.json manual/identity.json
+```
+
+Edit `manual/identity.json`, place the other person's PDFs under
+`statements/<year>/`, then run `python scripts/import_all.py --strict`. If both
+trackers need to be open together, give the second one a different local port:
+
+```powershell
+./scripts/launch_dashboard.ps1 -Port 3403
+```
+
+Do not copy this repository's `manual/`, `statements/`, or `app/data/` folders
+into the new clone. Back up each clone's private folders separately.
 
 ## Import statements
 
@@ -112,6 +137,16 @@ review-status filters.
   profile, payment, evidence source, and transport route where available.
   Business/Corporate matches are categorized as `Payment`; receipts with no
   profile remain ineligible for matching.
+- The **Insurance** tab shows recurring premiums, coverage and policies for each
+  insured person. Its compact table keeps the key fields visible; selecting a
+  policy expands a concise explanation, with the full record available as a
+  secondary action. Matured and lapsed policies sit in a separate archive modal.
+  Scheduled annualised premiums and actual card charges are deliberately separate because a policy
+  may be paid through another account or CPF. The statement section compares
+  premiums due through the latest imported date with matched card charges,
+  identifies missing and unlinked payments, groups repeated charges by policy,
+  and states whether they tally. Policies checked directly against an insurer
+  portal carry a source-specific verification badge and verification date.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
 renames or extraction line shifts do not detach decisions (replacing a CSV source
@@ -136,6 +171,20 @@ generated-data rebuilds are atomic and roll back if validation fails.
 - Game seller rules: `GAME_RULES` in `scripts/build_data.py`
 - Salary history: `manual/salary.json`
 - Game-account sales: `manual/game_sales.json`
+- Insurance policies: `manual/insurance.json` (Git-ignored). Monthly premiums are
+  annualised at 12 payments; one-off investments are excluded from recurring
+  totals. Matured and lapsed records remain visible for history but are excluded
+  from current coverage and premium totals. Policy drawers can also show verified
+  status and dates, payment method, face/base values, riders, current valuation,
+  coverage notes, the latest documents checked, an optional plain-language
+  `summary`, a `verification` object with `source` and `checkedAt`, and
+  `reconcileWithImportedStatements: false` for premiums paid through an account
+  that is not imported into this dashboard. A family bundle may use enriched
+  `components` to record each covered person, benefit and premium. A companion
+  `coverageOnly: true` policy contributes coverage without double-counting its
+  premium or policy count. `premiumPaidBy` labels a linked policy paid under
+  someone else's bundle, while `hiddenInRegister: true` can keep a companion
+  record out of the main register. Rebuild the dashboard after changing the file.
 - Foodpanda order history: `manual/foodpanda_orders.json`. It is Git-ignored;
   matched pandamart orders classify the corresponding generic card charge as
   `Groceries`, while a saved transaction override remains authoritative.

@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260904-12">
+<link rel="stylesheet" href="css/styles.css?v=20260904-24">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -23,6 +23,7 @@
   <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
   <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21.5h4"/><path d="M15.1 14c.2-1 .7-1.7 1.4-2.5A4.6 4.6 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.8 1.2 1.5 1.4 2.5"/></symbol>
   <symbol id="i-wallet" viewBox="0 0 24 24"><path d="M20 12V8H6a2 2 0 0 1 0-4h12v4"/><path d="M4 6v12a2 2 0 0 0 2 2h14v-4"/><path d="M18 12a2 2 0 0 0 0 4h4v-4Z"/></symbol>
+  <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3 20 6v5c0 5-3.4 8.6-8 10-4.6-1.4-8-5-8-10V6Z"/><path d="m9 12 2 2 4-5"/></symbol>
   <symbol id="i-gamepad" viewBox="0 0 24 24"><rect x="2" y="6" width="20" height="12" rx="3"/><path d="M6 11h4M8 9v4"/><path d="M15.5 12h.01M18 10h.01"/></symbol>
   <symbol id="i-users" viewBox="0 0 24 24"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.9"/><path d="M16 3.1a4 4 0 0 1 0 7.8"/></symbol>
   <symbol id="i-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></symbol>
@@ -55,6 +56,7 @@
     <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
       <button class="tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="pane-overview" data-tab="overview"><svg class="icon"><use href="#i-dashboard"/></svg>Overview</button>
       <button class="tab" id="tab-income" role="tab" aria-selected="false" aria-controls="pane-income" data-tab="income"><svg class="icon"><use href="#i-wallet"/></svg>Income</button>
+      <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
       <button class="tab" id="tab-games" role="tab" aria-selected="false" aria-controls="pane-games" data-tab="games"><svg class="icon"><use href="#i-gamepad"/></svg>Games</button>
       <button class="tab" id="tab-split" role="tab" aria-selected="false" aria-controls="pane-split" data-tab="split"><svg class="icon"><use href="#i-users"/></svg>Split</button>
       <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
@@ -164,6 +166,81 @@
         <div id="income-months"></div>
       </section>
     </div>
+  </section>
+
+  <section class="pane hidden" id="pane-insurance" role="tabpanel" aria-labelledby="tab-insurance">
+    <section class="insurance-portfolio-bar" aria-labelledby="insurance-portfolio-title">
+      <div class="insurance-portfolio-identity">
+        <span class="insurance-portfolio-icon" aria-hidden="true"><svg class="icon"><use href="#i-shield"/></svg></span>
+        <div>
+          <span class="insurance-eyebrow">Insurance portfolio</span>
+          <h2 id="insurance-portfolio-title">Nick's insurance</h2>
+          <p id="insurance-source-meta"></p>
+        </div>
+      </div>
+      <div class="pills insurance-person-pills" id="insurance-person-pills" aria-label="Insured person"></div>
+    </section>
+
+    <div class="kpis insurance-kpis" id="insurance-kpis"></div>
+
+    <section class="panel insurance-coverage-panel">
+      <div class="panel-head">
+        <div class="insurance-panel-heading">
+          <h2><svg class="icon"><use href="#i-shield"/></svg>Protection at a glance</h2>
+          <p>Coverage by benefit. These amounts overlap and should not be added together.</p>
+        </div>
+      </div>
+      <div class="insurance-coverage-grid" id="insurance-coverage"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="insurance-panel-heading">
+          <h2><svg class="icon"><use href="#i-list"/></svg>Policy register</h2>
+          <p>Key details for quick comparison. Select a policy for a concise explanation.</p>
+        </div>
+        <div class="insurance-policy-head-actions">
+          <span class="hint" id="insurance-policy-count"></span>
+          <button class="history-button hidden" id="insurance-past-button" type="button">
+            Past policies
+          </button>
+        </div>
+      </div>
+      <div class="insurance-table-wrap">
+        <table class="ledger insurance-table">
+          <thead>
+            <tr>
+              <th>Policy</th>
+              <th class="insurance-type-col">Type</th>
+              <th>Coverage</th>
+              <th>Payment</th>
+              <th>Per year</th>
+              <th class="insurance-term">Pay until</th>
+            </tr>
+          </thead>
+          <tbody id="insurance-policy-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <div class="insurance-panel-heading">
+          <h2><svg class="icon"><use href="#i-receipt"/></svg>Statement charges</h2>
+          <p>Posted charges and upcoming cash premiums for the selected year.</p>
+        </div>
+        <div class="year-pills" id="insurance-years"></div>
+      </div>
+      <div class="insurance-reconciliation" id="insurance-reconciliation" aria-live="polite"></div>
+      <p class="insurance-charge-note" id="insurance-charge-note"></p>
+      <table class="ledger insurance-charge-table">
+        <thead>
+          <tr><th>Policy or charge</th><th class="insurance-charge-count">Entries</th><th class="insurance-charge-latest">Date</th><th class="col-amt">Amount</th></tr>
+        </thead>
+        <tbody id="insurance-charge-body"></tbody>
+      </table>
+      <div class="ledger-foot" id="insurance-charge-foot"></div>
+    </section>
   </section>
 
   <section class="pane hidden" id="pane-games" role="tabpanel" aria-labelledby="tab-games">
@@ -340,6 +417,20 @@
 
 <div class="toast hidden" id="toast" role="status" aria-live="polite"></div>
 
+<dialog class="insurance-past-dialog" id="insurance-past-dialog"
+  aria-labelledby="insurance-past-title">
+  <header class="insurance-past-head">
+    <div>
+      <span class="drawer-eyebrow">Policy archive</span>
+      <h2 id="insurance-past-title">Past policies</h2>
+      <p>Matured and lapsed policies retained for reference.</p>
+    </div>
+    <button class="drawer-close" id="insurance-past-close" type="button"
+      aria-label="Close past policies">×</button>
+  </header>
+  <div class="insurance-past-list" id="insurance-past-list"></div>
+</dialog>
+
 <div class="transaction-drawer-shell hidden" id="transaction-drawer-shell" aria-hidden="true">
   <button class="transaction-drawer-backdrop" id="transaction-drawer-backdrop"
     type="button" tabindex="-1" aria-label="Close transaction details"></button>
@@ -382,6 +473,6 @@
 <script src="js/charts.js?v=20260812-1"></script>
 <script src="js/insights.js?v=20260904-3"></script>
 <script src="js/transaction-grouping.js?v=20260812-1"></script>
-<script src="js/app.js?v=20260904-14"></script>
+<script src="js/app.js?v=20260904-45"></script>
 </body>
 </html>

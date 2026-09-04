@@ -8,4 +8,7 @@ app/data/
 *.pdf
 *.xlsx
 __pycache__/
+.pytest_cache/
+.ruff_cache/
 tmp/
+Archive/

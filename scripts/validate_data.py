@@ -15,7 +15,12 @@ from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from build_data import is_grab_description, merge_grab_web_history, tag_key  # noqa: E402
+from build_data import (  # noqa: E402
+    is_grab_description,
+    merge_grab_web_history,
+    prepare_insurance,
+    tag_key,
+)
 from risk_checks import signal_key  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -462,6 +467,8 @@ def main():
         os.path.join(MANUAL_DIR, "grab_web_history.json"),
         {"fields": [], "records": []})
     grab_data, grab_history_stats = merge_grab_web_history(grab_data, grab_web_data)
+    insurance_path = os.path.join(MANUAL_DIR, "insurance.json")
+    insurance_data = load_optional(insurance_path, {"people": []})
 
     errors = []
     warnings = []
@@ -565,6 +572,9 @@ def main():
     validate_foodpanda(foodpanda_data, output, final_by_id, errors)
     validate_shopee(shopee_data, output, final_by_id, errors)
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
+    if (os.path.exists(insurance_path) or "insurance" in output) and \
+            output.get("insurance") != prepare_insurance(insurance_data):
+        errors.append("published insurance data does not match the manual source")
     account_by_id = {
         row["id"]: row for row in account.get("transactions", []) if row.get("id")
     }

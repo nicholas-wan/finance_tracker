@@ -43,6 +43,8 @@
     splitYear: null,
     gameYear: null,
     game: "All",
+    insurancePerson: "nick",
+    insuranceYear: null,
     foodpandaOnly: false,
     shopeeOnly: false,
     grabOnly: false,
@@ -342,6 +344,7 @@
     renderSpendingSummary();
     renderKeyMetrics();
     renderCategories();
+    renderInsurance();
   }
   function reopenDrawerFor(id) {
     if (editor.drawerTransactionId !== id) return;
@@ -2248,6 +2251,1317 @@
     });
   }
 
+  // ---------- Insurance ----------
+
+  var INSURANCE_BENEFIT_LABELS = {
+    death: "Death",
+    tpd: "TPD",
+    earlyCriticalIllness: "Early CI",
+    criticalIllness: "Critical illness",
+    disabilityIncome: "Disability income",
+    personalAccident: "Personal accident",
+    hospitalSurgicalAnnualLimit: "Hospital annual limit"
+  };
+  var INSURANCE_TYPE_LABELS = {
+    AE: "Endowment",
+    END: "Endowment",
+    WL: "Whole life",
+    INV: "Investment",
+    PA: "Personal accident"
+  };
+
+  function insuranceTypeLabel(value) {
+    return INSURANCE_TYPE_LABELS[value] || value || "Not stated";
+  }
+  function insurancePeople() {
+    return data && data.insurance && Array.isArray(data.insurance.people)
+      ? data.insurance.people : [];
+  }
+  function selectedInsurancePeople() {
+    var people = insurancePeople();
+    if (state.insurancePerson === "all") return people;
+    return people.filter(function (person) { return person.id === state.insurancePerson; });
+  }
+  function insurancePolicies() {
+    var policies = [];
+    selectedInsurancePeople().forEach(function (person) {
+      person.policies.forEach(function (policy) {
+        if (policy.hiddenInRegister === true) return;
+        if (policy.coverageOnly === true && state.insurancePerson === "all") return;
+        policies.push({ person: person, policy: policy });
+      });
+    });
+    return policies;
+  }
+  function insuranceTotals() {
+    if (state.insurancePerson === "all") {
+      return (data.insurance && data.insurance.totals) || {
+        policies: 0, activePolicies: 0, maturedPolicies: 0, lapsedPolicies: 0,
+        annualCashPremium: 0, annualCpfPremium: 0, monthlyEquivalent: 0
+      };
+    }
+    var person = selectedInsurancePeople()[0];
+    return person ? person.totals : {
+      policies: 0, activePolicies: 0, maturedPolicies: 0, lapsedPolicies: 0,
+      annualCashPremium: 0, annualCpfPremium: 0, monthlyEquivalent: 0
+    };
+  }
+  function insuranceChargeRows() {
+    var selected = selectedInsurancePeople();
+    var owners = {};
+    selected.forEach(function (person) { owners[person.owner || person.name] = true; });
+    return data.transactions.filter(function (t) {
+      if (t.category !== "Insurance") return false;
+      var year = (t.date || t.month).slice(0, 4);
+      if (state.insuranceYear && year !== state.insuranceYear) return false;
+      return state.insurancePerson === "all" || owners[t.owner];
+    });
+  }
+  function insuranceNet(rows) {
+    return roundMoney(rows.reduce(function (total, t) { return total + signed(t); }, 0));
+  }
+  function policyPaymentAmount(policy) {
+    var premiums = policy.premiums || {};
+    return roundMoney(Number(premiums.cashWithValue || 0) +
+      Number(premiums.cashWithoutValue || 0));
+  }
+  function insuranceCutoff(year) {
+    var latestYear = data.months[data.months.length - 1].slice(0, 4);
+    if (year < latestYear) return year + "-12-31";
+    var dates = data.transactions.filter(function (t) {
+      return t.date && t.date.slice(0, 4) === year;
+    }).map(function (t) { return t.date.slice(0, 10); }).sort();
+    return dates.length ? dates[dates.length - 1] : year + "-12-31";
+  }
+  function scheduledPolicyPayments(policy, cutoff) {
+    var amount = policyPaymentAmount(policy);
+    var frequency = String(policy.premiums && policy.premiums.frequency || "");
+    if (!amount || !policy.startDate || !frequency) return { count: 0, amount: 0 };
+    var year = parseInt(cutoff.slice(0, 4), 10);
+    var cutoffMonth = parseInt(cutoff.slice(5, 7), 10);
+    var cutoffDay = parseInt(cutoff.slice(8, 10), 10);
+    var startYear = parseInt(policy.startDate.slice(0, 4), 10);
+    var startMonth = parseInt(policy.startDate.slice(5, 7), 10);
+    var dueDay = parseInt(policy.startDate.slice(8, 10), 10);
+    if (startYear > year || policy.startDate > cutoff) return { count: 0, amount: 0 };
+    var count = 0;
+    if (frequency === "Monthly") {
+      var firstMonth = startYear === year ? startMonth : 1;
+      var lastMonth = cutoffMonth - (cutoffDay < dueDay ? 1 : 0);
+      count = Math.max(0, lastMonth - firstMonth + 1);
+    } else if (frequency === "Annual") {
+      count = (startMonth < cutoffMonth ||
+        (startMonth === cutoffMonth && dueDay <= cutoffDay)) ? 1 : 0;
+    }
+    return { count: count, amount: roundMoney(count * amount) };
+  }
+  function policyMatchesDescription(policy, description) {
+    var text = String(description || "").toUpperCase();
+    var number = String(policy.policyNumber || "").replace(/[^0-9A-Z]/gi, "").toUpperCase();
+    if (number && !/^NODETAILS$/.test(number) && text.replace(/[^0-9A-Z]/g, "").indexOf(number) !== -1) {
+      return true;
+    }
+    var company = String(policy.company || "").toUpperCase();
+    if (company.indexOf("PRUDENTIAL") !== -1) return text.indexOf("PRUDENTIAL") !== -1;
+    if (company.indexOf("TOKIO") !== -1) return text.indexOf("TOKIO") !== -1;
+    if (company.indexOf("GREAT EASTERN") !== -1) return text.indexOf("GREAT EAST") !== -1;
+    if (company.indexOf("SINGLIFE") !== -1 || company.indexOf("AVIVA") !== -1) {
+      return text.indexOf("SINGLIFE") !== -1 || text.indexOf("AVIVA") !== -1;
+    }
+    return false;
+  }
+  function insurancePolicyStatementHistory(policyEntries) {
+    var history = {};
+    var active = policyEntries.filter(function (entry) {
+      return String(entry.policy.status || "In Force") === "In Force" &&
+        policyPaymentAmount(entry.policy) > 0;
+    });
+    var rows = data.transactions.filter(function (transaction) {
+      return transaction.category === "Insurance" && transaction.type === "debit";
+    }).sort(function (a, b) {
+      return String(b.date || b.month).localeCompare(String(a.date || a.month));
+    });
+    rows.forEach(function (transaction) {
+      var description = String(transaction.description || "");
+      var normalizedDescription = description.replace(/[^0-9A-Z]/gi, "").toUpperCase();
+      var sameOwner = active.filter(function (entry) {
+        return !entry.person.owner || entry.person.owner === transaction.owner;
+      });
+      var direct = sameOwner.filter(function (entry) {
+        var number = String(entry.policy.policyNumber || "")
+          .replace(/[^0-9A-Z]/gi, "").toUpperCase();
+        return number && !/^NODETAILS$/.test(number) &&
+          normalizedDescription.indexOf(number) !== -1;
+      });
+      var matchType = "policy number";
+      var candidates = direct;
+      if (!candidates.length) {
+        candidates = sameOwner.filter(function (entry) {
+          return Math.abs(policyPaymentAmount(entry.policy) - transaction.amount) < 0.01 &&
+            policyMatchesDescription(entry.policy, description);
+        });
+        matchType = "insurer and amount";
+      }
+      if (candidates.length !== 1) return;
+      var policy = candidates[0].policy;
+      if (!history[policy.id]) history[policy.id] = [];
+      history[policy.id].push({
+        transaction: transaction,
+        matchType: matchType,
+        amountChanged: Math.abs(policyPaymentAmount(policy) - transaction.amount) >= 0.01
+      });
+    });
+    return history;
+  }
+  function reconcileInsurance(rows) {
+    var cutoff = insuranceCutoff(state.insuranceYear);
+    var policies = insurancePolicies().filter(function (entry) {
+      return entry.policy.reconcileWithImportedStatements !== false;
+    }).map(function (entry) {
+      var scheduled = scheduledPolicyPayments(entry.policy, cutoff);
+      return {
+        person: entry.person,
+        policy: entry.policy,
+        scheduledCount: scheduled.count,
+        scheduledAmount: scheduled.amount,
+        matchedCount: 0,
+        matchedAmount: 0,
+        transactions: []
+      };
+    });
+    var debits = rows.filter(function (t) { return t.type === "debit"; });
+    var unmatched = [];
+    debits.forEach(function (transaction) {
+      var direct = policies.filter(function (entry) {
+        var number = String(entry.policy.policyNumber || "").replace(/[^0-9A-Z]/gi, "").toUpperCase();
+        return number && !/^NODETAILS$/.test(number) &&
+          String(transaction.description || "").replace(/[^0-9A-Z]/gi, "").toUpperCase()
+            .indexOf(number) !== -1;
+      });
+      var candidates = direct.length ? direct : policies.filter(function (entry) {
+        return Math.abs(policyPaymentAmount(entry.policy) - transaction.amount) < 0.01 &&
+          policyMatchesDescription(entry.policy, transaction.description);
+      });
+      if (candidates.length === 1) {
+        candidates[0].matchedCount += 1;
+        candidates[0].matchedAmount = roundMoney(candidates[0].matchedAmount + transaction.amount);
+        candidates[0].transactions.push(transaction);
+      } else {
+        unmatched.push(transaction);
+      }
+    });
+    var expectedAmount = roundMoney(policies.reduce(function (total, entry) {
+      return total + entry.scheduledAmount;
+    }, 0));
+    var expectedCount = policies.reduce(function (total, entry) {
+      return total + entry.scheduledCount;
+    }, 0);
+    var matchedAmount = roundMoney(policies.reduce(function (total, entry) {
+      return total + entry.matchedAmount;
+    }, 0));
+    var matchedCount = policies.reduce(function (total, entry) {
+      return total + Math.min(entry.matchedCount, entry.scheduledCount);
+    }, 0);
+    var missingPolicies = policies.filter(function (entry) {
+      return entry.scheduledAmount - entry.matchedAmount > 0.01;
+    });
+    var unmatchedAmount = roundMoney(unmatched.reduce(function (total, t) {
+      return total + t.amount;
+    }, 0));
+    var actualAmount = insuranceNet(rows);
+    var refunds = rows.filter(function (t) { return t.type !== "debit"; });
+    var tallies = Math.abs(actualAmount - expectedAmount) < 0.01 &&
+      !unmatched.length && !missingPolicies.length;
+    return {
+      cutoff: cutoff,
+      expectedAmount: expectedAmount,
+      expectedCount: expectedCount,
+      actualAmount: actualAmount,
+      difference: roundMoney(actualAmount - expectedAmount),
+      matchedAmount: matchedAmount,
+      matchedCount: matchedCount,
+      unmatchedAmount: unmatchedAmount,
+      unmatchedCount: unmatched.length,
+      unmatched: unmatched,
+      refunds: refunds,
+      policies: policies,
+      missingPolicies: missingPolicies,
+      refundCount: refunds.length,
+      tallies: tallies
+    };
+  }
+  function renderInsuranceReconciliation(rows, result) {
+    result = result || reconcileInsurance(rows);
+    var wrap = document.getElementById("insurance-reconciliation");
+    clear(wrap);
+    wrap.className = "insurance-reconciliation " + (result.tallies ? "tallies" : "mismatch");
+
+    var cadence = result.policies.reduce(function (summary, entry) {
+      var frequency = String(entry.policy.premiums && entry.policy.premiums.frequency || "");
+      if (frequency !== "Monthly" && frequency !== "Annual") return summary;
+      summary[frequency].due += entry.scheduledCount;
+      summary[frequency].matched += Math.min(entry.matchedCount, entry.scheduledCount);
+      return summary;
+    }, { Monthly: { due: 0, matched: 0 }, Annual: { due: 0, matched: 0 } });
+    function cadenceParts(key) {
+      var parts = [];
+      var monthlyCount = cadence.Monthly[key];
+      var annualCount = cadence.Annual[key];
+      if (monthlyCount) parts.push(monthlyCount + " monthly instalment" + (monthlyCount === 1 ? "" : "s"));
+      if (annualCount) parts.push(annualCount + " annual premium" + (annualCount === 1 ? "" : "s"));
+      return parts;
+    }
+    function compactCadence(key) {
+      var parts = [];
+      if (cadence.Monthly[key]) parts.push("Monthly " + cadence.Monthly[key]);
+      if (cadence.Annual[key]) parts.push("Annual " + cadence.Annual[key]);
+      return parts.join(" · ");
+    }
+    var scheduledCadence = cadenceParts("due");
+    var matchedCadence = cadenceParts("matched");
+
+    var status = el("div", "insurance-reconciliation-status");
+    var statusLine = el("div", "insurance-status-line");
+    statusLine.appendChild(el("span", "insurance-status-dot"));
+    statusLine.appendChild(el("strong", "", result.tallies ? "Tallies" : "Doesn't tally"));
+    status.appendChild(statusLine);
+    var difference = result.difference;
+    status.appendChild(el("p", "", result.tallies
+      ? "All charges due through " + dateLabel(result.cutoff) + " match: " +
+        (scheduledCadence.length ? scheduledCadence.join(" and ") : "no cash premiums due") + "."
+      : fmt(Math.abs(difference)) + (difference < 0 ? " below" : " above") +
+        " the scheduled amount through " + dateLabel(result.cutoff) + "."));
+    wrap.appendChild(status);
+
+    [
+      ["Scheduled cash", fmt(result.expectedAmount), compactCadence("due") || "No payments due"],
+      ["On statements", fmt(result.actualAmount), rows.length + " charges, net"],
+      ["Matched", fmt(result.matchedAmount), compactCadence("matched") || "No scheduled payments"]
+    ].forEach(function (item) {
+      var metricNode = el("div", "insurance-reconciliation-metric");
+      metricNode.appendChild(el("span", "", item[0]));
+      metricNode.appendChild(el("strong", "", item[1]));
+      metricNode.appendChild(el("small", "", item[2]));
+      wrap.appendChild(metricNode);
+    });
+
+    if (!result.tallies) {
+      var detail = el("p", "insurance-reconciliation-detail");
+      var parts = [];
+      if (result.missingPolicies.length) {
+        var missing = result.missingPolicies.slice(0, 3).map(function (entry) {
+          return entry.policy.plan + " " + fmt(roundMoney(entry.scheduledAmount - entry.matchedAmount));
+        });
+        if (result.missingPolicies.length > 3) {
+          missing.push("+" + (result.missingPolicies.length - 3) + " more");
+        }
+        parts.push("Missing scheduled: " + missing.join(", "));
+      }
+      if (result.unmatchedCount) {
+        var unlinked = result.unmatched.slice(0, 3).map(function (transaction) {
+          return transactionName(transaction) + " " + fmt(transaction.amount);
+        });
+        if (result.unmatchedCount > 3) unlinked.push("+" + (result.unmatchedCount - 3) + " more");
+        parts.push("Unlinked statement charges: " + unlinked.join(", "));
+      }
+      if (result.refundCount) {
+        parts.push(result.refundCount + " refund" + (result.refundCount === 1 ? "" : "s") +
+          " included in the net amount");
+      }
+      detail.textContent = parts.join(" · ") + ".";
+      wrap.appendChild(detail);
+    }
+  }
+  function policyBenefitEntries(policy) {
+    return Object.keys(INSURANCE_BENEFIT_LABELS).filter(function (key) {
+      return Number(policy.benefits && policy.benefits[key]) > 0;
+    }).map(function (key) {
+      return { key: key, label: INSURANCE_BENEFIT_LABELS[key], value: policy.benefits[key] };
+    });
+  }
+  function policyBenefitSummary(policy) {
+    if (String(policy.status || "In Force") !== "In Force") {
+      return "Historical record · cover inactive";
+    }
+    var coveredPeople = {};
+    (policy.components || []).forEach(function (component) {
+      if (component.insuredPerson) coveredPeople[component.insuredPerson] = true;
+    });
+    var componentCount = (policy.components || []).filter(function (component) {
+      return Boolean(component.insuredPerson);
+    }).length;
+    if (componentCount) {
+      return componentCount + " active policies · " + Object.keys(coveredPeople).join(" + ");
+    }
+    var benefits = policyBenefitEntries(policy);
+    if (!benefits.length) return "No stated coverage";
+    var shown = benefits.slice(0, 2).map(function (benefit) {
+      return benefit.label + " " + fmt0(benefit.value);
+    });
+    if (benefits.length > 2) shown.push("+" + (benefits.length - 2) + " more");
+    return shown.join(" · ");
+  }
+  function policyCyclePremium(policy) {
+    var status = String(policy.status || "In Force");
+    var valuation = policy.valuation || {};
+    if (status === "Matured") {
+      return valuation.maturityValue ? "Matured · " + fmt(valuation.maturityValue) : "Matured";
+    }
+    if (status === "Lapsed") return "Lapsed";
+    if (policy.coverageOnly === true) {
+      return policy.premiumPaidBy ? "Paid under " + policy.premiumPaidBy : "Linked cover";
+    }
+    var premiums = policy.premiums || {};
+    var amount = Number(premiums.cashWithValue || 0) + Number(premiums.cashWithoutValue || 0);
+    if (!amount && Number(premiums.cpfAnnual || 0)) {
+      return fmt(Number(premiums.cpfAnnual)) + " / year · MediSave";
+    }
+    if (!amount) return policy.oneOffPaid ? "One-off " + fmt0(policy.oneOffPaid) : "No recurring premium";
+    var frequency = String(premiums.frequency || "").toLowerCase();
+    var period = { monthly: "month", annual: "year", annually: "year", yearly: "year" }[frequency];
+    var label = fmt(amount) + (period ? " / " + period : frequency ? " / " + frequency : "");
+    if (policy.reconcileWithImportedStatements === false && policy.paymentMethod) {
+      label += " · " + policy.paymentMethod;
+    }
+    return label;
+  }
+  function policyAnnualPremiumLabel(policy) {
+    if (String(policy.status || "In Force") !== "In Force") return "—";
+    if (policy.coverageOnly === true) {
+      return policy.premiumPaidBy ? "Included under " + policy.premiumPaidBy : "Included elsewhere";
+    }
+    var cash = Number(policy.annualCashPremium || 0);
+    var cpf = Number(policy.premiums && policy.premiums.cpfAnnual || 0);
+    if (cash && cpf) return fmt(cash) + " + " + fmt(cpf) + " MediSave";
+    if (cash) return fmt(cash);
+    if (cpf) return fmt(cpf) + " MediSave";
+    return "—";
+  }
+  function shortPolicyNumber(value) {
+    var text = String(value || "");
+    if (!text || /^no details$/i.test(text)) return "Policy number not recorded";
+    return "Policy •••• " + text.slice(-4);
+  }
+  function policyVerification(policy) {
+    var verification = policy && policy.verification || {};
+    return verification.source && verification.checkedAt ? verification : null;
+  }
+  function verificationTitle(policy) {
+    var verification = policyVerification(policy);
+    return verification ? "Checked against " + verification.source + " on " +
+      dateLabel(verification.checkedAt) : "";
+  }
+  function policyPlainSummary(policy) {
+    if (policy.summary) return policy.summary;
+    var type = insuranceTypeLabel(policy.type);
+    var inactive = String(policy.status || "In Force") !== "In Force";
+    if (inactive) {
+      return "A historical " + type.toLowerCase() +
+        " policy retained for your records. It is not included in current premiums or active coverage.";
+    }
+    if (/H&S Rider/i.test(type)) {
+      return "A supplementary hospital rider intended to reduce part of your out-of-pocket cost when an eligible claim is paid under its linked medical plan.";
+    }
+    if (/H&S/i.test(type)) {
+      return "A hospital and surgical plan intended to help pay eligible medical costs, subject to its ward entitlement, benefit limits and exclusions.";
+    }
+    if (/Term/i.test(type)) {
+      return "A protection-focused policy for the recorded life, disability and illness benefits during its insured term. It is intended for cover rather than long-term savings.";
+    }
+    if (/Whole life/i.test(type)) {
+      return "A long-term protection policy intended to provide life coverage beyond the premium-payment period, with the recorded supplementary benefits attached.";
+    }
+    if (/Endowment/i.test(type)) {
+      return "A savings-oriented insurance policy that builds towards a future maturity or cash value while retaining a level of life protection.";
+    }
+    if (/Investment/i.test(type)) {
+      return "A wealth-accumulation policy intended to grow a lump sum over its policy term, with returns and access governed by the recorded policy terms.";
+    }
+    if (/Personal accident/i.test(type)) {
+      return "An accident-protection policy intended to pay the recorded benefits for eligible accidental injuries or events.";
+    }
+    return "An insurance policy retained in your portfolio for its recorded protection or savings benefits. Open the sections below for its premium, coverage and policy terms.";
+  }
+  function addInsuranceSummary(body, policy) {
+    var section = el("section", "drawer-section insurance-policy-summary");
+    section.appendChild(el("h3", "", "What this policy does"));
+    section.appendChild(el("p", "", policyPlainSummary(policy)));
+    var verification = policyVerification(policy);
+    section.appendChild(el("small", "insurance-policy-summary-source", verification ?
+      "Based on the insurer record checked " + dateLabel(verification.checkedAt) + "." :
+      "Based on the recorded policy details; not yet checked against the insurer portal."));
+    body.appendChild(section);
+  }
+  function insuranceBundleComponents(policy) {
+    return (policy.components || []).filter(function (component) {
+      return Boolean(component.insuredPerson);
+    });
+  }
+  function addInsuranceBundleBreakdown(body, policy) {
+    var components = insuranceBundleComponents(policy);
+    if (!components.length) return;
+    var section = el("section", "insurance-bundle-breakdown");
+    var heading = el("div", "insurance-bundle-heading");
+    var headingCopy = el("div", "");
+    headingCopy.appendChild(el("strong", "", components.length + " active policies"));
+    headingCopy.appendChild(el("small", "", "Verified in MySinglife · expanded by insured person"));
+    heading.appendChild(headingCopy);
+    section.appendChild(heading);
+
+    var people = {};
+    components.forEach(function (component) {
+      var name = component.insuredPerson;
+      if (!people[name]) people[name] = [];
+      people[name].push(component);
+    });
+    var groups = el("div", "insurance-bundle-groups");
+    Object.keys(people).forEach(function (name) {
+      var items = people[name];
+      var monthly = roundMoney(items.reduce(function (total, item) {
+        return total + Number(item.premiumAmount || 0);
+      }, 0));
+      var group = el("section", "insurance-bundle-person");
+      var head = el("div", "insurance-bundle-person-head");
+      var identity = el("div", "");
+      identity.appendChild(el("strong", "", name));
+      identity.appendChild(el("small", "", items[0].relationship || "Insured person"));
+      head.appendChild(identity);
+      head.appendChild(el("span", "", fmt(monthly) + " / month"));
+      group.appendChild(head);
+      items.forEach(function (component) {
+        var row = el("div", "insurance-bundle-item");
+        var description = el("div", "");
+        description.appendChild(el("strong", "", component.name));
+        description.appendChild(el("small", "", [
+          component.benefitLabel,
+          component.sumAssured ? fmt0(component.sumAssured) + " cover" : ""
+        ].filter(Boolean).join(" · ")));
+        row.appendChild(description);
+        row.appendChild(el("strong", "", fmt(component.premiumAmount || 0) + " / mo"));
+        group.appendChild(row);
+      });
+      groups.appendChild(group);
+    });
+    section.appendChild(groups);
+
+    var portalTotal = Number(policy.portalPremiumTotal || 0);
+    var debitTotal = Number(policy.accountDebitAmount || 0);
+    if (portalTotal || debitTotal) {
+      var totals = el("div", "insurance-bundle-totals");
+      totals.appendChild(el("span", "", "Portal-listed policy costs " +
+        fmt(portalTotal) + " / month"));
+      totals.appendChild(el("span", "", "Recorded DBS debit " + fmt(debitTotal) + " / month"));
+      var difference = roundMoney(debitTotal - portalTotal);
+      if (difference) {
+        totals.appendChild(el("strong", "", "Unexplained difference " + fmt(difference)));
+      }
+      section.appendChild(totals);
+    }
+    body.appendChild(section);
+  }
+  function addInsuranceDetailSection(body, heading, rows) {
+    var section = el("section", "drawer-section");
+    section.appendChild(el("h3", "", heading));
+    var meta = el("div", "drawer-meta");
+    rows.filter(function (row) {
+      return row[1] !== undefined && row[1] !== null && row[1] !== "";
+    }).forEach(function (row) {
+      meta.appendChild(drawerMetaRow(row[0], String(row[1]), row[2]));
+    });
+    section.appendChild(meta);
+    body.appendChild(section);
+  }
+  function addInsuranceListSection(body, heading, items) {
+    if (!items || !items.length) return;
+    var section = el("section", "drawer-section");
+    section.appendChild(el("h3", "", heading));
+    var list = el("ul", "insurance-detail-list");
+    items.forEach(function (item) { list.appendChild(el("li", "", item)); });
+    section.appendChild(list);
+    body.appendChild(section);
+  }
+  function insuranceInlineFacts(policy) {
+    var facts = [];
+    var status = String(policy.status || "In Force");
+    if (status === "In Force") {
+      facts.push(["Payment", policyCyclePremium(policy)]);
+    } else {
+      facts.push(["Status", status]);
+    }
+
+    var benefits = policyBenefitEntries(policy);
+    var valuation = policy.valuation || {};
+    if (benefits.length) {
+      facts.push([benefits[0].label, fmt(benefits[0].value)]);
+    } else if (valuation.maturityValue) {
+      facts.push(["Maturity value", fmt(valuation.maturityValue)]);
+    } else if (valuation.netSurrenderValue) {
+      facts.push(["Net surrender value", fmt(valuation.netSurrenderValue)]);
+    } else {
+      facts.push(["Policy type", insuranceTypeLabel(policy.type)]);
+    }
+
+    if (status !== "In Force" && policy.statusDate) {
+      facts.push([status + " on", dateLabel(policy.statusDate)]);
+    } else if (policy.premiumEndDate) {
+      facts.push(["Premiums end", dateLabel(policy.premiumEndDate)]);
+    } else if (policy.coverExpiryDate) {
+      facts.push(["Cover ends", dateLabel(policy.coverExpiryDate)]);
+    } else if (policy.payableTerm) {
+      facts.push(["Pay until", policy.payableTerm]);
+    } else if (policy.premiumPaidToDate && status === "In Force") {
+      facts.push(["Paid through", dateLabel(policy.premiumPaidToDate)]);
+    }
+    return facts.slice(0, 3);
+  }
+  function renderInsuranceDrawer(policy, person) {
+    var title = document.getElementById("transaction-drawer-title");
+    var eyebrow = document.getElementById("transaction-drawer-eyebrow");
+    var body = document.getElementById("transaction-drawer-body");
+    clear(body);
+    title.textContent = policy.plan;
+    eyebrow.textContent = person.name + " · Insurance policy";
+
+    var summary = el("section", "drawer-summary");
+    var annualTotal = Number(policy.annualCashPremium || 0) +
+      Number(policy.premiums && policy.premiums.cpfAnnual || 0);
+    var valuation = policy.valuation || {};
+    var headline = policy.coverageOnly === true && policy.premiumPaidBy
+      ? "Paid by " + policy.premiumPaidBy : annualTotal ? fmt(annualTotal) :
+      valuation.maturityValue ? fmt(valuation.maturityValue) :
+      policy.oneOffPaid ? fmt(policy.oneOffPaid) : "No active premium";
+    summary.appendChild(el("strong", "drawer-amount", headline));
+    var tags = el("div", "drawer-summary-tags");
+    tags.appendChild(el("span", "drawer-owner", policy.coverageOnly === true ? "linked cover" :
+      annualTotal ? "per year" :
+      valuation.maturityValue ? "maturity value" : policy.oneOffPaid ? "single premium" : "historical"));
+    if (Number(policy.premiums && policy.premiums.cpfAnnual || 0) &&
+        !Number(policy.annualCashPremium || 0)) {
+      tags.appendChild(el("span", "drawer-owner", "MediSave"));
+    }
+    tags.appendChild(el("span", String(policy.status || "In Force") === "In Force"
+      ? "drawer-verified" : "drawer-owner", policy.status || "In Force"));
+    if (policyVerification(policy)) {
+      var verifiedTag = el("span", "drawer-verified", "✓ Insurer verified");
+      verifiedTag.title = verificationTitle(policy);
+      tags.appendChild(verifiedTag);
+    }
+    tags.appendChild(el("span", "drawer-owner", insuranceTypeLabel(policy.type)));
+    summary.appendChild(tags);
+    body.appendChild(summary);
+    addInsuranceSummary(body, policy);
+
+    var premiums = policy.premiums || {};
+    addInsuranceDetailSection(body, "Policy", [
+      ["Company", policy.company],
+      ["Policy number", policy.policyNumber, true],
+      ["Status", policy.status || "In Force"],
+      ["Status date", policy.statusDate ? dateLabel(policy.statusDate) : ""],
+      ["Start date", policy.startDate ? dateLabel(policy.startDate) : "Not stated"],
+      ["Type", insuranceTypeLabel(policy.type)],
+      ["Payable term", policy.payableTerm || "Not stated"],
+      ["Premium end", policy.premiumEndDate ? dateLabel(policy.premiumEndDate) : ""],
+      ["Cover expiry", policy.coverExpiryDate ? dateLabel(policy.coverExpiryDate) : ""]
+    ]);
+    if (policyVerification(policy)) {
+      addInsuranceDetailSection(body, "Verification", [
+        ["Result", "Verified against insurer record"],
+        ["Source", policy.verification.source],
+        ["Checked", dateLabel(policy.verification.checkedAt)]
+      ]);
+    }
+    addInsuranceDetailSection(body, "Premiums", [
+      ["Frequency", premiums.frequency || "Not recurring"],
+      ["Payment method", policy.paymentMethod || "Not recorded"],
+      ["Statement tracking", policy.coverageOnly === true && policy.premiumPaidBy
+        ? "Premium tracked once under " + policy.premiumPaidBy + "'s bundle"
+        : policy.reconcileWithImportedStatements === false
+          ? "Outside imported UOB statements" : "Included when a matching UOB charge is found"],
+      ["Paid to", policy.premiumPaidToDate ? dateLabel(policy.premiumPaidToDate) : ""],
+      ["Basic premium", policy.basicPremium ? fmt(policy.basicPremium) : ""],
+      ["Cash with value", fmt(Number(premiums.cashWithValue || 0))],
+      ["Cash without value", fmt(Number(premiums.cashWithoutValue || 0))],
+      ["Annual cash premium", fmt(policy.annualCashPremium || 0)],
+      ["Monthly equivalent", fmt(policy.monthlyEquivalent || 0)],
+      ["Annual CPF premium", fmt(Number(premiums.cpfAnnual || 0))],
+      ["One-off amount paid", policy.oneOffPaid ? fmt(policy.oneOffPaid) : "None"]
+    ]);
+    addInsuranceDetailSection(body, "Policy structure", [
+      ["Face value", policy.faceValue ? fmt(policy.faceValue) : ""],
+      ["Base sum assured", policy.baseSumAssured ? fmt(policy.baseSumAssured) : ""],
+      ["Multiplier", policy.multiplierBenefit || ""]
+    ]);
+    var benefitRows = policyBenefitEntries(policy).map(function (benefit) {
+      return [benefit.label, fmt(benefit.value)];
+    });
+    if (!benefitRows.length) benefitRows.push(["Coverage", "No benefit amount recorded"]);
+    addInsuranceDetailSection(body, "Coverage", benefitRows);
+    if (policy.components && policy.components.length) {
+      addInsuranceDetailSection(body, insuranceBundleComponents(policy).length ?
+        "Included policies" : "Components and riders", policy.components.map(function (component) {
+        var details = [];
+        if (component.insuredPerson) details.push(component.insuredPerson);
+        if (component.benefitLabel) details.push(component.benefitLabel);
+        if (component.sumAssured) details.push("Sum assured " + fmt(component.sumAssured));
+        if (component.premiumAmount) details.push("Premium " + fmt(component.premiumAmount) +
+          (component.premiumFrequency ? " / " + component.premiumFrequency.toLowerCase() : ""));
+        if (component.coverageEffectiveDate) details.push("effective " +
+          dateLabel(component.coverageEffectiveDate));
+        if (component.nextDueDate) details.push("next due " + dateLabel(component.nextDueDate));
+        if (component.premiumEndDate) details.push("premium to " + dateLabel(component.premiumEndDate));
+        if (component.coverExpiryDate) details.push("cover to " + dateLabel(component.coverExpiryDate));
+        return [component.name, details.join(" · ") || component.status || "In Force"];
+      }));
+    }
+    if (valuation.asOf || valuation.guaranteedBonus || valuation.grossSurrenderValue ||
+        valuation.netSurrenderValue || valuation.maturityValue) {
+      addInsuranceDetailSection(body, policy.status === "Matured" ? "Maturity" : "Current value", [
+        ["As of", valuation.asOf ? dateLabel(valuation.asOf) : ""],
+        ["Guaranteed bonus", fmt(Number(valuation.guaranteedBonus || 0))],
+        ["Gross surrender", fmt(Number(valuation.grossSurrenderValue || 0))],
+        ["Indebtedness", fmt(Number(valuation.indebtedness || 0))],
+        ["Net surrender", fmt(Number(valuation.netSurrenderValue || 0))],
+        ["Maturity value", valuation.maturityValue ? fmt(valuation.maturityValue) : ""]
+      ]);
+    }
+    addInsuranceListSection(body, "Coverage details", policy.coverageNotes || []);
+    if (policy.documents && policy.documents.length) {
+      addInsuranceDetailSection(body, "Latest documents checked", policy.documents.map(function (document) {
+        return [document.name, [document.type, document.date ? dateLabel(document.date) : ""]
+          .filter(Boolean).join(" · ")];
+      }));
+    }
+    addInsuranceDetailSection(body, "Notes", [
+      ["Premium waiver", policy.premiumWaiver || "None recorded"],
+      ["Remarks", policy.remarks || "None"]
+    ]);
+  }
+  function openInsuranceDrawer(policy, person) {
+    closeAuditHistory();
+    var shell = document.getElementById("transaction-drawer-shell");
+    if (editor.drawerCloseTimer) window.clearTimeout(editor.drawerCloseTimer);
+    if (!editor.drawerTransactionId) editor.drawerLastFocus = document.activeElement;
+    editor.drawerTransactionId = "insurance:" + policy.id;
+    renderInsuranceDrawer(policy, person);
+    shell.classList.remove("hidden");
+    shell.setAttribute("aria-hidden", "false");
+    document.body.classList.add("drawer-open");
+    window.requestAnimationFrame(function () { shell.classList.add("is-open"); });
+    document.getElementById("transaction-drawer-close").focus();
+  }
+  function renderInsuranceCoverage() {
+    var wrap = document.getElementById("insurance-coverage");
+    clear(wrap);
+    var selected = selectedInsurancePeople();
+    var groups = [
+      { title: "Life & disability", icon: "shield", keys: ["death", "tpd", "disabilityIncome"] },
+      { title: "Critical illness", icon: "target", keys: ["earlyCriticalIllness", "criticalIllness"] },
+      { title: "Medical & accident", icon: "star", keys: ["hospitalSurgicalAnnualLimit", "personalAccident"] }
+    ];
+    selected.forEach(function (person) {
+      var card = el("article", "insurance-coverage-card" +
+        (selected.length === 1 ? " single" : ""));
+      if (selected.length > 1) {
+        var personHead = el("div", "insurance-coverage-person-head");
+        personHead.appendChild(el("h3", "", person.name));
+        personHead.appendChild(el("span", "", person.totals.policies + " policies"));
+        card.appendChild(personHead);
+      }
+      var groupWrap = el("div", "insurance-benefit-groups");
+      groups.forEach(function (group) {
+        var populated = group.keys.filter(function (key) {
+          return Number(person.coverage && person.coverage[key] || 0) > 0;
+        });
+        if (!populated.length) return;
+        var section = el("section", "insurance-benefit-group");
+        var head = el("div", "insurance-benefit-group-head");
+        var badge = el("span", "insurance-benefit-icon");
+        badge.appendChild(icon(group.icon));
+        head.appendChild(badge);
+        head.appendChild(el("h4", "", group.title));
+        section.appendChild(head);
+        populated.forEach(function (key) {
+          var row = el("div", "insurance-coverage-metric");
+          row.appendChild(el("span", "", INSURANCE_BENEFIT_LABELS[key]));
+          row.appendChild(el("strong", "", fmt0(person.coverage[key])));
+          section.appendChild(row);
+        });
+        groupWrap.appendChild(section);
+      });
+      if (!groupWrap.children.length) {
+        groupWrap.appendChild(el("p", "empty", "No coverage amounts recorded"));
+      }
+      card.appendChild(groupWrap);
+      wrap.appendChild(card);
+    });
+  }
+  function renderPastInsurancePolicies(entries) {
+    var list = document.getElementById("insurance-past-list");
+    clear(list);
+    entries.forEach(function (entry) {
+      var policy = entry.policy;
+      var card = el("article", "insurance-past-card");
+      var head = el("div", "insurance-past-card-head");
+      var identity = el("div", "insurance-past-card-identity");
+      identity.appendChild(el("h3", "", policy.plan));
+      identity.appendChild(el("span", "", policy.company + " · " + entry.person.name + " · " +
+        shortPolicyNumber(policy.policyNumber)));
+      head.appendChild(identity);
+      head.appendChild(el("span", "insurance-past-status", policy.status || "Inactive"));
+      card.appendChild(head);
+      card.appendChild(el("p", "insurance-past-summary", policyPlainSummary(policy)));
+
+      var facts = el("div", "insurance-policy-inline-facts insurance-past-facts");
+      insuranceInlineFacts(policy).forEach(function (fact) {
+        var item = el("span", "insurance-policy-inline-fact");
+        item.appendChild(el("small", "", fact[0]));
+        item.appendChild(el("strong", "", fact[1]));
+        facts.appendChild(item);
+      });
+      card.appendChild(facts);
+      var verification = policyVerification(policy);
+      card.appendChild(el("small", "insurance-past-source", verification ?
+        "Verified against " + verification.source + " · " + dateLabel(verification.checkedAt) :
+        "Historical record · Not insurer-verified"));
+      list.appendChild(card);
+    });
+  }
+  function renderInsurancePolicies() {
+    var allPolicies = insurancePolicies();
+    var policies = allPolicies.filter(function (entry) {
+      return String(entry.policy.status || "In Force") === "In Force";
+    });
+    var pastPolicies = allPolicies.filter(function (entry) {
+      return String(entry.policy.status || "In Force") !== "In Force";
+    });
+    var body = document.getElementById("insurance-policy-body");
+    clear(body);
+    policies.forEach(function (entry, index) {
+      var policy = entry.policy;
+      var status = String(policy.status || "In Force");
+      var tr = el("tr", "insurance-policy-row" + (status === "In Force" ? "" : " inactive"));
+      tr.tabIndex = 0;
+      tr.setAttribute("role", "button");
+      var summaryId = "insurance-policy-summary-" + index;
+      tr.setAttribute("aria-expanded", "false");
+      tr.setAttribute("aria-controls", summaryId);
+      tr.setAttribute("aria-label", "Show a summary of " + policy.plan);
+      var nameCell = el("td", "insurance-policy-name");
+      nameCell.appendChild(el("strong", "", policy.plan));
+      var sourceLine = el("span", "insurance-policy-source");
+      var bundleComponents = insuranceBundleComponents(policy);
+      var policyIdentity = entry.person.name + " · " + shortPolicyNumber(policy.policyNumber);
+      if (policy.coverageOnly === true) {
+        policyIdentity = entry.person.name + " · linked to " +
+          (policy.premiumPaidBy || "another person") + "'s bundle";
+      } else if (bundleComponents.length) {
+        var insuredPeople = {};
+        bundleComponents.forEach(function (component) {
+          insuredPeople[component.insuredPerson] = true;
+        });
+        policyIdentity = Object.keys(insuredPeople).join(" + ") + " · " +
+          bundleComponents.length + " active policies";
+      }
+      sourceLine.appendChild(document.createTextNode(policy.company + " · " + policyIdentity +
+        (status === "In Force" ? "" : " · " + status)));
+      if (policyVerification(policy)) {
+        var verifiedBadge = el("span", "insurance-verified-badge",
+          /MySinglife/i.test(policy.verification.source) ? "✓ MySinglife verified" : "✓ Verified");
+        verifiedBadge.title = verificationTitle(policy);
+        sourceLine.appendChild(verifiedBadge);
+      }
+      nameCell.appendChild(sourceLine);
+      tr.appendChild(nameCell);
+      var typeCell = el("td", "insurance-type-col");
+      typeCell.appendChild(el("span", "insurance-type-pill", insuranceTypeLabel(policy.type)));
+      tr.appendChild(typeCell);
+      tr.appendChild(el("td", "insurance-benefit-summary", policyBenefitSummary(policy)));
+      tr.appendChild(el("td", "insurance-money", policyCyclePremium(policy)));
+      tr.appendChild(el("td", "insurance-money insurance-annual", policyAnnualPremiumLabel(policy)));
+      tr.appendChild(el("td", "insurance-term", policy.payableTerm || "Not stated"));
+
+      var detailRow = el("tr", "insurance-policy-summary-row hidden");
+      detailRow.id = summaryId;
+      var detailCell = document.createElement("td");
+      detailCell.colSpan = 6;
+      var detail = el("div", "insurance-policy-inline-summary");
+      var copy = el("div", "insurance-policy-inline-copy");
+      copy.appendChild(el("span", "insurance-policy-inline-label", "About this policy"));
+      copy.appendChild(el("p", "", policyPlainSummary(policy)));
+      var verification = policyVerification(policy);
+      copy.appendChild(el("small", "", verification ?
+        "Verified against " + verification.source + " · " + dateLabel(verification.checkedAt) :
+        "Summary based on recorded policy details · Not insurer-verified"));
+      var facts = el("div", "insurance-policy-inline-facts");
+      insuranceInlineFacts(policy).forEach(function (fact) {
+        var item = el("span", "insurance-policy-inline-fact");
+        item.appendChild(el("small", "", fact[0]));
+        item.appendChild(el("strong", "", fact[1]));
+        facts.appendChild(item);
+      });
+      copy.appendChild(facts);
+      addInsuranceBundleBreakdown(copy, policy);
+      detail.appendChild(copy);
+      var fullButton = el("button", "insurance-policy-full-button", "Full policy record");
+      fullButton.type = "button";
+      fullButton.addEventListener("click", function (event) {
+        event.stopPropagation();
+        openInsuranceDrawer(policy, entry.person);
+      });
+      detail.appendChild(fullButton);
+      detailCell.appendChild(detail);
+      detailRow.appendChild(detailCell);
+
+      function toggle() {
+        var isOpen = tr.getAttribute("aria-expanded") === "true";
+        tr.setAttribute("aria-expanded", isOpen ? "false" : "true");
+        tr.setAttribute("aria-label", (isOpen ? "Show" : "Hide") +
+          " the summary of " + policy.plan);
+        detailRow.classList.toggle("hidden", isOpen);
+      }
+      tr.addEventListener("click", toggle);
+      tr.addEventListener("keydown", function (event) {
+        if (event.key === "Enter" || event.key === " ") { event.preventDefault(); toggle(); }
+      });
+      body.appendChild(tr);
+      body.appendChild(detailRow);
+    });
+    var linkedPolicyCount = policies.filter(function (entry) {
+      return entry.policy.coverageOnly === true;
+    }).length;
+    document.getElementById("insurance-policy-count").textContent =
+      (policies.length - linkedPolicyCount) + " active entries" +
+      (linkedPolicyCount ? " + " + linkedPolicyCount + " linked cover" : "");
+    var pastButton = document.getElementById("insurance-past-button");
+    pastButton.textContent = "Past policies (" + pastPolicies.length + ")";
+    pastButton.classList.toggle("hidden", !pastPolicies.length);
+    renderPastInsurancePolicies(pastPolicies);
+  }
+  function insuranceChargeGroups(result) {
+    var selectedYear = String(state.insuranceYear || "");
+    var yearStart = selectedYear + "-01-01";
+    var yearEnd = selectedYear + "-12-31";
+    function annualDueDate(policy) {
+      var startDate = String(policy.startDate || "");
+      if (!startDate) return "";
+      var month = parseInt(startDate.slice(5, 7), 10);
+      var requestedDay = parseInt(startDate.slice(8, 10), 10);
+      var lastDay = new Date(parseInt(selectedYear, 10), month, 0).getDate();
+      var day = Math.min(requestedDay, lastDay);
+      var dueDate = selectedYear + "-" + String(month).padStart(2, "0") + "-" +
+        String(day).padStart(2, "0");
+      if (dueDate < startDate || (policy.premiumEndDate && dueDate > policy.premiumEndDate)) return "";
+      return dueDate;
+    }
+    var statementHistory = insurancePolicyStatementHistory(result.policies);
+    var groups = result.policies.filter(function (entry) {
+      var policy = entry.policy;
+      var frequency = String(policy.premiums && policy.premiums.frequency || "");
+      return String(policy.status || "In Force") === "In Force" &&
+        policyPaymentAmount(policy) > 0 && (frequency === "Monthly" || frequency === "Annual") &&
+        (!policy.startDate || policy.startDate <= yearEnd) &&
+        (!policy.premiumEndDate || policy.premiumEndDate >= yearStart);
+    }).map(function (entry) {
+      var frequency = String(entry.policy.premiums && entry.policy.premiums.frequency || "");
+      return {
+        key: "policy:" + entry.policy.id,
+        label: entry.policy.plan,
+        detail: entry.policy.company + " · Matched policy",
+        policy: entry.policy,
+        person: entry.person,
+        scheduledCount: entry.scheduledCount,
+        matchedCount: entry.matchedCount,
+        cutoff: result.cutoff,
+        annualDueDate: frequency === "Annual" ? annualDueDate(entry.policy) : "",
+        paymentHistory: statementHistory[entry.policy.id] || [],
+        lastPayment: (statementHistory[entry.policy.id] || [])[0] || null,
+        transactions: entry.transactions.slice()
+      };
+    });
+    var unlinked = {};
+    result.unmatched.concat(result.refunds).forEach(function (transaction) {
+      var key = transactionName(transaction) || transaction.description;
+      if (!unlinked[key]) {
+        unlinked[key] = {
+          key: "unlinked:" + key,
+          label: key,
+          detail: "Not linked to a policy",
+          policy: null,
+          person: null,
+          transactions: []
+        };
+      }
+      unlinked[key].transactions.push(transaction);
+    });
+    Object.keys(unlinked).forEach(function (key) { groups.push(unlinked[key]); });
+    groups.forEach(function (group) {
+      group.transactions.sort(function (a, b) {
+        return (b.date || b.month).localeCompare(a.date || a.month);
+      });
+      group.latest = group.transactions.length
+        ? group.transactions[0].date || group.transactions[0].month + "-01" : "";
+      group.total = insuranceNet(group.transactions);
+    });
+    return groups.sort(function (a, b) {
+      var aDue = a.scheduledCount > 0 ? 0 : 1;
+      var bDue = b.scheduledCount > 0 ? 0 : 1;
+      if (aDue !== bDue) return aDue - bDue;
+      if (!aDue) return String(b.latest || "").localeCompare(String(a.latest || ""));
+      return String(a.annualDueDate || "").localeCompare(String(b.annualDueDate || ""));
+    });
+  }
+  var INSURANCE_MONTH_LABELS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
+    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  function appendInsuranceLastPayment(parent, group) {
+    var evidence = group.lastPayment;
+    if (evidence && evidence.transaction) {
+      var transaction = evidence.transaction;
+      var previous = el("span", "insurance-last-payment" +
+        (evidence.amountChanged ? " changed" : ""));
+      previous.textContent = "Last statement charge · " + fmt(transaction.amount) + " on " +
+        dateLabel(transaction.date || transaction.month + "-01") +
+        (evidence.amountChanged ? " · amount differs" : "");
+      previous.title = "Matched from the card statement by " + evidence.matchType + ".";
+      parent.appendChild(previous);
+    } else {
+      parent.appendChild(el("span", "insurance-last-payment unavailable",
+        "No earlier matching statement charge found"));
+    }
+  }
+  function appendInsurancePaymentHistory(parent, group) {
+    var history = group.paymentHistory || [];
+    var wrap = el("span", "insurance-payment-history");
+    var start = group.policy && group.policy.startDate;
+    wrap.appendChild(el("span", "", start ? "Policy started · " + dateLabel(start) :
+      "Policy start date not recorded"));
+    if (history.length) {
+      var total = roundMoney(history.reduce(function (sum, evidence) {
+        return sum + Number(evidence.transaction && evidence.transaction.amount || 0);
+      }, 0));
+      var earliest = history[history.length - 1].transaction;
+      var earliestDate = earliest.date || earliest.month + "-01";
+      wrap.appendChild(el("strong", "", "Statement-confirmed total · " + fmt(total) +
+        " across " + history.length + " payment" + (history.length === 1 ? "" : "s") +
+        " since " + dateLabel(earliestDate)));
+    } else {
+      wrap.appendChild(el("span", "insurance-payment-history-empty",
+        "No uniquely matched payment in imported statements"));
+    }
+    parent.appendChild(wrap);
+  }
+  function appendMonthlyInsuranceTimeline(parent, group) {
+    var policy = group.policy;
+    var year = parseInt(state.insuranceYear, 10);
+    var cutoff = group.cutoff;
+    var startDate = String(policy.startDate || "");
+    var premiumEndDate = String(policy.premiumEndDate || "");
+    var dueDay = parseInt(startDate.slice(8, 10), 10) || 1;
+    var paidMonths = {};
+    group.transactions.forEach(function (transaction) {
+      var date = String(transaction.date || transaction.month || "");
+      if (date.slice(0, 4) === String(year) && transaction.type === "debit") {
+        var month = parseInt(date.slice(5, 7), 10);
+        paidMonths[month] = (paidMonths[month] || 0) + 1;
+      }
+    });
+
+    var track = el("span", "insurance-month-track");
+    var accessibleStates = [];
+    INSURANCE_MONTH_LABELS.forEach(function (label, index) {
+      var month = index + 1;
+      var dueDate = String(year) + "-" + String(month).padStart(2, "0") + "-" +
+        String(dueDay).padStart(2, "0");
+      var stateName = "upcoming";
+      if ((startDate && dueDate < startDate) || (premiumEndDate && dueDate > premiumEndDate)) {
+        stateName = "inactive";
+      } else if (paidMonths[month]) {
+        stateName = "paid";
+      } else if (dueDate <= cutoff) {
+        stateName = "missing";
+      }
+      var stateLabel = {
+        paid: "paid", missing: "payment missing", upcoming: "upcoming", inactive: "not applicable"
+      }[stateName];
+      var cell = el("span", "insurance-month-cell " + stateName, label);
+      cell.title = label + ": " + stateLabel;
+      cell.setAttribute("aria-hidden", "true");
+      track.appendChild(cell);
+      accessibleStates.push(label + " " + stateLabel);
+    });
+    track.setAttribute("aria-label", "Monthly premium status for " + year + ": " +
+      accessibleStates.join(", "));
+    track.setAttribute("role", "img");
+    parent.appendChild(track);
+    var resultText = group.scheduledCount
+      ? group.matchedCount + " of " + group.scheduledCount + " due paid"
+      : "No instalment due yet";
+    parent.appendChild(el("span", "insurance-cadence-result" +
+      (group.matchedCount < group.scheduledCount ? " missing" : ""), resultText));
+    appendInsuranceLastPayment(parent, group);
+  }
+  function appendAnnualInsuranceTimeline(parent, group) {
+    var year = String(state.insuranceYear || "");
+    var dueDate = group.annualDueDate || group.latest;
+    var dueMonth = dueDate ? parseInt(dueDate.slice(5, 7), 10) : 0;
+    var paymentState = group.transactions.length ? "paid" :
+      dueDate && dueDate <= group.cutoff ? "missing" : "annual-due";
+    var stateLabel = paymentState === "paid" ? "paid" :
+      paymentState === "missing" ? "payment missing" : "upcoming payment";
+    var track = el("span", "insurance-month-track annual");
+    INSURANCE_MONTH_LABELS.forEach(function (label, index) {
+      var isPaymentMonth = index + 1 === dueMonth;
+      var cell = el("span", "insurance-month-cell " +
+        (isPaymentMonth ? paymentState : "annual-off"), label);
+      cell.title = label + (isPaymentMonth ? ": " + stateLabel : ": no annual premium due");
+      cell.setAttribute("aria-hidden", "true");
+      track.appendChild(cell);
+    });
+    track.setAttribute("aria-label", "Annual premium status for " + year + ": " +
+      (dueMonth ? INSURANCE_MONTH_LABELS[dueMonth - 1] + " " + stateLabel : "payment month unknown"));
+    track.setAttribute("role", "img");
+    parent.appendChild(track);
+    var statusDate = group.transactions.length ? group.latest : dueDate;
+    var resultText = group.transactions.length
+      ? "Paid once yearly · " + dateLabel(statusDate)
+      : paymentState === "annual-due"
+        ? "Next payment · " + dateLabel(statusDate)
+        : "Payment overdue · " + dateLabel(statusDate);
+    parent.appendChild(el("span", "insurance-cadence-result annual-result" +
+      (paymentState === "missing" ? " missing" : paymentState === "annual-due" ? " upcoming" : ""),
+    resultText));
+    appendInsuranceLastPayment(parent, group);
+  }
+  function appendInsuranceChargeGroup(body, group, index) {
+    var id = "insurance-charge-group-" + index;
+    var hasEntries = group.transactions.length > 0;
+    var row = el("tr", "insurance-charge-group-row" + (group.policy ? " matched" : " unlinked"));
+    row.tabIndex = 0;
+    row.setAttribute("role", "button");
+    if (hasEntries) {
+      row.setAttribute("aria-expanded", "false");
+      row.setAttribute("aria-controls", id);
+      row.setAttribute("aria-label", "Show statement entries for " + group.label);
+    } else {
+      row.classList.add("no-entries");
+      row.setAttribute("aria-label", "View policy details for " + group.label);
+    }
+    var policyCell = el("td", "insurance-charge-policy");
+    policyCell.appendChild(el("span", "insurance-charge-expand", "›"));
+    var policyCopy = el("span", "insurance-charge-policy-copy");
+    policyCopy.appendChild(el("strong", "", group.label));
+    var meta = el("span", "insurance-charge-meta");
+    if (group.policy) {
+      var frequency = String(group.policy.premiums && group.policy.premiums.frequency || "");
+      var paymentState = group.scheduledCount === 0 && group.annualDueDate > group.cutoff
+        ? "upcoming" : group.matchedCount >= group.scheduledCount && group.scheduledCount > 0
+          ? "matched" : "missing";
+      meta.appendChild(el("small", "insurance-charge-cadence", frequency || "Unscheduled"));
+      meta.appendChild(el("small", paymentState,
+        paymentState === "matched" ? "Matched" : paymentState === "upcoming" ? "Upcoming" : "Check payment"));
+      if (policyVerification(group.policy)) {
+        var verificationBadge = el("small", "verified-source", "✓ Verified");
+        verificationBadge.title = verificationTitle(group.policy);
+        meta.appendChild(verificationBadge);
+      }
+    } else {
+      meta.appendChild(el("small", "unlinked", group.detail));
+    }
+    policyCopy.appendChild(meta);
+    if (group.policy && String(group.policy.premiums && group.policy.premiums.frequency) === "Monthly") {
+      appendMonthlyInsuranceTimeline(policyCopy, group);
+    } else if (group.policy && String(group.policy.premiums && group.policy.premiums.frequency) === "Annual") {
+      appendAnnualInsuranceTimeline(policyCopy, group);
+    }
+    if (group.policy) appendInsurancePaymentHistory(policyCopy, group);
+    policyCell.appendChild(policyCopy);
+    row.appendChild(policyCell);
+    row.appendChild(el("td", "insurance-charge-count", String(group.transactions.length)));
+    row.appendChild(el("td", "insurance-charge-latest", group.latest
+      ? shortDate(group.latest, false)
+      : group.annualDueDate ? shortDate(group.annualDueDate, true) : "—"));
+    var pendingAnnual = group.policy && !group.transactions.length && group.annualDueDate;
+    var amountClass = "col-amt" + (group.total < 0 ? " credit" : "") +
+      (pendingAnnual && group.annualDueDate > group.cutoff
+        ? " insurance-upcoming-amount" : pendingAnnual ? " insurance-missing-amount" : "");
+    row.appendChild(el("td", amountClass, group.transactions.length
+      ? fmt(group.total) : pendingAnnual ? fmt(policyPaymentAmount(group.policy)) : "—"));
+
+    var detailRow = el("tr", "insurance-charge-detail-row hidden");
+    detailRow.id = id;
+    var detailCell = document.createElement("td");
+    detailCell.colSpan = 4;
+    var detail = el("div", "insurance-charge-detail");
+    var head = el("div", "insurance-charge-detail-head");
+    head.appendChild(el("span", "", group.transactions.length + " statement entr" +
+      (group.transactions.length === 1 ? "y" : "ies")));
+    if (group.policy) {
+      var policyButton = el("button", "insurance-policy-link", "View policy details");
+      policyButton.addEventListener("click", function (event) {
+        event.stopPropagation();
+        openInsuranceDrawer(group.policy, group.person);
+      });
+      head.appendChild(policyButton);
+    }
+    detail.appendChild(head);
+    var list = el("div", "insurance-charge-items");
+    group.transactions.forEach(function (transaction) {
+      var item = el("button", "insurance-charge-item");
+      item.type = "button";
+      item.appendChild(el("span", "insurance-charge-item-date",
+        transaction.date ? shortDate(transaction.date, false) : monthLabel(transaction.month)));
+      item.appendChild(el("span", "insurance-charge-item-description", transactionName(transaction)));
+      var credit = transaction.type !== "debit";
+      item.appendChild(el("strong", credit ? "credit" : "",
+        (credit ? "+" : "−") + fmt(transaction.amount)));
+      item.addEventListener("click", function (event) {
+        event.stopPropagation();
+        openTransactionDrawer(transaction);
+      });
+      list.appendChild(item);
+    });
+    detail.appendChild(list);
+    detailCell.appendChild(detail);
+    detailRow.appendChild(detailCell);
+
+    function toggle() {
+      if (!hasEntries && group.policy) {
+        openInsuranceDrawer(group.policy, group.person);
+        return;
+      }
+      var open = row.getAttribute("aria-expanded") === "true";
+      row.setAttribute("aria-expanded", open ? "false" : "true");
+      detailRow.classList.toggle("hidden", open);
+    }
+    row.addEventListener("click", toggle);
+    row.addEventListener("keydown", function (event) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggle();
+      }
+    });
+    body.appendChild(row);
+    if (hasEntries) body.appendChild(detailRow);
+  }
+  function renderInsuranceCharges() {
+    var all = data.transactions.filter(function (t) { return t.category === "Insurance"; });
+    var years = {};
+    all.forEach(function (t) { years[(t.date || t.month).slice(0, 4)] = true; });
+    var yearList = Object.keys(years).sort();
+    if (!state.insuranceYear || yearList.indexOf(state.insuranceYear) === -1) {
+      state.insuranceYear = yearList.length ? yearList[yearList.length - 1] : null;
+    }
+    var pills = document.getElementById("insurance-years");
+    clear(pills);
+    yearList.forEach(function (year) {
+      var button = el("button", "pill" + (year === state.insuranceYear ? " active" : ""), year);
+      setPressed(button, year === state.insuranceYear);
+      button.addEventListener("click", function () { state.insuranceYear = year; renderInsurance(); });
+      pills.appendChild(button);
+    });
+    var rows = insuranceChargeRows().sort(function (a, b) {
+      return (b.date || b.month).localeCompare(a.date || a.month);
+    });
+    var reconciliation = reconcileInsurance(rows);
+    var groups = insuranceChargeGroups(reconciliation);
+    var body = document.getElementById("insurance-charge-body");
+    clear(body);
+    groups.forEach(function (group, index) {
+      appendInsuranceChargeGroup(body, group, index);
+    });
+    if (!groups.length) {
+      var emptyRow = document.createElement("tr");
+      var emptyCell = el("td", "empty", "No matching insurance charges in this year");
+      emptyCell.colSpan = 4;
+      emptyRow.appendChild(emptyCell);
+      body.appendChild(emptyRow);
+    }
+    document.getElementById("insurance-charge-note").textContent =
+      "Monthly calendars mark every paid instalment. Annual calendars highlight only the single payment month: green when paid, blue when upcoming and red when overdue. MediSave/CPF premiums are excluded from card reconciliation.";
+    document.getElementById("insurance-charge-note").textContent +=
+      " Policies paid from external accounts are also excluded. Future annual dates use each policy's premium anniversary. Previous-payment lines come from matched card statements.";
+    renderInsuranceReconciliation(rows, reconciliation);
+    var foot = document.getElementById("insurance-charge-foot");
+    clear(foot);
+    foot.appendChild(el("span", "", groups.length + " polic" +
+      (groups.length === 1 ? "y" : "ies") + " shown · " + rows.length + " posted charge" +
+      (rows.length === 1 ? "" : "s")));
+    foot.appendChild(el("strong", "", "Net " + fmt(insuranceNet(rows))));
+  }
+  function renderInsurance() {
+    if (!data.insurance) return;
+    var people = insurancePeople();
+    if (state.insurancePerson !== "all" && !people.some(function (person) {
+      return person.id === state.insurancePerson;
+    })) state.insurancePerson = "all";
+
+    var selected = selectedInsurancePeople();
+    var currentPerson = selected.length === 1 ? selected[0] : null;
+    document.getElementById("insurance-portfolio-title").textContent = currentPerson
+      ? currentPerson.name + "'s insurance" : "Combined insurance";
+    var updated = data.insurance.extractedAt
+      ? "Updated " + dateLabel(data.insurance.extractedAt.slice(0, 10)) : "Source date not recorded";
+    var portfolioTotals = currentPerson ? currentPerson.totals : data.insurance.totals;
+    var visiblePolicyEntries = insurancePolicies();
+    var linkedCoverageCount = visiblePolicyEntries.filter(function (entry) {
+      return entry.policy.coverageOnly === true;
+    }).length;
+    var verifiedCount = visiblePolicyEntries.filter(function (entry) {
+      return Boolean(policyVerification(entry.policy));
+    }).length;
+    document.getElementById("insurance-source-meta").textContent =
+      Number(portfolioTotals.activePolicies || 0) + " active records · " +
+      Number(portfolioTotals.policies || 0) + " total records" +
+      (linkedCoverageCount ? " · " + linkedCoverageCount + " linked cover" : "") + " · " + updated +
+      (verifiedCount ? " · " + verifiedCount + " insurer-verified" : "") +
+      " · premiums annualised for comparison";
+
+    var personPills = document.getElementById("insurance-person-pills");
+    clear(personPills);
+    [{ id: "all", name: "All" }].concat(people).forEach(function (person) {
+      var active = person.id === state.insurancePerson;
+      var button = el("button", "pill" + (active ? " active" : ""), person.name);
+      setPressed(button, active);
+      button.addEventListener("click", function () {
+        state.insurancePerson = person.id;
+        renderInsurance();
+      });
+      personPills.appendChild(button);
+    });
+
+    var totals = insuranceTotals();
+    var kpis = document.getElementById("insurance-kpis");
+    clear(kpis);
+    var annualCash = Number(totals.annualCashPremium || 0);
+    var annualCpf = Number(totals.annualCpfPremium || 0);
+    var annualTotal = roundMoney(annualCash + annualCpf);
+    var cashShare = annualTotal ? Math.round(annualCash / annualTotal * 100) : 0;
+    var cpfShare = annualTotal ? 100 - cashShare : 0;
+    var cashCard = metric("Cash premiums", fmt(annualCash),
+      fmt(roundMoney(annualCash / 12)) + " monthly equivalent", null, "wallet");
+    cashCard.classList.add("insurance-kpi", "primary");
+    kpis.appendChild(cashCard);
+    var cpfCard = metric("CPF / MediSave", fmt(annualCpf),
+      fmt(roundMoney(annualCpf / 12)) + " monthly equivalent", null, "shield");
+    cpfCard.classList.add("insurance-kpi");
+    kpis.appendChild(cpfCard);
+    var totalCard = metric("Total premiums", fmt(annualTotal),
+      cashShare + "% cash · " + cpfShare + "% CPF", null, "calendar");
+    totalCard.classList.add("insurance-kpi");
+    kpis.appendChild(totalCard);
+    var policyCard = metric("Portfolio entries",
+      String(Number(totals.policies || 0) + linkedCoverageCount),
+      String(totals.activePolicies || 0) + " active entries" +
+      (linkedCoverageCount ? " · " + linkedCoverageCount + " paid by Nick" : "") +
+      (totals.annualCpfPremium ? " · " + fmt(totals.annualCpfPremium) + " annual CPF" : ""),
+      null, "list");
+    policyCard.classList.add("insurance-kpi");
+    kpis.appendChild(policyCard);
+
+    renderInsuranceCoverage();
+    renderInsurancePolicies();
+    renderInsuranceCharges();
+  }
+
   // ---------- Games ----------
 
   function gameTx() {
@@ -3541,6 +4855,7 @@
     populateTransactionCategoryFilter();
     renderLedger();
     renderIncome();
+    renderInsurance();
     renderGames();
     renderSplit();
     var idx = data.months.indexOf(state.month);
@@ -3826,6 +5141,19 @@
       historyButton.title = "Start scripts/serve.py to view change history.";
     }
     historyButton.addEventListener("click", openAuditHistory);
+    var pastDialog = document.getElementById("insurance-past-dialog");
+    document.getElementById("insurance-past-button").addEventListener("click", function () {
+      if (typeof pastDialog.showModal === "function") pastDialog.showModal();
+      else pastDialog.setAttribute("open", "");
+    });
+    document.getElementById("insurance-past-close").addEventListener("click", function () {
+      pastDialog.close();
+    });
+    pastDialog.addEventListener("click", function (event) {
+      var bounds = pastDialog.getBoundingClientRect();
+      if (event.clientX < bounds.left || event.clientX > bounds.right ||
+          event.clientY < bounds.top || event.clientY > bounds.bottom) pastDialog.close();
+    });
     var drawerShell = document.getElementById("transaction-drawer-shell");
     document.getElementById("transaction-drawer-close").addEventListener(
       "click", closeTransactionDrawer
@@ -3931,6 +5259,11 @@
     })
     .then(function () {
       state.month = data.months[data.months.length - 1];
+      var insuranceYears = data.transactions.filter(function (t) {
+        return t.category === "Insurance";
+      }).map(function (t) { return (t.date || t.month).slice(0, 4); }).sort();
+      state.insuranceYear = insuranceYears.length
+        ? insuranceYears[insuranceYears.length - 1] : null;
       state.period.year = state.month.slice(0, 4);
       state.period.month = state.month.slice(5);
       buildControls();

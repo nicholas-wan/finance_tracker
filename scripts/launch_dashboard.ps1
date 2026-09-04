@@ -1,10 +1,12 @@
 param(
-    [switch]$NoOpen
+    [switch]$NoOpen,
+    [ValidateRange(1, 65535)]
+    [int]$Port = 3402
 )
 
 $ErrorActionPreference = "Stop"
-$dashboardUrl = "http://localhost:3402/"
-$statusUrl = "http://127.0.0.1:3402/api/status"
+$dashboardUrl = "http://localhost:$Port/"
+$statusUrl = "http://127.0.0.1:$Port/api/status"
 $repoRoot = Split-Path -Parent $PSScriptRoot
 $serverScript = Join-Path $PSScriptRoot "serve.py"
 $logDirectory = Join-Path $repoRoot "tmp"
@@ -35,7 +37,7 @@ function Get-FinanceServerProcesses {
 }
 
 function Test-PortInUse {
-    return $null -ne (Get-NetTCPConnection -LocalPort 3402 -State Listen `
+    return $null -ne (Get-NetTCPConnection -LocalPort $Port -State Listen `
         -ErrorAction SilentlyContinue | Select-Object -First 1)
 }
 
@@ -68,7 +70,7 @@ try {
             Start-Sleep -Milliseconds 100
         }
         if (Test-PortInUse) {
-            throw "Port 3402 is being used by another application. Close it, then try again."
+            throw "Port $Port is being used by another application. Close it, then try again."
         }
 
         $python = Get-Command python.exe -ErrorAction Stop
@@ -78,7 +80,7 @@ try {
 
         Start-Process `
             -FilePath $python.Source `
-            -ArgumentList @("`"$serverScript`"", "--auto-stop") `
+            -ArgumentList @("`"$serverScript`"", "--auto-stop", "--port", "$Port") `
             -WorkingDirectory $repoRoot `
             -WindowStyle Hidden `
             -RedirectStandardOutput $stdoutLog `

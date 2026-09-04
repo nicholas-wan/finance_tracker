@@ -352,5 +352,72 @@ class GrabReceiptTests(unittest.TestCase):
             )
 
 
+class InsuranceTests(unittest.TestCase):
+    def test_premiums_are_annualized_and_coverage_is_totalled(self):
+        insurance = build_data.prepare_insurance({"people": [{
+            "id": "person", "name": "Person", "policies": [
+                {
+                    "id": "monthly", "company": "A", "plan": "Monthly plan",
+                    "verification": {
+                        "source": "Insurer portal", "checkedAt": "2026-09-04",
+                    },
+                    "summary": "A plain-language policy summary.",
+                    "paymentMethod": "DBS account",
+                    "reconcileWithImportedStatements": False,
+                    "portalPremiumTotal": 99.75,
+                    "accountDebitAmount": 100,
+                    "benefits": {"death": 100000},
+                    "premiums": {"cashWithValue": 100, "frequency": "Monthly"},
+                    "components": [{
+                        "name": "Family cover", "insuredPerson": "Person",
+                        "relationship": "Main insured", "benefitLabel": "Death",
+                        "sumAssured": 100000, "premiumAmount": 99.75,
+                        "premiumFrequency": "Monthly",
+                        "coverageEffectiveDate": "2026-01-01",
+                        "nextDueDate": "2026-10-01", "paymentMethod": "GIRO",
+                    }],
+                },
+                {
+                    "id": "annual", "company": "B", "plan": "Annual plan",
+                    "benefits": {"death": 50000, "criticalIllness": 25000},
+                    "premiums": {"cashWithoutValue": 300, "frequency": "Annual"},
+                },
+                {
+                    "id": "lapsed", "company": "C", "plan": "Old plan",
+                    "status": "Lapsed", "benefits": {"death": 999999},
+                    "premiums": {"cashWithValue": 20, "frequency": "Monthly"},
+                },
+                {
+                    "id": "coverage-mirror", "company": "A", "plan": "Mirror",
+                    "coverageOnly": True, "hiddenInRegister": True,
+                    "premiumPaidBy": "Partner",
+                    "benefits": {"death": 25000},
+                    "premiums": {},
+                },
+            ],
+        }]})
+        person = insurance["people"][0]
+        self.assertEqual(person["coverage"]["death"], 175000)
+        self.assertEqual(person["coverage"]["criticalIllness"], 25000)
+        self.assertEqual(person["totals"]["annualCashPremium"], 1500)
+        self.assertEqual(person["totals"]["monthlyEquivalent"], 125)
+        self.assertEqual(person["totals"]["activePolicies"], 2)
+        self.assertEqual(person["totals"]["lapsedPolicies"], 1)
+        self.assertEqual(person["policies"][0]["verification"], {
+            "source": "Insurer portal", "checkedAt": "2026-09-04",
+        })
+        self.assertEqual(
+            person["policies"][0]["summary"], "A plain-language policy summary.")
+        self.assertFalse(person["policies"][0]["reconcileWithImportedStatements"])
+        self.assertEqual(person["policies"][0]["paymentMethod"], "DBS account")
+        self.assertEqual(person["policies"][0]["portalPremiumTotal"], 99.75)
+        self.assertEqual(person["policies"][0]["accountDebitAmount"], 100)
+        self.assertEqual(person["policies"][0]["components"][0]["insuredPerson"], "Person")
+        self.assertEqual(person["policies"][0]["components"][0]["nextDueDate"], "2026-10-01")
+        self.assertTrue(person["policies"][3]["coverageOnly"])
+        self.assertTrue(person["policies"][3]["hiddenInRegister"])
+        self.assertEqual(person["policies"][3]["premiumPaidBy"], "Partner")
+
+
 if __name__ == "__main__":
     unittest.main()

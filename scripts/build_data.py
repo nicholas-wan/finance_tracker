@@ -12,6 +12,7 @@
 
 import calendar
 import json
+import math
 import os
 import re
 import tempfile
@@ -35,6 +36,10 @@ FOODPANDA_FULFILMENT = ("delivery", "pickup")
 SHOPEE_STATUSES = ("to-receive", "completed", "rated")
 GRAB_CATEGORIES = ("Food & dining", "Groceries", "Transport")
 GRAB_PROFILES = ("personal", "business", "corporate", "unknown")
+INSURANCE_BENEFITS = (
+    "death", "tpd", "earlyCriticalIllness", "criticalIllness",
+    "disabilityIncome", "personalAccident", "hospitalSurgicalAnnualLimit",
+)
 
 
 def next_month_key(month):
@@ -767,6 +772,253 @@ def prepare_grab_receipts(receipt_data, card_rows, location_aliases=None):
     return receipts, by_transaction
 
 
+def prepare_insurance(insurance_data):
+    """Validate policies and derive comparable annual premium and coverage totals."""
+    if not isinstance(insurance_data, dict):
+        raise SystemExit("manual/insurance.json must be an object")
+    people = insurance_data.get("people", [])
+    if not isinstance(people, list):
+        raise SystemExit("manual/insurance.json people must be a list")
+    output_people = []
+    seen_people = set()
+    seen_policies = set()
+    combined = {
+        "policies": 0, "activePolicies": 0, "maturedPolicies": 0,
+        "lapsedPolicies": 0, "annualCashPremium": 0, "annualCpfPremium": 0,
+        "monthlyEquivalent": 0,
+    }
+
+    def money(value, label):
+        try:
+            amount = round(float(value or 0), 2)
+        except (TypeError, ValueError):
+            raise SystemExit("%s must be a valid amount" % label)
+        if not math.isfinite(amount) or amount < 0:
+            raise SystemExit("%s must be a non-negative amount" % label)
+        return amount
+
+    def date_value(value, label):
+        result = str(value or "").strip()
+        if result:
+            try:
+                datetime.strptime(result, "%Y-%m-%d")
+            except ValueError:
+                raise SystemExit("%s must be a YYYY-MM-DD date" % label)
+        return result
+
+    for person_index, raw_person in enumerate(people, 1):
+        label = "Insurance person %d" % person_index
+        if not isinstance(raw_person, dict):
+            raise SystemExit("%s must be an object" % label)
+        person_id = str(raw_person.get("id") or "").strip().lower()
+        name = str(raw_person.get("name") or "").strip()
+        owner = str(raw_person.get("owner") or name).strip()
+        if not person_id or not name or person_id in seen_people:
+            raise SystemExit("%s has an invalid or duplicate identity" % label)
+        seen_people.add(person_id)
+        raw_policies = raw_person.get("policies", [])
+        if not isinstance(raw_policies, list):
+            raise SystemExit("%s policies must be a list" % label)
+        coverage = {benefit: 0 for benefit in INSURANCE_BENEFITS}
+        policies = []
+        totals = {
+            "policies": 0, "activePolicies": 0, "maturedPolicies": 0,
+            "lapsedPolicies": 0, "annualCashPremium": 0, "annualCpfPremium": 0,
+            "monthlyEquivalent": 0,
+        }
+        for policy_index, raw in enumerate(raw_policies, 1):
+            policy_label = "%s policy %d" % (name, policy_index)
+            if not isinstance(raw, dict):
+                raise SystemExit("%s must be an object" % policy_label)
+            policy_id = str(raw.get("id") or "").strip()
+            if not policy_id or policy_id in seen_policies:
+                raise SystemExit("%s has an invalid or duplicate id" % policy_label)
+            seen_policies.add(policy_id)
+            company = str(raw.get("company") or "").strip()
+            plan = str(raw.get("plan") or "").strip()
+            if not company or not plan:
+                raise SystemExit("%s needs a company and plan" % policy_label)
+            start_date = date_value(raw.get("startDate"), policy_label + " start date")
+            status = str(raw.get("status") or "In Force").strip().title()
+            if status not in ("In Force", "Matured", "Lapsed"):
+                raise SystemExit("%s has an unsupported status" % policy_label)
+            premium_data = raw.get("premiums", {})
+            if not isinstance(premium_data, dict):
+                raise SystemExit("%s premiums must be an object" % policy_label)
+            frequency = str(premium_data.get("frequency") or "").strip().title()
+            if frequency not in ("", "Monthly", "Annual"):
+                raise SystemExit("%s has an unsupported payment frequency" % policy_label)
+            cash_with = money(premium_data.get("cashWithValue"), policy_label + " cash premium")
+            cash_without = money(
+                premium_data.get("cashWithoutValue"), policy_label + " protection premium")
+            cpf_annual = money(premium_data.get("cpfAnnual"), policy_label + " CPF premium")
+            multiplier = 12 if frequency == "Monthly" else 1
+            annual_cash = round((cash_with + cash_without) * multiplier, 2)
+            raw_benefits = raw.get("benefits", {})
+            if not isinstance(raw_benefits, dict) or any(
+                    benefit not in INSURANCE_BENEFITS for benefit in raw_benefits):
+                raise SystemExit("%s has invalid benefits" % policy_label)
+            benefits = {}
+            for benefit in INSURANCE_BENEFITS:
+                amount = money(raw_benefits.get(benefit), policy_label + " " + benefit)
+                if amount:
+                    benefits[benefit] = amount
+                    if status == "In Force":
+                        coverage[benefit] = round(coverage[benefit] + amount, 2)
+            raw_valuation = raw.get("valuation", {})
+            if not isinstance(raw_valuation, dict):
+                raise SystemExit("%s valuation must be an object" % policy_label)
+            valuation = {
+                "asOf": date_value(raw_valuation.get("asOf"), policy_label + " valuation date"),
+                "guaranteedBonus": money(raw_valuation.get("guaranteedBonus"), policy_label + " guaranteed bonus"),
+                "grossSurrenderValue": money(raw_valuation.get("grossSurrenderValue"), policy_label + " gross surrender value"),
+                "indebtedness": money(raw_valuation.get("indebtedness"), policy_label + " indebtedness"),
+                "netSurrenderValue": money(raw_valuation.get("netSurrenderValue"), policy_label + " net surrender value"),
+                "maturityValue": money(raw_valuation.get("maturityValue"), policy_label + " maturity value"),
+            }
+            raw_components = raw.get("components", [])
+            if not isinstance(raw_components, list):
+                raise SystemExit("%s components must be a list" % policy_label)
+            components = []
+            for component_index, component in enumerate(raw_components, 1):
+                component_label = "%s component %d" % (policy_label, component_index)
+                if not isinstance(component, dict) or not str(component.get("name") or "").strip():
+                    raise SystemExit("%s needs a name" % component_label)
+                components.append({
+                    "name": str(component.get("name") or "").strip(),
+                    "status": str(component.get("status") or "In Force").strip().title(),
+                    "insuredPerson": str(component.get("insuredPerson") or "").strip(),
+                    "relationship": str(component.get("relationship") or "").strip(),
+                    "benefitLabel": str(component.get("benefitLabel") or "").strip(),
+                    "sumAssured": money(component.get("sumAssured"), component_label + " sum assured"),
+                    "premiumAmount": money(component.get("premiumAmount"), component_label + " premium"),
+                    "premiumFrequency": str(
+                        component.get("premiumFrequency") or "").strip().title(),
+                    "coverageEffectiveDate": date_value(
+                        component.get("coverageEffectiveDate"),
+                        component_label + " coverage effective date"),
+                    "premiumEndDate": date_value(component.get("premiumEndDate"), component_label + " premium end date"),
+                    "coverExpiryDate": date_value(component.get("coverExpiryDate"), component_label + " cover expiry date"),
+                    "nextDueDate": date_value(
+                        component.get("nextDueDate"), component_label + " next due date"),
+                    "paymentMethod": str(component.get("paymentMethod") or "").strip(),
+                })
+            raw_documents = raw.get("documents", [])
+            if not isinstance(raw_documents, list):
+                raise SystemExit("%s documents must be a list" % policy_label)
+            documents = []
+            for document_index, document in enumerate(raw_documents, 1):
+                document_label = "%s document %d" % (policy_label, document_index)
+                if not isinstance(document, dict) or not str(document.get("name") or "").strip():
+                    raise SystemExit("%s needs a name" % document_label)
+                documents.append({
+                    "name": str(document.get("name") or "").strip(),
+                    "type": str(document.get("type") or "").strip(),
+                    "date": date_value(document.get("date"), document_label + " date"),
+                })
+            raw_coverage_notes = raw.get("coverageNotes", [])
+            if not isinstance(raw_coverage_notes, list):
+                raise SystemExit("%s coverage notes must be a list" % policy_label)
+            raw_verification = raw.get("verification", {})
+            if not isinstance(raw_verification, dict):
+                raise SystemExit("%s verification must be an object" % policy_label)
+            verification = {
+                "source": str(raw_verification.get("source") or "").strip(),
+                "checkedAt": date_value(
+                    raw_verification.get("checkedAt"), policy_label + " verification date"),
+            }
+            if bool(verification["source"]) != bool(verification["checkedAt"]):
+                raise SystemExit("%s verification needs both source and checkedAt" % policy_label)
+            reconcile_with_statements = raw.get("reconcileWithImportedStatements", True)
+            if not isinstance(reconcile_with_statements, bool):
+                raise SystemExit(
+                    "%s reconcileWithImportedStatements must be true or false" % policy_label)
+            coverage_only = raw.get("coverageOnly", False)
+            hidden_in_register = raw.get("hiddenInRegister", False)
+            if not isinstance(coverage_only, bool):
+                raise SystemExit("%s coverageOnly must be true or false" % policy_label)
+            if not isinstance(hidden_in_register, bool):
+                raise SystemExit("%s hiddenInRegister must be true or false" % policy_label)
+            policy = {
+                "id": policy_id,
+                "personId": person_id,
+                "company": company,
+                "plan": plan,
+                "policyNumber": str(raw.get("policyNumber") or "").strip(),
+                "startDate": start_date,
+                "status": status,
+                "statusDate": date_value(raw.get("statusDate"), policy_label + " status date"),
+                "type": str(raw.get("type") or "").strip(),
+                "payableTerm": str(raw.get("payableTerm") or "").strip(),
+                "premiumPaidToDate": date_value(raw.get("premiumPaidToDate"), policy_label + " premium paid-to date"),
+                "premiumEndDate": date_value(raw.get("premiumEndDate"), policy_label + " premium end date"),
+                "coverExpiryDate": date_value(raw.get("coverExpiryDate"), policy_label + " cover expiry date"),
+                "paymentMethod": str(raw.get("paymentMethod") or "").strip(),
+                "premiumPaidBy": str(raw.get("premiumPaidBy") or "").strip(),
+                "reconcileWithImportedStatements": reconcile_with_statements,
+                "coverageOnly": coverage_only,
+                "hiddenInRegister": hidden_in_register,
+                "portalPremiumTotal": money(
+                    raw.get("portalPremiumTotal"), policy_label + " portal premium total"),
+                "accountDebitAmount": money(
+                    raw.get("accountDebitAmount"), policy_label + " account debit amount"),
+                "faceValue": money(raw.get("faceValue"), policy_label + " face value"),
+                "baseSumAssured": money(raw.get("baseSumAssured"), policy_label + " base sum assured"),
+                "basicPremium": money(raw.get("basicPremium"), policy_label + " basic premium"),
+                "multiplierBenefit": str(raw.get("multiplierBenefit") or "").strip(),
+                "benefits": benefits,
+                "coverageNotes": [str(note).strip() for note in raw_coverage_notes if str(note).strip()],
+                "components": components,
+                "valuation": valuation,
+                "documents": documents,
+                "verification": verification,
+                "summary": str(raw.get("summary") or "").strip(),
+                "premiumWaiver": str(raw.get("premiumWaiver") or "").strip(),
+                "premiums": {
+                    "cashWithValue": cash_with,
+                    "cashWithoutValue": cash_without,
+                    "cpfAnnual": cpf_annual,
+                    "frequency": frequency,
+                },
+                "annualCashPremium": annual_cash,
+                "monthlyEquivalent": round(annual_cash / 12, 2),
+                "oneOffPaid": money(raw.get("oneOffPaid"), policy_label + " one-off payment"),
+                "remarks": str(raw.get("remarks") or "").strip(),
+            }
+            policies.append(policy)
+            if not coverage_only:
+                totals["policies"] += 1
+                if status == "In Force":
+                    totals["activePolicies"] += 1
+                elif status == "Matured":
+                    totals["maturedPolicies"] += 1
+                elif status == "Lapsed":
+                    totals["lapsedPolicies"] += 1
+                if status == "In Force":
+                    totals["annualCashPremium"] += annual_cash
+                    totals["annualCpfPremium"] += cpf_annual
+        totals["annualCashPremium"] = round(totals["annualCashPremium"], 2)
+        totals["annualCpfPremium"] = round(totals["annualCpfPremium"], 2)
+        totals["monthlyEquivalent"] = round(totals["annualCashPremium"] / 12, 2)
+        for key in combined:
+            combined[key] += totals[key]
+        output_people.append({
+            "id": person_id, "name": name, "owner": owner, "coverage": coverage,
+            "totals": totals, "policies": policies,
+        })
+    combined["annualCashPremium"] = round(combined["annualCashPremium"], 2)
+    combined["annualCpfPremium"] = round(combined["annualCpfPremium"], 2)
+    combined["monthlyEquivalent"] = round(combined["annualCashPremium"] / 12, 2)
+    return {
+        "source": str(insurance_data.get("source") or "").strip(),
+        "sourceUrl": str(insurance_data.get("sourceUrl") or "").strip(),
+        "extractedAt": str(insurance_data.get("extractedAt") or "").strip(),
+        "premiumPolicy": str(insurance_data.get("premiumPolicy") or "").strip(),
+        "totals": combined,
+        "people": output_people,
+    }
+
+
 def game_of(description):
     d = padded(description)
     for name, patterns in GAME_RULES:
@@ -875,6 +1127,7 @@ def main():
 
     rows = list(cards.get("transactions", []))
     identity_file = manual("identity.json", {})
+    insurance = prepare_insurance(manual("insurance.json", {"people": []}))
     foodpanda_orders, foodpanda_by_transaction = prepare_foodpanda_orders(
         manual("foodpanda_orders.json", {"orders": []}), rows
     )
@@ -1301,6 +1554,7 @@ def main():
                 "foodpandaOrders": foodpanda_orders,
                 "shopeeOrders": shopee_orders,
                 "grabReceipts": grab_receipts,
+                "insurance": insurance,
                 "transactions": transactions,
             }, f, indent=1)
         for attempt in range(5):
