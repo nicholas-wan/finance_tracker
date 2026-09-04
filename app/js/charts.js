@@ -71,10 +71,12 @@ window.Charts = (function () {
     }
 
     var narrow = window.matchMedia && window.matchMedia("(max-width: 760px)").matches;
-    // On phones, keep every month wide enough for its value and label. The SVG
-    // becomes horizontally scrollable instead of shrinking into hover-only ink.
-    var W = narrow ? Math.max(680, 52 * rows.length + 52) : 680;
     var H = 246, plotTop = 18, plotBottom = 178, axisL = 40;
+    // On phones the chart fills the panel when every month can keep a bar
+    // pair at least 36px wide (six months on any phone); longer ranges keep
+    // each month legible and scroll sideways instead, latest months first.
+    var containerW = Math.max(container.clientWidth || 0, 280);
+    var W = narrow ? Math.max(containerW, 36 * rows.length + axisL + 12) : 680;
     var slot = (W - axisL - 12) / rows.length;
     var labelStep = slot >= 30 ? 1 : slot >= 18 ? 2 : slot >= 12 ? 3 : 6;
     var pairW = Math.max(2, Math.min(26, (slot - 10) / 2));
@@ -103,7 +105,7 @@ window.Charts = (function () {
     var s = document.createElementNS(NS, "svg");
     s.setAttribute("viewBox", "0 0 " + W + " " + H);
     s.setAttribute("width", "100%");
-    if (narrow) s.style.minWidth = W + "px";
+    if (narrow && W > containerW) s.style.minWidth = W + "px";
     s.setAttribute("role", "img");
     s.style.display = "block";
     s.setAttribute("aria-label",
@@ -127,13 +129,17 @@ window.Charts = (function () {
     s.appendChild(label(axisL - 7, axisY + 4, "0", { anchor: "end" }));
 
     // Value labels crowd each other once bars get thin, so below that width they
-    // stay hidden until the column is hovered.
+    // stay hidden until the column is hovered. Phones have no hover, so there
+    // the larger of income and outflows keeps its label: one number per month
+    // fits, and the smaller bar is still readable against the gridlines.
     var denseLabels = slot < 40;
+    var phoneCompact = narrow && slot < 52;
 
     rows.forEach(function (r, i) {
       var cx = axisL + slot * i + slot / 2;
       var col = node("g", { class: "m-col" });
       col.style.setProperty("--motion-index", i);
+      var dominant = r.income >= r.spent ? "income" : "spent";
 
       col.appendChild(node("rect", {
         class: "hover-band", x: axisL + slot * i + 1, y: plotTop - 8,
@@ -141,10 +147,13 @@ window.Charts = (function () {
         opacity: r.month === opts.activeMonth ? 0.12 : 0
       }));
 
-      function value(x, y, amount, anchor, capped) {
+      function value(x, y, amount, anchor, capped, series) {
         var t = label(x, y, compact(amount) + (capped ? "↑" : ""),
           { anchor: anchor || "middle", size: 10 });
-        t.setAttribute("class", "val" + (denseLabels ? " dense" : "") +
+        var hidden = phoneCompact
+          ? (series === "income" || series === "spent") && series !== dominant
+          : denseLabels;
+        t.setAttribute("class", "val" + (hidden ? " dense" : "") +
           (capped ? " capped" : ""));
         col.appendChild(t);
       }
@@ -157,8 +166,8 @@ window.Charts = (function () {
           x: cx - pairW - 1, y: axisY - hI, width: pairW, height: Math.max(1, hI),
           rx: 2, fill: "var(--series-income)"
         }));
-        value(cx - pairW / 2 - 1,
-          incomeCapped ? plotTop + 10 : axisY - hI - 4, r.income, "middle", incomeCapped);
+        value(phoneCompact ? cx : cx - pairW / 2 - 1,
+          incomeCapped ? plotTop + 10 : axisY - hI - 4, r.income, "middle", incomeCapped, "income");
       }
       if (on("spent") && r.spent > 0) {
         var spentCapped = r.spent > displayMaxUp;
@@ -168,8 +177,8 @@ window.Charts = (function () {
           x: cx + 1, y: axisY - hS, width: pairW, height: Math.max(1, hS),
           rx: 2, fill: "var(--series-spent)"
         }));
-        value(cx + pairW / 2 + 1,
-          spentCapped ? plotTop + 10 : axisY - hS - 4, r.spent, "middle", spentCapped);
+        value(phoneCompact ? cx : cx + pairW / 2 + 1,
+          spentCapped ? plotTop + 10 : axisY - hS - 4, r.spent, "middle", spentCapped, "spent");
       }
       if (on("invested") && r.invested > 0) {
         var hV = r.invested * scale;
@@ -178,7 +187,8 @@ window.Charts = (function () {
           x: cx - pairW / 2, y: axisY, width: pairW, height: Math.max(1, hV),
           rx: 2, fill: "var(--series-invested)"
         }));
-        value(cx, axisY + hV + 11, r.invested);
+        // The deepest bar's label used to land on the month name below it.
+        value(cx, Math.min(axisY + hV + 11, plotBottom + 8), r.invested, "middle", false, "invested");
       }
 
       // The transparent target provides both the detailed tooltip and a

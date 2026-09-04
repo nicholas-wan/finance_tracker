@@ -16,8 +16,12 @@ from datetime import date, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from build_data import (  # noqa: E402
+    TRIP_MATCH_WINDOW_DAYS,
     is_grab_description,
+    is_trip_description,
     merge_grab_web_history,
+    normalize_trip_booking_no,
+    parse_trip_date,
     prepare_insurance,
     tag_key,
 )
@@ -298,6 +302,119 @@ def validate_shopee(manual_data, output, final_by_id, errors):
         errors.append("Shopee quality summary disagrees with published orders")
 
 
+TRIP_DETAIL_FIELDS = (
+    "bookingNo", "status", "productType", "bookingDate", "travelTime",
+    "traveller", "currency", "amount", "sourceFile",
+)
+
+
+def validate_trip(manual_data, output, final_by_id, errors):
+    """Every published Trip.com link must be exact, dated, one-to-one, and unaltered.
+
+    The build's matcher is the only thing that should ever attach a booking to
+    a charge, so this re-derives the rule on the published rows: SGD, debit,
+    Trip.com description, same cents, inside the window, one booking per
+    charge and one charge per booking, and the booking fields exactly as the
+    manual export holds them. The quality summary must count the same links.
+    """
+    source = manual_data.get("bookings", []) if isinstance(manual_data, dict) else None
+    summary = output.get("quality", {}).get("trip")
+    if not source and summary is None:
+        # No export on disk and a dashboard built before the surface existed.
+        return
+    if not isinstance(source, list):
+        errors.append("manual Trip.com bookings must be a list")
+        return
+    source_by_no = {}
+    for booking in source:
+        if not isinstance(booking, dict):
+            errors.append("manual Trip.com bookings must be objects")
+            return
+        booking_no = normalize_trip_booking_no(booking.get("bookingNo"))
+        if not booking_no or booking_no in source_by_no:
+            errors.append("manual Trip.com bookings contain a missing or duplicate booking number")
+            return
+        source_by_no[booking_no] = booking
+    if "tripBookings" in output:
+        errors.append("the full Trip.com export must not be published to the dashboard")
+
+    attached = {}
+    for tx_id, transaction in final_by_id.items():
+        detail = transaction.get("tripBooking")
+        marker = transaction.get("trip")
+        is_trip_row = is_trip_description(transaction.get("description", ""))
+        expected_marker = (
+            {"status": "booking-matched" if detail is not None else "unmatched"}
+            if is_trip_row else None
+        )
+        if marker != expected_marker:
+            errors.append("transaction %s has an inconsistent Trip.com marker" % tx_id)
+        if detail is None:
+            if transaction.get("displayNameSource") == "trip-booking":
+                errors.append("transaction %s claims a Trip.com name without a booking" % tx_id)
+            continue
+        if not isinstance(detail, dict):
+            errors.append("transaction %s has invalid Trip.com booking details" % tx_id)
+            continue
+        booking_no = detail.get("bookingNo")
+        if booking_no in attached:
+            errors.append("Trip.com booking %s is attached to more than one transaction" % booking_no)
+        attached[booking_no] = tx_id
+        original = source_by_no.get(booking_no)
+        if not original:
+            errors.append("transaction %s names unknown Trip.com booking %r" % (tx_id, booking_no))
+            continue
+        if transaction.get("type") != "debit" or not is_trip_description(
+                transaction.get("description", "")):
+            errors.append("transaction %s is not a Trip.com charge but carries a booking" % tx_id)
+        if detail.get("currency") != "SGD":
+            errors.append("transaction %s is linked to a non-SGD Trip.com booking" % tx_id)
+        try:
+            same_amount = (
+                int(round(float(detail.get("amount")) * 100))
+                == int(round(float(transaction.get("amount")) * 100))
+            )
+        except (TypeError, ValueError):
+            same_amount = False
+        if not same_amount:
+            errors.append("transaction %s Trip.com link disagrees on amount" % tx_id)
+        booking_day = parse_trip_date(detail.get("bookingDate"))
+        row_day = parse_trip_date(transaction.get("date"))
+        if (booking_day is None or row_day is None
+                or abs((row_day - booking_day).days) > TRIP_MATCH_WINDOW_DAYS):
+            errors.append("transaction %s Trip.com link is outside the match window" % tx_id)
+        for field in TRIP_DETAIL_FIELDS:
+            published = detail.get(field)
+            expected = original.get(field)
+            if field == "bookingNo":
+                expected = normalize_trip_booking_no(expected)
+            elif field == "currency":
+                expected = str(expected or "").strip().upper()
+            elif field == "amount":
+                try:
+                    expected = None if expected is None else round(float(expected), 2)
+                except (TypeError, ValueError):
+                    expected = object()
+            else:
+                expected = str(expected or "").strip()
+            if published != expected:
+                errors.append("Trip.com booking %s changed %s during build" % (booking_no, field))
+        if (transaction.get("displayNameSource") == "trip-booking"
+                and transaction.get("displayName") != original.get("productName", "").strip()):
+            errors.append("transaction %s Trip.com display name is not the product name" % tx_id)
+        if transaction.get("displayNameSource") not in ("trip-booking", "override"):
+            errors.append("transaction %s Trip.com link has no display-name source" % tx_id)
+    if not isinstance(summary, dict):
+        errors.append("Trip.com quality summary is missing")
+        return
+    if summary.get("bookings") != len(source_by_no) or summary.get("matched") != len(attached):
+        errors.append("Trip.com quality summary disagrees with published links")
+    if summary.get("matchedCancelled") != sum(
+            1 for booking_no in attached if booking_no in source_by_no
+            and str(source_by_no[booking_no].get("status") or "").strip().lower() == "cancelled"):
+        errors.append("Trip.com quality summary miscounts cancelled links")
+
+
 def validate_grab(manual_data, history_stats, output, final_by_id, errors):
     source = manual_data.get("receipts", []) if isinstance(manual_data, dict) else []
     has_surface = "grabReceipts" in output or "grab" in output.get("quality", {})
@@ -461,6 +578,8 @@ def main():
         os.path.join(MANUAL_DIR, "foodpanda_orders.json"), {"orders": []})
     shopee_data = load_optional(
         os.path.join(MANUAL_DIR, "shopee_orders.json"), {"orders": []})
+    trip_data = load_optional(
+        os.path.join(MANUAL_DIR, "trip_bookings.json"), {"bookings": []})
     grab_data = load_optional(
         os.path.join(MANUAL_DIR, "grab_receipts.json"), {"receipts": []})
     grab_web_data = load_optional(
@@ -571,6 +690,7 @@ def main():
     final_by_id = {row["id"]: row for row in output.get("transactions", []) if row.get("id")}
     validate_foodpanda(foodpanda_data, output, final_by_id, errors)
     validate_shopee(shopee_data, output, final_by_id, errors)
+    validate_trip(trip_data, output, final_by_id, errors)
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
     if (os.path.exists(insurance_path) or "insurance" in output) and \
             output.get("insurance") != prepare_insurance(insurance_data):

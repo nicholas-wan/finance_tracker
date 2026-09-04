@@ -1,18 +1,20 @@
 # UOB finance tracker
 
-A private local dashboard for UOB credit-card and ONE account statements. It tracks
-spending, income, investments, insurance, shared household expenses, game sales, balances, data
-quality, and suspicious-transaction reviews. The app is plain HTML, CSS, and
-JavaScript with no build step or external CDN.
+A private local dashboard for Yx's UOB credit-card and ONE account statements. It
+tracks spending, income, investments, insurance, balances, imported merchant
+history, data quality, and suspicious-transaction reviews. This clone is a
+single-owner ledger: every imported charge belongs to Yx. The app is plain HTML,
+CSS, and JavaScript with no build step or external CDN.
 
 ## Run locally
 
 ```powershell
-python scripts/serve.py
+./scripts/launch_dashboard.ps1 -Port 3403
 ```
 
-Open http://localhost:3402. The editable server binds only to `127.0.0.1` and is
-required for saving edits and review decisions.
+Open http://localhost:3403. Port 3402 is reserved for the separate Nic tracker.
+The editable server binds only to `127.0.0.1` and is required for saving edits
+and review decisions.
 
 ### Desktop or taskbar launcher
 
@@ -32,7 +34,7 @@ only opens the dashboard against it, rather than replacing it.
 For a view-only dashboard:
 
 ```powershell
-python -m http.server 3402 --directory app
+python -m http.server 3403 --directory app
 ```
 
 ## Create a separate household copy
@@ -94,6 +96,10 @@ review-status filters.
 - Card summaries show net cost after refunds, category and owner breakdowns, and
   6M/12M comparisons. **Group purchases** combines normalized merchants without
   merging the source rows.
+- A charge refunded in full by the same merchant (same amount, refund on or
+  after the charge, within 180 days, and no other candidate charge) is folded
+  away with its refund by default; the footer's **Show N refunded charges**
+  button brings both rows back, badged. Folding never changes the net cost.
 - Recognized recurring brands show a compact locally bundled icon beside the
   transaction. Unmatched merchants stay text-only, and the browser never contacts
   a merchant or third-party logo service to render the ledger.
@@ -129,6 +135,24 @@ review-status filters.
   status, total, and every item name captured from the purchase card. Since
   Shopee hid order dates behind a slider check, only amount groups with equal
   order/statement cardinality inside the statement-era history are linked.
+- **Trip.com only** shows every Trip.com statement row: named bookings,
+  charges that could not be matched safely, and refunds, so the month's Trip.com
+  net cost is complete. Booking history comes from the site's **My Bookings**
+  Excel exports, merged by `scripts/import_trip_bookings.py` (later exports win
+  on a repeated booking number). A card charge shows the actual hotel, flight, attraction, or
+  transfer name only when it and one booking are the sole pair within seven days
+  of each other with exactly that SGD amount. Ambiguous, unmatched,
+  foreign-currency, undated, and refund rows keep the original Trip.com statement
+  description rather than being assigned to a guessed booking. A booking that
+  was later cancelled still names its charge, marked **Cancelled** in the ledger
+  and the drawer, because the charge was real and the refund is its own credit
+  row. Opening a matched transaction shows the original statement description
+  and a **Trip.com booking** section with status, type, booking number, dates,
+  traveller, and total. The booking name is a derived label: the drawer's
+  display-name field shows it as a placeholder, so saving a remark does not
+  freeze it as an override, and it never becomes the label of a grouped
+  Trip.com row. The quality summary counts matched, cancelled, ambiguous, and
+  unmatched charges; the validator re-derives every published link.
 - **Grab only** shows every Grab statement charge. Safely matched food rows lead
   with the stall name, while rides use friendly saved location names where
   configured. Food item lines and delivery addresses stay out of the interface;
@@ -158,19 +182,17 @@ generated-data rebuilds are atomic and roll back if validation fails.
 - Interactive Brokers, SRS, fixed deposits, transfers, and card-bill payments are
   movements of money, not bank-account spending.
 - Card `Payment` and `Rebates` are excluded from spending; refunds reduce totals.
-- Salary figures are gross manual values and are not inferred from deposits.
+- Salary deposits use the statement's explicit salary markers. In particular,
+  Yx's `Inward CR - GIRO PAYNOW SALA` credits are salary, while ordinary GIRO
+  credits remain transfers.
 - The Transactions-page 6M/12M figures are means; overview baselines use medians.
-- The Split tab and Overview share one Yx settlement calculation. Opening balances
-  carry forward until replaced, and each view states its time scope.
-- `Yx share` is half of `Shared` plus transactions assigned directly to `Yx`.
-- Game sales stay on the Games page because they do not pass through statements.
+- This clone has no Split or Games tab. Opening balances carry forward until
+  replaced, and each view states its time scope.
 
 ## Common changes
 
 - Merchant category rules: `CATEGORY_RULES` in `scripts/build_data.py`
-- Game seller rules: `GAME_RULES` in `scripts/build_data.py`
-- Salary history: `manual/salary.json`
-- Game-account sales: `manual/game_sales.json`
+- Salary identity and account labels: `manual/identity.json`
 - Insurance policies: `manual/insurance.json` (Git-ignored). Monthly premiums are
   annualised at 12 payments; one-off investments are excluded from recurring
   totals. Matured and lapsed records remain visible for history but are excluded
@@ -191,6 +213,24 @@ generated-data rebuilds are atomic and roll back if validation fails.
 - Shopee purchase history: `manual/shopee_orders.json` (also Git-ignored). The
   import retains older history and item names even when no statement link can
   be made safely.
+- Trip.com booking history: `manual/trip_bookings.json` (Git-ignored). Export the
+  required periods from Trip.com's **All Bookings → Export** (each export covers
+  one period; the current private file came from three covering older history,
+  2025, and the past 12 months), then merge them:
+
+  ```powershell
+  python scripts/import_trip_bookings.py "My Bookings.xlsx" "My Bookings (1).xlsx" "My Bookings (2).xlsx"
+  python scripts/import_all.py
+  ```
+
+  Pass the workbooks oldest first; a booking number repeated across exports keeps
+  the later export's row. `--check` reports whether the JSON already matches the
+  workbooks without writing. `*.xlsx` is Git-ignored, so the exports can live
+  anywhere. `prepare_trip_bookings()` in `scripts/build_data.py` then validates
+  booking numbers, product names, three-letter currencies, and finite amounts,
+  and links only exact SGD amounts that pair one booking with one charge inside
+  `TRIP_MATCH_WINDOW_DAYS`. Only the bookings that explain a charge reach
+  `app/data/`; the full export, traveller names included, stays in `manual/`.
 - Grab Gmail capture: `manual/grab_receipt_search_raw.json` plus any later mail
   in `manual/grab_receipt_search_supplemental.json`, parsed with `python
   scripts/import_grab_receipts.py` into `manual/grab_receipts.json`. These files
@@ -229,7 +269,7 @@ generated-data rebuilds are atomic and roll back if validation fails.
 | Path | Purpose |
 |---|---|
 | `statements/<year>/` | Source PDFs and older CSV exports |
-| `manual/` | Owners, overrides, remarks, reviews, settlements, salary, game sales, and `identity.json` |
+| `manual/` | Identity, merchant exports, insurance, overrides, remarks, and reviews |
 | `scripts/` | Parsers, data builder, validation, and local server |
 | `app/` | Dashboard source and generated `app/data/` JSON |
 | `tests/` | Parser, classification, API, risk, and grouping regression tests |
@@ -291,4 +331,7 @@ Still open, in rough priority:
 
 Categories and suspicious checks are rule-based. Statements do not include receipts,
 device data, precise location or time, merchant category codes, or order details, so
-new and vague descriptors may still require manual review.
+new and vague descriptors may still require manual review. Trip.com exports can omit
+periods or represent a booking in a foreign currency while the card statement records
+an SGD conversion; those rows intentionally remain generic unless the evidence is
+unambiguous.

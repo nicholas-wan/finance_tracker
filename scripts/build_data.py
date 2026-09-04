@@ -23,6 +23,7 @@ from data_ids import assign_provenance
 from risk_checks import detect_risks
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+PROFILE_OWNER = "Yx"
 MANUAL_DIR = os.path.join(REPO_ROOT, "manual")
 DATA_DIR = os.environ.get(
     "FINANCE_DATA_DIR", os.path.join(REPO_ROOT, "app", "data")
@@ -105,28 +106,30 @@ CATEGORY_RULES = [
         "ANG MO KIO POLYCLINIC",
         "Q&M DENTAL",
         "SP THERAPIN.SG",
+        "EAGLE EYE CENTRE",
+        "JURONG POINT DENTAL",
     ]),
     ("Home & furnishings", ["AZORA CURTAIN", "BSH HOME APPLIANCES"]),
     ("Entertainment", ["SISTIC", "DERTICKETSERVICE", "HAVE FUN - TPY"]),
-    ("Pet care", ["ANIMAL WORLD VET", "PAWSWING"]),
+    ("Pet care", ["ANIMAL WORLD VET", "PAWSWING", "SMARTPAW", "MIUMIU PETSHOP", "PET TECH"]),
     ("Subscriptions", ["NETFLIX", "SPOTIFY", "YOUTUBE", "DISNEY", "ICLOUD", "GOOGLE ONE",
                        "SUBSCRIPTIONGRAB", "OPENAI", "ANTHROPIC", "PRIME VIDEO", "APPLE.COM/BILL",
                        "AMZNPRIMESG MEMBERSHI", "NAME-CHEAP.COM", "NORDPRODUCTS",
                        "PAYFORGE SERVICES"]),
     ("Transport", ["BUS/MRT", "BUS / MRT", "GRAB*", "WWW.TADA", "TADA.G", "GOJEK", "COMFORT",
                    "CDG TAXI", " SMRT", "UBER *TRIP", "MO.PLA", "GRAB RIDES", "GRAB-EC",
-                   "CAUSEWAYLINK", "SP BUS AUNTY", " TADA "]),
+                   "CAUSEWAYLINK", "SP BUS AUNTY", " TADA ", "ALP*DIDI TAXI"]),
     ("Groceries", ["NTUC FAIRPRICE", "FAIRPRICE", "COLD STORAGE", "SHENG SIONG", " GIANT ",
                    "GIANT-", "NTUC FP-", "CHEERS HOLDINGS", "DON DON DONKI",
                    "PRIME SUPERMARKET", "BBQ WHOLESALE CENTRE", "CS FRESH", "JAYA GROCER",
-                   "KAPITAN GROCERY", "7-ELEVEN", "7 ELEVEN", "ESSO-CHEERS", "LEE MART",
+                       "KAPITAN GROCERY", "ESSO-CHEERS", "LEE MART",
                    "NTUC FP ", "ACE DYNAMIC HOLDINGS"]),
     ("Food & dining", ["FOOD PANDA", "FP*FOOD", "FOODPANDA", "KOPITIAM", "WOK N RICE", "URBAN GRILL",
                        "WATAMI", "SWENSEN", "FUN TOAST", "POULET", "SUSHI", "LLAO LLAO", "LUCKIN",
                        "DSTA DRINKS", "BOOST JUICE", "MCDONALD", " KFC", "STARBUCKS", "DELIVEROO",
                        "SHOPBACK", "RESTAURANT", " CAFE", "-CAFE", ".CAFE", "BAKERY", " TOAST",
                        " COFFEE", "-COFFEE", "FENG SHENG",
-                       "LIHO TEA", " YHS", "WARBURG VENDING", "OLD CHANG KEE", "KIMLY", "ENCIK TAN",
+                       "LIHO TEA", " YHS", "WARBURG VENDING", "7-ELEVEN", "7 ELEVEN", "OLD CHANG KEE", "KIMLY", "ENCIK TAN",
                        "MOS BURGER", " BURGER", "SHOKUDO", " F AND B", "HAWKER", " FOOD", " SEAFOOD",
                        "OLD HABITS SG", "KAT CAT", "SYNTHESIS SINGAPORE", "WAA COW",
                        "YAKINIKU", "SUKI-YA", "KISEKI", "HAI DI LAO", "JELEBU DRY LAKSA",
@@ -155,7 +158,11 @@ CATEGORY_RULES = [
                        "TROPICO KOPI", "HOONG YING ENTERPRISE", "KEIJO SDN BHD",
                        "TINO JC", "Q'SON GROUP", "AURESYS PL", "ABBA OL2",
                        # Inception SG bills the Starbucks drink kiosk, not a game store.
-                       "INCEPTION SG",
+                       "INCEPTION SG", "GRAIN", "LE PETIT CROISSANT", "YUNNANS", "BAKERSBREW", "ORANGE AND TEAL",
+                       "HERBIVORE", "EL MESA", "CHIMICHANGA", "THAI KHA", "SCOOP WHOLEFOODS", "POCHA KOREAN",
+                       "NANA'S GREEN TEA", "MAKAN PRATA", "RASAPURA", "PARIS BAGUETTE", "GYG ", "KRISPY KREME",
+                       "SAAP SAAP", "PANDASNACKS", "F&B MANAGEMENT", "HE-BREW KOPI", "DAILY SCOOP", "FNB AHMENG",
+                       "FOUR LEAVES", "COTTI+COFFEE", "KOPIFELLAS",
                        "SB125-AEON BUKIT INDAH", "AIF 111-ORH006", "ANDO.SG"]),
     # "STEAM" and "RIOT" must stay anchored to the biller strings: bare
     # substrings filed steamboat restaurants and MARRIOTT hotels under Games.
@@ -177,12 +184,13 @@ CATEGORY_RULES = [
     ("Personal care", [" KCUTS", " SALON", " BARBER", " GUARDIAN", "WATSONS", "WATSON'S",
                        "VENUS BEAUTY", "HOCKHUA TONIC", "ZTP GINSENG"]),
     ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", " FWD SINGAPORE", " AIA ", "GREAT EASTERN",
-                   "NTUC INCOME", "SINGLIFE", "HL ASSURANCE"]),
+                   "NTUC INCOME", "SINGLIFE", "HL ASSURANCE", "ETIQA INSURANCE"]),
     # " GIGA " needs both edges so GIGABYTE and GIGASPORTS are not phone bills.
     ("Bills & utilities", ["SINGTEL", "STARHUB", " M1 ", " AXS ", " AXS PTE", " SP SERVICES",
-                           " SP DIGITAL", " SIMBA", " CIRCLES", " GIGA ", "OPEN.GOV.SG"]),
+                           " SP DIGITAL", " SIMBA", " CIRCLES", " GIGA ", "MYREPUBLIC BROADBAND", "MYREPUBLIC LIMITED",
+                           "OPEN.GOV.SG"]),
     ("Travel", ["AIRLINE", "SINGAPOREAIR", " SCOOT", "JETSTAR", "AGODA", "BOOKING.COM", "AIRBNB",
-                "KLOOK", "KKDAY", "ROTTNEST EXPRESS", "TRIP.COM", " HOTEL",
+                "KLOOK", "KKDAY", "ROTTNEST EXPRESS", "TRIP.COM", "TRIP COM", "WWW TRIP COM", "BUSBUD", " HOTEL",
                 "USCUSTOMS ESTA", "IVISA SERVICES", "IMMIGRATION CANADA", "AUSTRALIANETA"]),
 ]
 
@@ -352,6 +360,11 @@ def is_shopee_description(description):
     return "SHOPEE" in padded(description)
 
 
+def is_trip_description(description):
+    value = str(description or "").upper()
+    return "TRIP.COM" in value or "TRIP COM" in value or "WWW TRIP COM" in value
+
+
 def prepare_shopee_orders(order_data, card_rows):
     """Validate Shopee orders and link only equal-cardinality amount groups."""
     raw_orders = order_data.get("orders", []) if isinstance(order_data, dict) else []
@@ -360,6 +373,9 @@ def prepare_shopee_orders(order_data, card_rows):
     start = order_data.get("statementFrom")
     through = order_data.get("statementThrough")
     match_history_limit = order_data.get("statementOrderMaxHistoryIndex")
+    match_statements = order_data.get("matchStatements", True)
+    if not isinstance(match_statements, bool):
+        raise SystemExit("Shopee matchStatements must be a boolean")
     try:
         datetime.strptime(start, "%Y-%m-%d")
         datetime.strptime(through, "%Y-%m-%d")
@@ -406,6 +422,18 @@ def prepare_shopee_orders(order_data, card_rows):
         if history_index in seen_history_indexes:
             raise SystemExit("Shopee historyIndex %s is duplicated" % history_index)
         seen_history_indexes.add(history_index)
+        pet_text = " ".join([merchant] + items).upper()
+        if any(token in pet_text for token in (
+                "SMARTPAW", "MIUMIU PETSHOP", "MIUMIUPETSHOP", "PET TECH", "DAILY DELIGHT",
+                "TRIADCATS", "NEXGARD", "CHURU", "S & S PET", "PAWSYMART",
+                "WEPETS", "DOGCAT", "FISHNPETZ", "GESH CATS", "YAPPY PETS",
+                "PAW LOBBY", "DABUPET", "CATISLAND", "4FURS", "PET WISHES",
+                "FUNNY_PET", "ZATE PET", "PAW LOBBY", "PET WISHES")):
+            category = "Pet care"
+        elif merchant.strip().lower() == "shopee supermarket":
+            category = "Groceries"
+        else:
+            category = "Shopping"
         orders.append({
             "orderId": order_id,
             "merchant": merchant.strip(),
@@ -413,10 +441,7 @@ def prepare_shopee_orders(order_data, card_rows):
             "amount": amount,
             "items": [item.strip() for item in items],
             "historyIndex": history_index,
-            "category": (
-                "Groceries" if merchant.strip().lower() == "shopee supermarket"
-                else "Shopping"
-            ),
+            "category": category,
         })
 
     order_groups = {}
@@ -424,7 +449,8 @@ def prepare_shopee_orders(order_data, card_rows):
         if (match_history_limit is not None
                 and order["historyIndex"] > match_history_limit):
             continue
-        order_groups.setdefault(int(round(order["amount"] * 100)), []).append(order)
+        if match_statements:
+            order_groups.setdefault(int(round(order["amount"] * 100)), []).append(order)
     card_groups = {}
     for row in card_rows:
         row_date = row.get("date")
@@ -446,6 +472,172 @@ def prepare_shopee_orders(order_data, card_rows):
             by_transaction[row["id"]] = order
     orders.sort(key=lambda item: item["historyIndex"])
     return orders, by_transaction
+
+
+# Trip.com's export writes dates as "June 12, 2025"; the importer keeps that
+# text verbatim, so the builder parses it here for the match window.
+TRIP_BOOKING_DATE_FORMATS = ("%B %d, %Y", "%b %d, %Y", "%Y-%m-%d")
+# A prepaid Trip.com booking is charged when it is made. The card posts the
+# same day or the next; a week absorbs weekends and late captures without
+# letting a booking from another trip claim a same-priced charge years away.
+TRIP_MATCH_WINDOW_DAYS = 7
+TRIP_BOOKING_NO_PATTERN = re.compile(r"[A-Z0-9][A-Z0-9-]{4,39}")
+TRIP_CANCELLED_STATUS = "cancelled"
+
+
+def parse_trip_date(value):
+    text = str(value or "").strip()
+    for pattern in TRIP_BOOKING_DATE_FORMATS:
+        try:
+            return datetime.strptime(text, pattern).date()
+        except ValueError:
+            continue
+    return None
+
+
+def normalize_trip_booking_no(value):
+    """Booking numbers are digit strings; a spreadsheet may hand them over as numbers."""
+    if isinstance(value, bool):
+        return ""
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        return str(int(value)) if math.isfinite(value) and value.is_integer() else ""
+    return str(value or "").strip().upper()
+
+
+def prepare_trip_bookings(booking_data, card_rows):
+    """Validate Trip.com export rows and link only exact, dated, one-to-one charges.
+
+    A charge is named after a booking only when the two agree to the cent in
+    SGD, fall within TRIP_MATCH_WINDOW_DAYS of each other, and neither has any
+    other candidate. Refund rows, foreign-currency bookings, zero or missing
+    amounts, undated bookings, and any amount shared by more than one booking
+    or charge inside the window stay unlinked. Cancelled bookings still link
+    (the charge was real; the refund is a separate credit row) and carry their
+    status so the dashboard can say so.
+
+    Returns (bookings, by_transaction, stats).
+    """
+    if booking_data is None:
+        booking_data = {"bookings": []}
+    if not isinstance(booking_data, dict) or not isinstance(booking_data.get("bookings", []), list):
+        raise SystemExit("manual/trip_bookings.json must be an object with a bookings list")
+    raw_bookings = booking_data.get("bookings", [])
+    bookings = []
+    seen = set()
+    for index, raw in enumerate(raw_bookings, 1):
+        label = "Trip.com booking %d" % index
+        if not isinstance(raw, dict):
+            raise SystemExit("%s must be an object" % label)
+        booking_no = normalize_trip_booking_no(raw.get("bookingNo"))
+        product_name = str(raw.get("productName") or "").strip()
+        currency = str(raw.get("currency") or "").strip().upper()
+        if not TRIP_BOOKING_NO_PATTERN.fullmatch(booking_no):
+            raise SystemExit("%s has a missing or malformed booking number" % label)
+        if booking_no in seen:
+            raise SystemExit("%s repeats booking number %s" % (label, booking_no))
+        if not product_name:
+            raise SystemExit("%s has no product name" % label)
+        if not re.fullmatch(r"[A-Z]{3}", currency):
+            raise SystemExit("%s has an invalid currency" % label)
+        amount = raw.get("amount")
+        if amount is not None:
+            if isinstance(amount, bool):
+                raise SystemExit("%s has an invalid amount" % label)
+            try:
+                amount = float(amount)
+            except (TypeError, ValueError):
+                raise SystemExit("%s has an invalid amount" % label)
+            if not math.isfinite(amount) or amount < 0:
+                raise SystemExit("%s has an invalid amount" % label)
+            amount = round(amount, 2)
+        for field in ("status", "productType", "bookingDate", "travelTime", "traveller", "sourceFile"):
+            if raw.get(field) is not None and not isinstance(raw.get(field), str):
+                raise SystemExit("%s %s must be text" % (label, field))
+        seen.add(booking_no)
+        bookings.append({
+            "bookingNo": booking_no,
+            "status": str(raw.get("status") or "").strip(),
+            "productType": str(raw.get("productType") or "").strip(),
+            "bookingDate": str(raw.get("bookingDate") or "").strip(),
+            "productName": product_name,
+            "travelTime": str(raw.get("travelTime") or "").strip(),
+            "traveller": str(raw.get("traveller") or "").strip(),
+            "currency": currency,
+            "amount": amount,
+            "sourceFile": str(raw.get("sourceFile") or "").strip(),
+        })
+
+    stats = {
+        "bookings": len(bookings),
+        "cancelled": sum(1 for b in bookings if b["status"].lower() == TRIP_CANCELLED_STATUS),
+        "foreignCurrency": sum(1 for b in bookings if b["currency"] != "SGD"),
+        "zeroAmount": sum(1 for b in bookings if not b["amount"]),
+        "undated": 0,
+        "statementCharges": 0,
+        "statementRefunds": 0,
+        "matched": 0,
+        "matchedCancelled": 0,
+        "ambiguousCharges": 0,
+        "unmatchedCharges": 0,
+        "unmatchedBookings": 0,
+    }
+
+    # Candidates in both directions; a link needs exactly one on each side.
+    booking_candidates = {}
+    dated = []
+    for booking in bookings:
+        if booking["currency"] != "SGD" or not booking["amount"]:
+            continue
+        booking_day = parse_trip_date(booking["bookingDate"])
+        if booking_day is None:
+            stats["undated"] += 1
+            continue
+        dated.append((booking, booking_day, int(round(booking["amount"] * 100))))
+        booking_candidates[booking["bookingNo"]] = []
+    charges = []
+    for row in card_rows:
+        if not is_trip_description(row.get("description", "")):
+            continue
+        if row.get("credit"):
+            stats["statementRefunds"] += 1
+            continue
+        stats["statementCharges"] += 1
+        row_day = parse_trip_date(row.get("date"))
+        amount = round(float(row.get("amount", 0)), 2)
+        if row_day is None or amount <= 0:
+            continue
+        charges.append((row, row_day, int(round(amount * 100))))
+    row_candidates = {row["id"]: [] for row, _, _ in charges}
+    for booking, booking_day, booking_cents in dated:
+        for row, row_day, row_cents in charges:
+            if row_cents != booking_cents:
+                continue
+            if abs((row_day - booking_day).days) > TRIP_MATCH_WINDOW_DAYS:
+                continue
+            booking_candidates[booking["bookingNo"]].append(row["id"])
+            row_candidates[row["id"]].append(booking)
+
+    by_transaction = {}
+    for row, _, _ in charges:
+        candidates = row_candidates[row["id"]]
+        if len(candidates) > 1:
+            stats["ambiguousCharges"] += 1
+            continue
+        if len(candidates) == 1 and len(booking_candidates[candidates[0]["bookingNo"]]) == 1:
+            by_transaction[row["id"]] = candidates[0]
+        elif len(candidates) == 1:
+            stats["ambiguousCharges"] += 1
+    linked = {booking["bookingNo"] for booking in by_transaction.values()}
+    stats["matched"] = len(by_transaction)
+    stats["matchedCancelled"] = sum(
+        1 for booking in by_transaction.values()
+        if booking["status"].lower() == TRIP_CANCELLED_STATUS
+    )
+    stats["unmatchedCharges"] = stats["statementCharges"] - stats["matched"]
+    stats["unmatchedBookings"] = sum(1 for booking, _, _ in dated if booking["bookingNo"] not in linked)
+    return bookings, by_transaction, stats
 
 
 def is_grab_description(description):
@@ -1134,6 +1326,9 @@ def main():
     shopee_orders, shopee_by_transaction = prepare_shopee_orders(
         manual("shopee_orders.json", {"orders": []}), rows
     )
+    trip_bookings, trip_by_transaction, trip_stats = prepare_trip_bookings(
+        manual("trip_bookings.json", {"bookings": []}), rows
+    )
     grab_source, grab_history_stats = merge_grab_web_history(
         manual("grab_receipts.json", {"receipts": []}),
         manual("grab_web_history.json", {"fields": [], "records": []}),
@@ -1183,6 +1378,7 @@ def main():
         override = transaction_overrides.get(r["id"], {})
         foodpanda_order = foodpanda_by_transaction.get(r["id"])
         shopee_order = shopee_by_transaction.get(r["id"])
+        trip_booking = trip_by_transaction.get(r["id"])
         grab_matches = grab_by_transaction.get(r["id"], [])
         grab_statement = is_grab_description(r["description"])
         grab_unreconciled = grab_statement and not grab_matches
@@ -1202,6 +1398,7 @@ def main():
             else "grab-corporate" if grab_corporate
             else "foodpanda-order" if foodpanda_order
             else "shopee-order" if shopee_order
+            else "trip-booking" if trip_booking
             else "grab-receipt" if grab_matches
             else "grab-unreconciled" if grab_unreconciled
             else "merchant-rule"
@@ -1245,6 +1442,10 @@ def main():
                                     if rule_is_confirmed(r["description"]) else "merchant-rule")
         if not owner:
             owner_source = "unassigned"
+        # Yx's clone is a single-owner ledger; legacy/shared owner tags do not
+        # apply and imported charges should never remain unassigned.
+        owner = PROFILE_OWNER
+        owner_source = "profile-default"
         record = {
             "id": r["id"],
             "date": r.get("date"),
@@ -1263,6 +1464,25 @@ def main():
             "ruleCategories": rule_categories,
             "provenance": r["provenance"],
         }
+        if trip_booking:
+            # The product name is derived evidence, not a saved edit. The
+            # source marker lets the dashboard keep it out of the override
+            # editor and out of grouped labels, and lets the server refuse to
+            # freeze it as an override on an unrelated save.
+            record["displayName"] = trip_booking["productName"]
+            record["displayNameSource"] = "trip-booking"
+            record["tripBooking"] = {
+                key: trip_booking[key]
+                for key in (
+                    "bookingNo", "status", "productType", "bookingDate",
+                    "travelTime", "traveller", "currency", "amount", "sourceFile"
+                )
+            }
+        if is_trip_description(r["description"]):
+            # Every Trip.com statement row, matched or not, charge or refund,
+            # carries the marker so the "Trip.com only" filter and the
+            # matcher agree on what counts as Trip.com by construction.
+            record["trip"] = {"status": "booking-matched" if trip_booking else "unmatched"}
         if r.get("foreign"):
             record["foreign"] = r["foreign"]
         if foodpanda_order:
@@ -1300,6 +1520,7 @@ def main():
         display_name = override.get("displayName")
         if display_name:
             record["displayName"] = display_name
+            record["displayNameSource"] = "override"
         if category == "Games":
             record["game"] = game_of(r["description"])
         remark = remarks_by_id.get(r["id"])
@@ -1497,6 +1718,7 @@ def main():
                 1 for order in shopee_orders if order["category"] == "Groceries"
             ),
         },
+        "trip": trip_stats,
         "grab": {
             "receipts": len(grab_receipts),
             "webHistoryRecords": grab_history_stats["records"],
@@ -1553,6 +1775,9 @@ def main():
                 "quality": quality,
                 "foodpandaOrders": foodpanda_orders,
                 "shopeeOrders": shopee_orders,
+                # Trip.com bookings are published only on the charges they
+                # explain; the full export (traveller names included) has no
+                # reader in the dashboard and stays in manual/.
                 "grabReceipts": grab_receipts,
                 "insurance": insurance,
                 "transactions": transactions,
@@ -1588,6 +1813,11 @@ def main():
           % (len(foodpanda_orders), len(foodpanda_by_transaction)))
     print("Shopee orders %d (%d matched to statement rows)"
           % (len(shopee_orders), len(shopee_by_transaction)))
+    print("Trip.com bookings %d (%d matched to statement charges, %d of them cancelled; "
+          "%d charges ambiguous, %d unmatched; %d foreign-currency bookings)"
+          % (trip_stats["bookings"], trip_stats["matched"], trip_stats["matchedCancelled"],
+             trip_stats["ambiguousCharges"], trip_stats["unmatchedCharges"],
+             trip_stats["foreignCurrency"]))
     print("Grab receipts %d (%d matched receipts across %d statement rows; %d corporate excluded)"
           % (
               len(grab_receipts),

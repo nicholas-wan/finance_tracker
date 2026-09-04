@@ -334,7 +334,11 @@ window.Insights = (function () {
       // a free-text drill-down found only a fraction of these rows. Carry the
       // matched ids and filter on them exactly.
       byMerchant[k].ids.push(t.id);
-      if (t.displayName) countName(byMerchant[k].displayNames, t.displayName);
+      // Only a name the user typed labels the habit; a per-charge booking
+      // name from a Trip.com match would title the whole merchant after one
+      // arbitrary hotel.
+      var userName = window.FinanceGrouping.userDisplayName(t);
+      if (userName) countName(byMerchant[k].displayNames, userName);
       else countName(byMerchant[k].statementNames,
         window.FinanceGrouping.merchantDisplayName(t.description));
     });

@@ -29,6 +29,8 @@ APP_DIR = REPO_ROOT / "app"
 OWNER_PATH = REPO_ROOT / "manual" / "owner_tags.json"
 RISK_REVIEW_PATH = REPO_ROOT / "manual" / "risk_reviews.json"
 ACCOUNT_REVIEW_PATH = REPO_ROOT / "manual" / "account_reviews.json"
+CARD_FEE_REVIEW_PATH = REPO_ROOT / "manual" / "card_fee_reviews.json"
+INSURANCE_VERIFICATION_PATH = REPO_ROOT / "manual" / "insurance_verifications.json"
 REMARK_PATH = REPO_ROOT / "manual" / "transaction_remarks.json"
 OVERRIDE_PATH = REPO_ROOT / "manual" / "transaction_overrides.json"
 AUDIT_PATH = REPO_ROOT / "manual" / "audit_history.json"
@@ -142,6 +144,8 @@ def manual_file_defaults():
         OWNER_PATH: {"tags": {}, "tagsById": {}},
         RISK_REVIEW_PATH: {"recognizedSignals": []},
         ACCOUNT_REVIEW_PATH: {"recognizedSignals": []},
+        CARD_FEE_REVIEW_PATH: {"resolvedIds": []},
+        INSURANCE_VERIFICATION_PATH: {"verifiedById": {}},
         REMARK_PATH: {"remarksById": {}},
         OVERRIDE_PATH: {"overridesById": {}},
         AUDIT_PATH: {"entries": []},
@@ -786,6 +790,17 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             )
         )
         current = transactions[tx_id]
+        # A Trip.com booking name is derived on every build, not a saved edit.
+        # The drawer shows it as the placeholder, so an untouched field posts
+        # "" and must not clear anything; a user re-typing the same name has
+        # nothing to pin either. Only a different name becomes an override.
+        derived_display_name = (
+            current.get("displayName", "")
+            if current.get("displayNameSource") == "trip-booking" else ""
+        )
+        if display_name == derived_display_name:
+            display_name = ""
+        saved_display_name = "" if derived_display_name else current.get("displayName", "")
         paths = (OWNER_PATH, REMARK_PATH, OVERRIDE_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
 
@@ -834,7 +849,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
 
         changes = []
         comparisons = (
-            ("Display name", current.get("displayName", ""), display_name),
+            ("Display name", saved_display_name, display_name),
             ("Category", current.get("category", ""), category),
             ("Owner", current.get("owner", "Unassigned"), owner),
             ("Remarks", current.get("remark", ""), remark),
@@ -886,11 +901,17 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                 if owner == "Untagged"
                 else updated.get("owner") == owner
             )
+            # With no override the rebuilt row shows its derived booking name
+            # again; what must match is the override, not the label.
+            display_applied = updated is not None and (
+                updated.get("displayName", "") == display_name
+                or (not display_name and updated.get("displayNameSource") == "trip-booking")
+            )
             if (
                 not updated
                 or not owner_applied
                 or updated.get("category") != category
-                or updated.get("displayName", "") != display_name
+                or not display_applied
                 or updated.get("remark", "") != remark
             ):
                 raise RuntimeError(
@@ -925,6 +946,61 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             "validation": validation_output.splitlines()[0]
             if validation_output else "Validation completed.",
         }
+
+
+def save_card_fee_review(tx_id, resolved):
+    if not isinstance(tx_id, str) or not tx_id:
+        raise ValueError("Card fee alert requires a transaction ID.")
+    if resolved not in (True, False):
+        raise ValueError("Card fee alert resolved must be true or false.")
+    with WRITE_LOCK:
+        transaction_data = load_json(TRANSACTIONS_PATH)
+        transaction = next((row for row in transaction_data.get("transactions", [])
+                            if row.get("id") == tx_id), None)
+        if transaction is None or transaction.get("type") != "debit" or \
+                "CARD MEMBERSHIP FEE" not in str(transaction.get("description", "")).upper():
+            raise ValueError("That transaction is not a current card membership fee.")
+        review_data = load_json(CARD_FEE_REVIEW_PATH) if CARD_FEE_REVIEW_PATH.exists() \
+            else {"resolvedIds": []}
+        ids = set(review_data.get("resolvedIds", []))
+        if resolved:
+            ids.add(tx_id)
+        else:
+            ids.discard(tx_id)
+        payload = {"resolvedIds": sorted(ids)}
+        snapshot_backups((CARD_FEE_REVIEW_PATH,)) if CARD_FEE_REVIEW_PATH.exists() else None
+        CARD_FEE_REVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(CARD_FEE_REVIEW_PATH, payload)
+        return {"ok": True, "resolvedIds": payload["resolvedIds"]}
+
+
+def save_insurance_verification(policy_id, verified):
+    if not isinstance(policy_id, str) or not policy_id:
+        raise ValueError("Insurance verification requires a policy ID.")
+    if verified not in (True, False):
+        raise ValueError("Insurance verification must be true or false.")
+    with WRITE_LOCK:
+        insurance_data = load_json(REPO_ROOT / "manual" / "insurance.json")
+        policies = [policy for person in insurance_data.get("people", [])
+                    for policy in person.get("policies", [])]
+        if not any(policy.get("id") == policy_id for policy in policies):
+            raise ValueError("That insurance policy is not in the current register.")
+        review_data = load_json(INSURANCE_VERIFICATION_PATH) \
+            if INSURANCE_VERIFICATION_PATH.exists() else {"verifiedById": {}}
+        verified_by_id = dict(review_data.get("verifiedById", {}))
+        if verified:
+            verified_by_id[policy_id] = {
+                "source": "Prudential PRUServices",
+                "checkedAt": datetime.now().date().isoformat(),
+            }
+        else:
+            verified_by_id.pop(policy_id, None)
+        payload = {"verifiedById": verified_by_id}
+        if INSURANCE_VERIFICATION_PATH.exists():
+            snapshot_backups((INSURANCE_VERIFICATION_PATH,))
+        INSURANCE_VERIFICATION_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(INSURANCE_VERIFICATION_PATH, payload)
+        return {"ok": True, "verifiedById": verified_by_id}
 
 
 def save_account_review(tx_ids, reviewed, checks_by_id=None):
@@ -1182,6 +1258,24 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "recognizedSignals": recognized_signals,
             })
             return
+        if endpoint == "/api/card-fee-reviews":
+            try:
+                with WRITE_LOCK:
+                    review_data = load_json(CARD_FEE_REVIEW_PATH) if CARD_FEE_REVIEW_PATH.exists() \
+                        else {"resolvedIds": []}
+                self.send_json(200, {"ok": True, "resolvedIds": review_data.get("resolvedIds", [])})
+            except Exception as error:
+                self.send_json(500, {"ok": False, "error": "Could not read card fee alerts: %s" % error})
+            return
+        if endpoint == "/api/insurance-verifications":
+            try:
+                with WRITE_LOCK:
+                    review_data = load_json(INSURANCE_VERIFICATION_PATH) \
+                        if INSURANCE_VERIFICATION_PATH.exists() else {"verifiedById": {}}
+                self.send_json(200, {"ok": True, "verifiedById": review_data.get("verifiedById", {})})
+            except Exception as error:
+                self.send_json(500, {"ok": False, "error": "Could not read insurance verifications: %s" % error})
+            return
         if endpoint == "/api/audit-history":
             # Read under the write lock: on Windows a concurrent save's
             # os.replace onto an open audit file raises PermissionError and
@@ -1229,6 +1323,8 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             "/api/remark",
             "/api/transaction-detail",
             "/api/account-review",
+            "/api/card-fee-review",
+            "/api/insurance-verification",
         }:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint."})
             return
@@ -1267,6 +1363,14 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                     payload.get("reviewed"),
                     payload.get("checksById"),
                 )
+            elif endpoint == "/api/card-fee-review":
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                result = save_card_fee_review(payload.get("id"), payload.get("resolved"))
+            elif endpoint == "/api/insurance-verification":
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                result = save_insurance_verification(payload.get("id"), payload.get("verified"))
             else:
                 # Read under the write lock: on Windows a concurrent rebuild's
                 # os.replace onto this file raises PermissionError, which would

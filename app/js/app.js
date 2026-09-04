@@ -21,6 +21,8 @@
 
   var data = null;
   var account = { transactions: [], months: [] };
+  var cardFeeReviews = { resolvedIds: [] };
+  var insuranceVerifications = { verifiedById: {} };
   var accountReviewedSignals = {};
   // Handle returned by bindToggle, so a drill-down can reset the grouping
   // toggle's own closure state and not just the flag on `state`.
@@ -47,7 +49,10 @@
     insuranceYear: null,
     foodpandaOnly: false,
     shopeeOnly: false,
+    tripOnly: false,
     grabOnly: false,
+    // Charge/refund pairs that net to zero are folded away until asked for.
+    showReversed: false,
     range: "6",
     series: { income: true, spent: true, invested: true },
     search: "",
@@ -132,6 +137,9 @@
     return t.displayName || (t.foodpanda && t.foodpanda.merchant) ||
       (t.shopee && t.shopee.merchant) || grabTransactionName(t) || t.description;
   }
+  function isCancelledTripBooking(booking) {
+    return !!booking && String(booking.status || "").trim().toLowerCase() === "cancelled";
+  }
   function grabReceiptName(receipt) {
     if (!receipt) return "";
     if ((receipt.category === "Food & dining" || receipt.category === "Groceries") &&
@@ -162,7 +170,13 @@
     { name: "McDonald's", src: "assets/merchant-logos/mcdonalds.svg", pattern: /MCDONALD/ },
     { name: "Starbucks", src: "assets/merchant-logos/starbucks.png", pattern: /STARBUCKS/ },
     { name: "Deliveroo", src: "assets/merchant-logos/deliveroo.png", pattern: /DELIVEROO/ },
-    { name: "Trip.com", src: "assets/merchant-logos/trip.png", pattern: /TRIP\.COM/ },
+    { name: "Trip.com", src: "assets/merchant-logos/trip.png", pattern: /TRIP(?:\.COM|\s+COM)/ },
+    { name: "Klook", src: "assets/merchant-logos/klook.svg", pattern: /KLOOK/ },
+    { name: "Old Chang Kee", src: "assets/merchant-logos/old-chang-kee.svg", pattern: /OLD CHANG KEE/ },
+    { name: "SP Digital", src: "assets/merchant-logos/sp-digital.svg", pattern: /SP DIGITAL/ },
+    { name: "7-Eleven", src: "assets/merchant-logos/7-eleven.svg", pattern: /7[ -]ELEVEN/ },
+    { name: "MyRepublic", src: "assets/merchant-logos/myrepublic.svg", pattern: /MYREPUBLIC/ },
+    { name: "Ya Kun", src: "assets/merchant-logos/ya-kun.svg", pattern: /YA KUN/ },
     { name: "ShopBack", src: "assets/merchant-logos/shopback.ico", pattern: /SHOPBACK/ },
     { name: "The Coffee Bean", src: "assets/merchant-logos/coffeebean.png", pattern: /COFFEE\s+BEAN/ },
     { name: "Singapore public transport", src: "assets/merchant-logos/singapore-transit.svg", pattern: /BUS[\/\s-]*MRT/ }
@@ -215,6 +229,7 @@
       "Games": "var(--cat-games)",
       "Subscriptions": "var(--cat-subscriptions)",
       "Groceries": "var(--cat-groceries)",
+      "Pet care": "var(--cat-pets)",
       "Insurance": "var(--cat-insurance)",
       "Healthcare": "var(--cat-healthcare)",
       "Travel": "var(--cat-travel)",
@@ -339,7 +354,6 @@
     }
     renderDataQuality();
     renderLedger();
-    renderSplit();
     renderInsights();
     renderSpendingSummary();
     renderKeyMetrics();
@@ -498,6 +512,9 @@
     });
   }
   function buildOwnerPicker(ids, owner, describe) {
+    if (document.body.classList.contains("yx-single-owner")) {
+      return el("span", "owner-fixed", "Yx");
+    }
     var picker = el("div", "owner-picker");
     if (!editor.available || !ids.length) {
       picker.appendChild(el("span", "owner-tag", owner === "Untagged" ? "—" : owner));
@@ -528,6 +545,7 @@
     return picker;
   }
   function buildOwnerBulkAction(rows) {
+    if (document.body.classList.contains("yx-single-owner")) return null;
     if (!editor.available || !rows.length) return null;
     var ids = rows.slice(0, OWNER_BATCH_LIMIT).map(function (t) { return t.id; });
     var wrap = el("div", "owner-bulk");
@@ -774,7 +792,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: t.id,
-        owner: values.owner,
+        owner: document.body.classList.contains("yx-single-owner") ? "Yx" : values.owner,
         category: values.category,
         displayName: values.displayName,
         remark: values.remark
@@ -817,6 +835,12 @@
     }
     if (t.shopee) {
       summaryTags.appendChild(el("span", "source-badge shopee-source", "Shopee"));
+    }
+    if (t.tripBooking) {
+      summaryTags.appendChild(el("span", "source-badge trip-source", "Trip.com booking"));
+      if (isCancelledTripBooking(t.tripBooking)) {
+        summaryTags.appendChild(el("span", "source-badge cancelled-source", "Cancelled booking"));
+      }
     }
     if (t.grab) {
       summaryTags.appendChild(el("span", "source-badge grab-source", "Grab"));
@@ -868,6 +892,34 @@
         shopeeEvidence.appendChild(itemList);
       }
       body.appendChild(shopeeEvidence);
+    }
+    if (t.tripBooking) {
+      var booking = t.tripBooking;
+      var tripEvidence = el("section", "drawer-section trip-evidence");
+      tripEvidence.appendChild(el("h3", "", "Trip.com booking"));
+      var tripMeta = el("div", "drawer-meta");
+      tripMeta.appendChild(drawerMetaRow("Product", booking.productName || t.displayName || ""));
+      if (booking.productType) tripMeta.appendChild(drawerMetaRow("Type", booking.productType));
+      tripMeta.appendChild(drawerMetaRow("Status", booking.status || "Not recorded"));
+      tripMeta.appendChild(drawerMetaRow("Booking number", booking.bookingNo, true));
+      if (booking.bookingDate) tripMeta.appendChild(drawerMetaRow("Booked", booking.bookingDate));
+      if (booking.travelTime) {
+        tripMeta.appendChild(drawerMetaRow("Travel", booking.travelTime.replace(/\s*\n\s*/g, " → ")));
+      }
+      if (booking.traveller) tripMeta.appendChild(drawerMetaRow("Traveller", booking.traveller));
+      tripMeta.appendChild(drawerMetaRow("Booking total",
+        booking.currency === "SGD" || !booking.currency
+          ? fmt(booking.amount)
+          : booking.currency + " " + Number(booking.amount).toFixed(2)));
+      if (booking.sourceFile) tripMeta.appendChild(drawerMetaRow("Export", booking.sourceFile));
+      tripEvidence.appendChild(tripMeta);
+      tripEvidence.appendChild(el("p", "drawer-note",
+        (isCancelledTripBooking(booking)
+          ? "This booking was later cancelled. The charge itself was real; any refund is a separate credit row. "
+          : "") +
+        "Linked because this charge and this booking are the only two within a week of each other " +
+        "with exactly this SGD amount. The statement description below is unchanged."));
+      body.appendChild(tripEvidence);
     }
     if (t.grab && Array.isArray(t.grab.receipts)) {
       t.grab.receipts.forEach(function (receipt, index) {
@@ -941,13 +993,20 @@
     var displayName = document.createElement("input");
     displayName.type = "text";
     displayName.maxLength = 100;
-    displayName.value = t.displayName || "";
-    displayName.placeholder = t.description;
+    // A derived Trip.com name is shown as the placeholder, not the value: an
+    // untouched field then saves nothing, so editing a remark cannot freeze
+    // the booking name into a permanent override.
+    var derivedDisplayName = t.displayNameSource === "trip-booking" ? t.displayName : "";
+    displayName.value = derivedDisplayName ? "" : (t.displayName || "");
+    displayName.placeholder = derivedDisplayName || t.description;
     displayName.disabled = !editor.available;
     form.appendChild(drawerField(
       "Display name",
       displayName,
-      "A clearer label for the dashboard. The statement description stays unchanged."
+      derivedDisplayName
+        ? "Named from the linked Trip.com booking on every rebuild. Type a name to override it; " +
+          "leave it blank to keep following the booking."
+        : "A clearer label for the dashboard. The statement description stays unchanged."
     ));
 
     var category = document.createElement("select");
@@ -992,11 +1051,13 @@
     });
     owner.value = t.owner;
     owner.disabled = !editor.available;
-    form.appendChild(drawerField(
+    var ownerField = drawerField(
       "Owner",
       owner,
       "Current source: " + ownerSourceLabel(t.ownerSource) + "."
-    ));
+    );
+    if (document.body.classList.contains("yx-single-owner")) ownerField.classList.add("hidden");
+    form.appendChild(ownerField);
 
     var remark = document.createElement("textarea");
     remark.maxLength = 240;
@@ -1417,6 +1478,11 @@
     shopeeFilter.classList.toggle("hidden", bank);
     shopeeFilter.classList.toggle("active", state.shopeeOnly);
     setPressed(shopeeFilter, state.shopeeOnly);
+    document.getElementById("source-filter-strip").classList.toggle("hidden", bank);
+    var tripFilter = document.getElementById("trip-filter");
+    tripFilter.classList.toggle("hidden", bank);
+    tripFilter.classList.toggle("active", state.tripOnly);
+    setPressed(tripFilter, state.tripOnly);
     var grabFilter = document.getElementById("grab-filter");
     grabFilter.classList.toggle("hidden", bank);
     grabFilter.classList.toggle("active", state.grabOnly);
@@ -1483,9 +1549,11 @@
     state.search = options.search || "";
     state.foodpandaOnly = !!options.foodpandaOnly;
     state.shopeeOnly = !!options.shopeeOnly;
+    state.tripOnly = !!options.tripOnly;
     state.grabOnly = !!options.grabOnly;
     state.reviewMode = options.reviewMode || null;
     state.showExcluded = false;
+    state.showReversed = false;
     // Bank-only filters reset with everything else; a drill-down that landed
     // on the bank view used to inherit a leftover "needs review" or direction
     // filter and silently hide most of the month.
@@ -1973,7 +2041,7 @@
     }
     var categories = [
       "Food & dining", "Transport", "Shopping", "Games", "Insurance",
-      "Subscriptions", "Groceries", "Healthcare", "Travel"
+      "Subscriptions", "Groceries", "Pet care", "Healthcare", "Travel"
     ];
     var matchedCategory = null;
     for (var i = 0; i < categories.length; i += 1) {
@@ -1992,9 +2060,6 @@
     }
     if (/salary/i.test(title)) {
       return function () { setTab("income"); };
-    }
-    if (/Yx/i.test(title)) {
-      return function () { setTab("split"); };
     }
     if (/^Largest charge:/i.test(title) && item.detail) {
       var description = item.detail.split(" on ")[0];
@@ -2632,9 +2697,10 @@
     }
     var cash = Number(policy.annualCashPremium || 0);
     var cpf = Number(policy.premiums && policy.premiums.cpfAnnual || 0);
-    if (cash && cpf) return fmt(cash) + " + " + fmt(cpf) + " MediSave";
+    var cpfLabel = policy.premiumSource || "CPF / MediSave";
+    if (cash && cpf) return fmt(cash) + " + " + fmt(cpf) + " " + cpfLabel;
     if (cash) return fmt(cash);
-    if (cpf) return fmt(cpf) + " MediSave";
+    if (cpf) return fmt(cpf) + " " + cpfLabel;
     return "—";
   }
   function shortPolicyNumber(value) {
@@ -2643,8 +2709,29 @@
     return "Policy •••• " + text.slice(-4);
   }
   function policyVerification(policy) {
+    var saved = insuranceVerifications.verifiedById && insuranceVerifications.verifiedById[policy.id];
+    if (saved) return saved;
     var verification = policy && policy.verification || {};
     return verification.source && verification.checkedAt ? verification : null;
+  }
+
+  function saveInsuranceVerification(policy, verified, button) {
+    button.disabled = true;
+    fetch("api/insurance-verification", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: policy.id, verified: verified })
+    }).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok) throw new Error(payload.error || "Insurance verification failed.");
+        insuranceVerifications = payload;
+        renderInsurancePolicies();
+        showToast(verified ? "Policy marked as insurer verified." : "Verification removed.");
+      });
+    }).catch(function (error) {
+      showToast(error.message, true);
+      button.disabled = false;
+    });
   }
   function verificationTitle(policy) {
     var verification = policyVerification(policy);
@@ -2883,7 +2970,8 @@
       ["Cash without value", fmt(Number(premiums.cashWithoutValue || 0))],
       ["Annual cash premium", fmt(policy.annualCashPremium || 0)],
       ["Monthly equivalent", fmt(policy.monthlyEquivalent || 0)],
-      ["Annual CPF premium", fmt(Number(premiums.cpfAnnual || 0))],
+      ["Annual " + (policy.premiumSource || "CPF / MediSave") + " premium",
+        fmt(Number(premiums.cpfAnnual || 0))],
       ["One-off amount paid", policy.oneOffPaid ? fmt(policy.oneOffPaid) : "None"]
     ]);
     addInsuranceDetailSection(body, "Policy structure", [
@@ -3070,14 +3158,32 @@
         verifiedBadge.title = verificationTitle(policy);
         sourceLine.appendChild(verifiedBadge);
       }
+      var verificationButton = el("button", "insurance-policy-verify-button",
+        policyVerification(policy) ? "✓ Verified" : "Mark verified");
+      verificationButton.type = "button";
+      verificationButton.title = policyVerification(policy) ?
+        verificationTitle(policy) + ". Click to remove this mark." :
+        "Mark this policy as checked against the insurer portal.";
+      verificationButton.addEventListener("click", function (event) {
+        event.stopPropagation();
+        saveInsuranceVerification(policy, !policyVerification(policy), verificationButton);
+      });
+      sourceLine.appendChild(verificationButton);
       nameCell.appendChild(sourceLine);
       tr.appendChild(nameCell);
       var typeCell = el("td", "insurance-type-col");
       typeCell.appendChild(el("span", "insurance-type-pill", insuranceTypeLabel(policy.type)));
       tr.appendChild(typeCell);
-      tr.appendChild(el("td", "insurance-benefit-summary", policyBenefitSummary(policy)));
-      tr.appendChild(el("td", "insurance-money", policyCyclePremium(policy)));
-      tr.appendChild(el("td", "insurance-money insurance-annual", policyAnnualPremiumLabel(policy)));
+      // Phones lay each row out as a card and label the cells from data-label.
+      var benefitCell = el("td", "insurance-benefit-summary", policyBenefitSummary(policy));
+      benefitCell.dataset.label = "Coverage";
+      tr.appendChild(benefitCell);
+      var paymentCell = el("td", "insurance-money", policyCyclePremium(policy));
+      paymentCell.dataset.label = "Payment";
+      tr.appendChild(paymentCell);
+      var annualCell = el("td", "insurance-money insurance-annual", policyAnnualPremiumLabel(policy));
+      annualCell.dataset.label = "Per year";
+      tr.appendChild(annualCell);
       tr.appendChild(el("td", "insurance-term", policy.payableTerm || "Not stated"));
 
       var detailRow = el("tr", "insurance-policy-summary-row hidden");
@@ -3159,6 +3265,7 @@
       var frequency = String(policy.premiums && policy.premiums.frequency || "");
       return String(policy.status || "In Force") === "In Force" &&
         policyPaymentAmount(policy) > 0 && (frequency === "Monthly" || frequency === "Annual") &&
+        policy.reconcileWithImportedStatements !== false &&
         (!policy.startDate || policy.startDate <= yearEnd) &&
         (!policy.premiumEndDate || policy.premiumEndDate >= yearStart);
     }).map(function (entry) {
@@ -3771,6 +3878,76 @@
       : "You owe Yx " + fmt(Math.abs(amount));
   }
 
+  function renderCardFeeAlerts() {
+    var panel = document.getElementById("card-fee-alerts");
+    var wrap = document.getElementById("card-fee-alert-list");
+    if (!panel || !wrap) return;
+    clear(wrap);
+    var resolved = {};
+    (cardFeeReviews.resolvedIds || []).forEach(function (id) { resolved[id] = true; });
+    var feeAnchor = data.freshness && data.freshness.sourceThrough
+      ? localDate(data.freshness.sourceThrough) : new Date();
+    var feeCutoff = new Date(feeAnchor.getFullYear() - 1, feeAnchor.getMonth(), feeAnchor.getDate());
+    var allFees = data.transactions.filter(function (t) {
+      var chargeDate = t.date ? localDate(t.date) : null;
+      return t.type === "debit" && /CARD MEMBERSHIP FEE/i.test(t.description || "") &&
+        chargeDate && chargeDate >= feeCutoff && chargeDate <= feeAnchor;
+    });
+    panel.classList.toggle("hidden", !allFees.length);
+    if (!allFees.length) return;
+    allFees.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+    var fees = allFees.filter(function (fee) { return !resolved[fee.id]; });
+    panel.querySelector(".hint").textContent = fees.length
+      ? fees.length + " active fee" + (fees.length === 1 ? "" : "s")
+      : "No active fee alerts";
+    wrap.appendChild(el("p", "card-fee-alert-summary", allFees.length +
+      " card membership fee" + (allFees.length === 1 ? "" : "s") + " recorded · Last charged " +
+      dateLabel(allFees[0].date) + " (" + statementLabel(allFees[0].month) + ")"));
+    if (!fees.length) {
+      wrap.appendChild(el("p", "card-fee-alert-clear", "All recorded card fees are resolved."));
+      return;
+    }
+    fees.forEach(function (fee) {
+      var item = el("div", "card-fee-alert");
+      var copy = el("div", "card-fee-alert-copy");
+      copy.appendChild(el("strong", "", fmt(fee.amount) + " card membership fee"));
+      copy.appendChild(el("span", "", dateLabel(fee.date) + " · " + statementLabel(fee.month) +
+        " · Apply for a waiver, then resolve this alert."));
+      item.appendChild(copy);
+      var button = el("button", "quality-action", "Resolve");
+      button.disabled = !editor.available;
+      button.title = editor.available ? "Mark this fee alert resolved" : "Start the local editor to resolve alerts";
+      button.addEventListener("click", function () {
+        button.disabled = true;
+        fetch("api/card-fee-review", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: fee.id, resolved: true })
+        }).then(function (response) {
+          return response.json().then(function (payload) {
+            if (!response.ok) throw new Error(payload.error || "Could not resolve fee alert.");
+            return payload;
+          });
+        }).then(function (payload) {
+          cardFeeReviews.resolvedIds = payload.resolvedIds || cardFeeReviews.resolvedIds.concat([fee.id]);
+          renderCardFeeAlerts();
+          showToast("Card fee alert resolved.", "success");
+        }).catch(function (error) {
+          button.disabled = false;
+          showToast(error.message, "error");
+        });
+      });
+      item.appendChild(button);
+      wrap.appendChild(item);
+    });
+  }
+
+  // Yx's clone presents the settlement from her side of the balance.
+  function yxSettlementPosition(amount) {
+    return amount >= 0
+      ? "Nic owes you " + fmt(amount)
+      : "You owe Nic " + fmt(Math.abs(amount));
+  }
+
   function auditRow(operator, label, detail, amount, tone, total) {
     var row = el("div", "settlement-audit-row" + (total ? " total" : ""));
     row.appendChild(el("span", "settlement-operator", operator));
@@ -3816,14 +3993,14 @@
     var grid = el("div", "kpis");
     grid.appendChild(metric(
       opening ? "Current settlement position · " + position.scopeLabel
-        : "Yx owes you for " + state.splitYear,
+        : "Nic owes you for " + state.splitYear,
       fmt(Math.abs(netPosition)),
       opening
-        ? settlementPosition(netPosition) + " · " + position.scopeLabel
+        ? yxSettlementPosition(-netPosition) + " · " + position.scopeLabel
         : "confirmed tags: half of shared" +
           (totals.Yx > 0 ? " plus her direct charges" : "") +
           " · " + position.scopeLabel,
-      netPosition >= 0 ? "good" : "bad",
+      netPosition <= 0 ? "good" : "bad",
       "coins"
     ));
     grid.appendChild(metric("New Yx share", fmt(newYxShare),
@@ -3841,7 +4018,7 @@
       warningText.appendChild(el("strong", "", "Audit incomplete. "));
       warningText.appendChild(document.createTextNode(
         fmt(totals.Untagged) + " (" + pct.toFixed(1) +
-        "% of spending) has no owner and is excluded from the amount Yx owes."));
+        "% of spending) has no owner and is excluded from the amount Nic owes you."));
       warning.appendChild(warningText);
       var review = el("button", "link-button", "Review unassigned");
       review.addEventListener("click", function () {
@@ -3862,7 +4039,7 @@
     var auditHead = el("div", "settlement-audit-head");
     var auditTitle = el("div", "");
     auditTitle.appendChild(el("strong", "", "How this balance is calculated"));
-    auditTitle.appendChild(el("span", "", "Positive amounts below reduce what you owe."));
+    auditTitle.appendChild(el("span", "", "Positive amounts below reduce what Nic owes you."));
     auditHead.appendChild(auditTitle);
     auditHead.appendChild(el("span", "audit-check", "Balances to the cent"));
     audit.appendChild(auditHead);
@@ -3874,7 +4051,7 @@
               " closing balance, recorded from " + dateLabel(position.openingFrom + "-01")
             : "Recorded from " + dateLabel(position.openingFrom + "-01"))
         : "No opening balance recorded, so no running position is carried",
-      fmt(openingYouOwe), "settlement-payable", false
+      fmt(openingYouOwe), "settlement-receivable", false
     ));
     audit.appendChild(auditRow(
       "−", "Your credit for shared spending",
@@ -3902,7 +4079,7 @@
       fmt(receivedFromYx), "", false
     ));
     audit.appendChild(auditRow(
-      "=", settlementPosition(netPosition) + " · " + position.scopeLabel,
+      "=", yxSettlementPosition(-netPosition) + " · " + position.scopeLabel,
       "Opening − credits − payments to YX + payments from YX",
       fmt(Math.abs(netPosition)),
       netPosition >= 0 ? "settlement-receivable" : "settlement-payable",
@@ -3931,7 +4108,7 @@
       openingRow.appendChild(el("td", "num", "—"));
       openingRow.appendChild(el("td", "num", "—"));
       openingRow.appendChild(el("td", "num strong settlement-payable",
-        "You owe Yx " + fmt(openingYouOwe)));
+      yxSettlementPosition(-openingYouOwe)));
       table.appendChild(openingRow);
     }
     yearMonths.forEach(function (m) {
@@ -3942,7 +4119,7 @@
       tr.appendChild(el("td", "num", fmt(r.Shared)));
       tr.appendChild(el("td", "num", r.Yx ? fmt(r.Yx) : "—"));
       tr.appendChild(el("td", "num", r.Untagged ? fmt(r.Untagged) : "—"));
-      tr.appendChild(el("td", "num strong", fmt(r.yxShare)));
+      tr.appendChild(el("td", "num strong", fmt(-r.yxShare)));
       table.appendChild(tr);
     });
     var foot = document.createElement("tr");
@@ -3954,8 +4131,8 @@
     foot.appendChild(el("td", "num", totals.Yx ? fmt(totals.Yx) : "—"));
     foot.appendChild(el("td", "num", totals.Untagged ? fmt(totals.Untagged) : "—"));
     foot.appendChild(el("td", "num strong " +
-      (netPosition >= 0 ? "settlement-receivable" : "settlement-payable"),
-      settlementPosition(netPosition)));
+      (netPosition <= 0 ? "settlement-receivable" : "settlement-payable"),
+      yxSettlementPosition(-netPosition)));
     table.appendChild(foot);
     wrap.appendChild(table);
   }
@@ -4071,6 +4248,7 @@
     if (state.transactionSource === "card") {
       if (state.foodpandaOnly && !t.foodpanda) return false;
       if (state.shopeeOnly && !t.shopee) return false;
+      if (state.tripOnly && !t.trip) return false;
       if (state.grabOnly && !t.grab) return false;
     }
     if (!state.showExcluded && EXCLUDED[t.category]) return false;
@@ -4195,6 +4373,25 @@
   // figure from the same call: "Net cost" always drops Payment and Rebates.
   // With "show excluded" on, what those rows contribute is reported beside it
   // instead of being silently folded into a second, differently-signed "Net".
+  var ledgerReversed = { hidden: {}, pairs: [] };
+  function appendReversedToggle(foot) {
+    var count = ledgerReversed.pairs.length;
+    if (!count) return;
+    var label = count + " refunded charge" + (count === 1 ? "" : "s");
+    var toggle = el("button", "ledger-more ledger-reversed-toggle", state.showReversed
+      ? "Hide " + label
+      : "Show " + label);
+    toggle.type = "button";
+    toggle.title = state.showReversed
+      ? "Fold away charges that were refunded in full by the same merchant"
+      : "These charges were refunded in full by the same merchant, so they net to zero";
+    toggle.setAttribute("aria-pressed", state.showReversed ? "true" : "false");
+    toggle.addEventListener("click", function () {
+      state.showReversed = !state.showReversed;
+      renderLedger();
+    });
+    foot.appendChild(toggle);
+  }
   function appendLedgerNet(foot, rows) {
     var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
     var text = "Net cost " + fmt(totals.netCost);
@@ -4466,6 +4663,21 @@
       var description = el("td", "bank-counterparty", group.label);
       if (group.reviewCount) description.appendChild(el(
         "span", "risk-badge risk-medium", group.reviewCount + " review"));
+      description.appendChild(el("small", "row-remark-inline",
+        group.count + " row" + (group.count === 1 ? "" : "s")));
+      if (group.reviewCount && editor.available) {
+        // Phones hide the Transactions column, so the batch action also
+        // lives under the counterparty and shows only there.
+        var phoneBatch = el("button", "batch-review-button phone-only",
+          "Review all " + group.reviewCount);
+        phoneBatch.type = "button";
+        phoneBatch.title = "Mark every flagged row from " + group.label + " as reviewed";
+        phoneBatch.addEventListener("click", function (event) {
+          event.stopPropagation();
+          saveAccountReviewBatch(group.reviewIds.slice(), phoneBatch);
+        });
+        description.appendChild(phoneBatch);
+      }
       tr.appendChild(description);
       var flow = el("td", "col-cat");
       flow.appendChild(el("span", "cat-pill bank-flow", group.flow));
@@ -4509,7 +4721,8 @@
     var rows = filteredAccountLedger();
     renderAccountSummary(rows);
     var showYear = state.period.mode !== "month";
-    document.querySelector(".ledger").classList.add("bank-ledger");
+    ledgerTable().classList.add("bank-ledger");
+    ledgerTable().classList.toggle("grouped-ledger", !!state.groupPurchases);
     if (state.groupPurchases) {
       renderGroupedAccountLedger(body, rows, showYear);
       return;
@@ -4588,6 +4801,13 @@
     return window.FinanceGrouping.groupPurchases(rows);
   }
 
+  // The insurance tables share the .ledger class and come first in the
+  // document, so a bare querySelector(".ledger") used to style the wrong
+  // table. Resolve the transactions ledger from its body instead.
+  function ledgerTable() {
+    return document.getElementById("ledger-body").closest("table");
+  }
+
   function renderGroupedLedger(body, rows, showYear) {
     var groups = groupedPurchases(rows);
     document.getElementById("ledger-date-head").textContent = "Latest";
@@ -4610,6 +4830,9 @@
       if (group.riskCount) {
         description.appendChild(el("span", "risk-badge risk-medium", "Check"));
       }
+      var countLabel = window.FinanceGrouping.groupCountLabel(group);
+      // Phones hide the Purchases column; the count reads under the merchant.
+      description.appendChild(el("small", "row-remark-inline", countLabel));
       addMerchantLogo(description, group.label);
       tr.appendChild(description);
       var category = el("td", "col-cat");
@@ -4618,8 +4841,7 @@
       var owner = el("td", "col-owner");
       owner.appendChild(buildOwnerPicker(group.ids || [], group.owner, group.label));
       tr.appendChild(owner);
-      tr.appendChild(el("td", "col-remark grouped-count",
-        window.FinanceGrouping.groupCountLabel(group)));
+      tr.appendChild(el("td", "col-remark grouped-count", countLabel));
       tr.appendChild(el("td", "col-amt" + (group.amount < 0 ? " credit" : ""),
         fmt(group.amount)));
       body.appendChild(tr);
@@ -4638,6 +4860,7 @@
       " · " + rows.length + " transaction" + (rows.length === 1 ? "" : "s");
     if (groups.length > shown) left += " (showing " + shown + ")";
     foot.appendChild(el("span", "", left));
+    appendReversedToggle(foot);
     if (groups.length > shown) {
       var more = el("button", "ledger-more", "Load " +
         Math.min(LEDGER_CAP, groups.length - shown) + " more");
@@ -4651,6 +4874,7 @@
     document.getElementById("ledger-hint").textContent = periodLabel() +
       " · grouped by merchant" + (state.foodpandaOnly ? " · Foodpanda" : "") +
       (state.shopeeOnly ? " · Shopee" : "") +
+      (state.tripOnly ? " · Trip.com" : "") +
       (state.grabOnly ? " · Grab" : "");
   }
 
@@ -4691,10 +4915,16 @@
       renderAccountLedger(body);
       return;
     }
-    var rows = filteredLedger();
+    var allRows = filteredLedger();
+    ledgerReversed = window.FinanceGrouping.reversedPairs(allRows);
+    // The net is identical either way; hiding the pairs only removes noise.
+    var rows = state.showReversed ? allRows : allRows.filter(function (t) {
+      return !ledgerReversed.hidden[t.id];
+    });
     renderTransactionSummary(rows);
     var showYear = state.period.mode !== "month";
-    document.querySelector(".ledger").classList.remove("bank-ledger");
+    ledgerTable().classList.remove("bank-ledger");
+    ledgerTable().classList.toggle("grouped-ledger", !!state.groupPurchases);
     document.getElementById("ledger-category-head").textContent = "Category";
     document.getElementById("ledger-owner-head").textContent = "Owner";
     if (state.groupPurchases) {
@@ -4742,6 +4972,15 @@
         tdDesc.appendChild(el("span", "purchase-description-primary", shopeeItems.join(" · ")));
         var shopMeta = el("small", "purchase-description-secondary", t.shopee.merchant);
         tdDesc.appendChild(shopMeta);
+      } else if (t.tripBooking && t.displayNameSource === "trip-booking") {
+        tdDesc.className = "purchase-description";
+        tdDesc.appendChild(el("span", "purchase-description-primary", transactionName(t)));
+        var tripMetaLine = el("small", "purchase-description-secondary",
+          (t.tripBooking.productType || "Trip.com") + " · Booking matched");
+        if (isCancelledTripBooking(t.tripBooking)) {
+          tripMetaLine.appendChild(el("span", "source-badge cancelled-source", "Cancelled"));
+        }
+        tdDesc.appendChild(tripMetaLine);
       } else {
         tdDesc.appendChild(document.createTextNode(transactionName(t)));
       }
@@ -4750,6 +4989,10 @@
         : shopeeItems.length
         ? shopeeItems.join(" · ") + " · Seller: " + t.shopee.merchant +
           " · Statement: " + t.description
+        : t.tripBooking
+        ? transactionName(t) + " · Trip.com booking" +
+          (isCancelledTripBooking(t.tripBooking) ? " (cancelled)" : "") +
+          " · Statement: " + t.description
         : (t.displayName || t.foodpanda || t.shopee || t.grab)
           ? transactionName(t) + " · Statement: " + t.description
           : t.description;
@@ -4757,6 +5000,13 @@
         tdDesc.appendChild(el("span", "risk-badge risk-" + t.risk.severity,
           t.risk.severity === "high" ? "Check now" : "Check"));
       }
+      if (ledgerReversed.hidden[t.id]) {
+        tr.classList.add("reversed-row");
+        tdDesc.appendChild(el("span", "source-badge reversed-source",
+          t.type === "refund" ? "Refund of charge" : "Refunded in full"));
+      }
+      // Phones hide the Remarks column; a saved remark still shows here.
+      if (t.remark) tdDesc.appendChild(el("small", "row-remark-inline", t.remark));
       addMerchantLogo(tdDesc, t);
       tr.appendChild(tdDesc);
       var tdCat = el("td", "col-cat");
@@ -4810,6 +5060,7 @@
     var shown = Math.min(rows.length, state.ledgerLimit);
     if (rows.length > shown) left += " (showing " + shown + ")";
     foot.appendChild(el("span", "", left));
+    appendReversedToggle(foot);
     // Filter down to a review queue, then clear it in one click instead of one
     // drawer round trip per row.
     var bulk = buildOwnerBulkAction(rows);
@@ -4827,6 +5078,7 @@
     document.getElementById("ledger-hint").textContent = periodLabel() +
       (state.foodpandaOnly ? " · Foodpanda" : "") +
       (state.shopeeOnly ? " · Shopee" : "") +
+      (state.tripOnly ? " · Trip.com" : "") +
       (state.grabOnly ? " · Grab" : "") +
       (state.reviewMode === "lady-unconfirmed" ? " · Lady card needs confirmation" : "") +
       (state.reviewMode === "category-overlap" ? " · category rules overlap" : "") +
@@ -4842,6 +5094,7 @@
   function renderAll() {
     renderBankRules();
     renderFreshness();
+    renderCardFeeAlerts();
     renderKpis();
     renderDataQuality();
     renderStacked();
@@ -4856,8 +5109,6 @@
     renderLedger();
     renderIncome();
     renderInsurance();
-    renderGames();
-    renderSplit();
     var idx = data.months.indexOf(state.month);
     document.getElementById("prev-month").disabled = idx <= 0;
     document.getElementById("next-month").disabled = idx >= data.months.length - 1;
@@ -5073,35 +5324,22 @@
       state.ledgerLimit = LEDGER_CAP;
       renderLedger();
     });
-    document.getElementById("foodpanda-filter").addEventListener("click", function () {
-      state.foodpandaOnly = !state.foodpandaOnly;
-      if (state.foodpandaOnly) {
-        state.shopeeOnly = false;
-        state.grabOnly = false;
-      }
-      state.ledgerLimit = LEDGER_CAP;
-      syncTransactionSourceControls();
-      renderLedger();
-    });
-    document.getElementById("shopee-filter").addEventListener("click", function () {
-      state.shopeeOnly = !state.shopeeOnly;
-      if (state.shopeeOnly) {
-        state.foodpandaOnly = false;
-        state.grabOnly = false;
-      }
-      state.ledgerLimit = LEDGER_CAP;
-      syncTransactionSourceControls();
-      renderLedger();
-    });
-    document.getElementById("grab-filter").addEventListener("click", function () {
-      state.grabOnly = !state.grabOnly;
-      if (state.grabOnly) {
-        state.foodpandaOnly = false;
-        state.shopeeOnly = false;
-      }
-      state.ledgerLimit = LEDGER_CAP;
-      syncTransactionSourceControls();
-      renderLedger();
+    // One merchant-source pill at a time: turning one on turns the others off.
+    var SOURCE_PILLS = [
+      ["foodpanda-filter", "foodpandaOnly"],
+      ["shopee-filter", "shopeeOnly"],
+      ["trip-filter", "tripOnly"],
+      ["grab-filter", "grabOnly"]
+    ];
+    SOURCE_PILLS.forEach(function (pill) {
+      document.getElementById(pill[0]).addEventListener("click", function () {
+        var enabled = !state[pill[1]];
+        SOURCE_PILLS.forEach(function (other) { state[other[1]] = false; });
+        state[pill[1]] = enabled;
+        state.ledgerLimit = LEDGER_CAP;
+        syncTransactionSourceControls();
+        renderLedger();
+      });
     });
     document.getElementById("show-excluded").addEventListener("change", function (e) {
       state.showExcluded = e.target.checked;
@@ -5239,6 +5477,12 @@
         loadJson("api/status").catch(function () { return { editable: false }; }),
         loadJson("api/account-reviews").catch(function () {
           return { recognizedSignals: [] };
+        }),
+        loadJson("api/card-fee-reviews").catch(function () {
+          return { resolvedIds: [] };
+        }),
+        loadJson("api/insurance-verifications").catch(function () {
+          return { verifiedById: {} };
         })
       ]);
     })
@@ -5255,6 +5499,8 @@
           accountReviewedSignals[signal.id] = signal.checks.slice();
         }
       });
+      cardFeeReviews = loaded[2] || { resolvedIds: [] };
+      insuranceVerifications = loaded[3] || { verifiedById: {} };
       refreshAccountAnalysis();
     })
     .then(function () {

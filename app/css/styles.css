@@ -8,6 +8,7 @@
   --border: #e3e1d9;
   --accent: #1f67b5;
   --accent-soft: #e6f1fb;
+  --yx-header-accent: #7668c4;
   --green: #0f6e56;
   --green-soft: #e1f5ee;
   --red: #a32d2d;
@@ -46,6 +47,7 @@
   --cat-games: #d4537e;
   --cat-subscriptions: #d85a30;
   --cat-groceries: #639922;
+  --cat-pets: #9b6b4a;
   --cat-insurance: #378add;
   --cat-healthcare: #2e8b83;
   --cat-travel: #4d8ac7;
@@ -68,6 +70,7 @@
   --border: #34342f;
   --accent: #5b9de0;
   --accent-soft: #12283d;
+  --yx-header-accent: #afa9ec;
   --green: #5dcaa5;
   --green-soft: #0c2b22;
   --red: #f09595;
@@ -88,6 +91,7 @@
   --cat-games: #ed93b1;
   --cat-subscriptions: #f0997b;
   --cat-groceries: #97c459;
+  --cat-pets: #d49b72;
   --cat-insurance: #85b7eb;
   --cat-healthcare: #7cc8c1;
   --cat-travel: #6aa6df;
@@ -140,6 +144,10 @@ h2 .icon { color: var(--text-3); }
   align-items: center; gap: 16px;
 }
 .topbar-inner h1 { justify-self: start; }
+/* Yx's dashboard uses a restrained lavender accent so it is easy to
+   distinguish from Nic's blue header without changing the shared layout. */
+body.yx-single-owner .topbar { box-shadow: inset 0 2px 0 var(--yx-header-accent); }
+body.yx-single-owner .topbar-inner h1 { color: var(--yx-header-accent); }
 .month-nav { display: flex; align-items: center; gap: 6px; }
 .icon-btn {
   width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px;
@@ -307,6 +315,21 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 }
 .quality-action:hover { text-decoration: underline; }
 .quality-note { margin: 8px 2px 0; color: var(--text-3); font-size: var(--fs-caption); }
+
+.card-fee-alert-panel { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.card-fee-alert-list { display: grid; gap: 8px; }
+.card-fee-alert {
+  display: flex; justify-content: space-between; align-items: center; gap: 16px;
+  padding: 12px; border: 1px solid var(--border); border-radius: 10px;
+  background: var(--accent-soft);
+}
+.card-fee-alert-copy { display: grid; gap: 3px; min-width: 0; }
+.card-fee-alert-copy strong { color: var(--text); }
+.card-fee-alert-copy span { color: var(--text-2); font-size: var(--fs-caption); }
+.card-fee-alert-summary, .card-fee-alert-clear { margin: 0 0 8px; color: var(--text-2); font-size: var(--fs-caption); }
+.card-fee-alert-clear { color: var(--green); }
+.card-fee-alert .quality-action { flex: 0 0 auto; }
+@media (max-width: 560px) { .card-fee-alert { align-items: flex-start; flex-direction: column; gap: 8px; } }
 
 .two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
@@ -548,6 +571,17 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 
 .filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 12px; }
 .filters input[type="search"] { flex: 1; min-width: 170px; }
+/* On wide screens the strip is invisible to layout; on phones it becomes one
+   sideways-scrolling row so the filter bar stops wrapping into five lines. */
+.source-filter-strip { display: contents; }
+.row-remark-inline { display: none; }
+.phone-only { display: none !important; }
+.history-help-button {
+  display: inline-flex; align-items: center; padding: 5px 8px; border: 1px solid var(--border);
+  border-radius: 7px; color: var(--text-2); font-size: var(--fs-small); text-decoration: none;
+  white-space: nowrap;
+}
+.history-help-button:hover { border-color: var(--accent); color: var(--accent); }
 .bank-review-controls {
   flex: 1 1 100%; display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
   padding: 8px 10px; border: 1px solid var(--border); border-radius: 10px;
@@ -742,6 +776,13 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .grab-evidence { background: color-mix(in srgb, var(--green-soft) 58%, var(--surface)); }
 .grab-unreconciled-evidence { background: var(--surface-2); }
 .corporate-source { color: var(--red); background: var(--red-soft); }
+.trip-source { color: var(--cat-travel, var(--accent)); background: var(--surface-2); }
+.cancelled-source { color: var(--red); background: var(--red-soft); }
+.trip-evidence { background: var(--surface-2); }
+.reversed-source { color: var(--text-3); background: var(--surface-2); }
+.ledger tr.reversed-row td { opacity: .68; }
+.ledger-reversed-toggle[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.drawer-note { margin: .6rem 0 0; color: var(--text-3); font-size: var(--fs-micro); line-height: 1.4; }
 .purchase-description { white-space: normal !important; }
 .purchase-description-primary {
   display: -webkit-box; overflow: hidden; font-weight: 600; line-height: 1.3;
@@ -838,6 +879,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 /* One-click owner tagging in the ledger. Sized to sit inside a table row
    without changing the row height the rest of the table is built around. */
 .owner-picker { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.owner-fixed { color: var(--text-2); font-size: var(--fs-small); }
+.yx-single-owner #owner-pills { display: none; }
 .owner-chip {
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
   color: var(--text-2); padding: 2px 7px; font: inherit; font-size: var(--fs-caption);
@@ -1017,6 +1060,14 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   border-radius: 999px; background: var(--accent-soft); color: var(--accent);
   font-size: var(--fs-micro); font-weight: 700; line-height: 1.5; vertical-align: 1px;
 }
+.insurance-policy-verify-button {
+  display: inline-flex; align-items: center; margin: 3px 0 0 7px; padding: 1px 6px;
+  border: 1px solid var(--border); border-radius: 999px; background: transparent;
+  color: var(--text-2); font: inherit; font-size: var(--fs-micro); font-weight: 700;
+  line-height: 1.5; vertical-align: 1px; cursor: pointer;
+}
+.insurance-policy-verify-button:hover { border-color: var(--accent); color: var(--accent); }
+.insurance-policy-verify-button:disabled { cursor: wait; opacity: .6; }
 .insurance-type-pill {
   display: inline-flex; padding: 2px 7px; border-radius: 999px;
   background: var(--accent-soft); color: var(--accent); font-size: var(--fs-caption);
@@ -1744,7 +1795,41 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
     flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none;
   }
   .tabs::-webkit-scrollbar { display: none; }
-  .tab { flex: 0 0 auto; padding: 6px 4px; font-size: var(--fs-small); white-space: nowrap; justify-content: center; }
+  .tabs { gap: 6px; }
+  .tab { flex: 0 0 auto; padding: 7px 10px; font-size: var(--fs-small); white-space: nowrap; justify-content: center; }
+  /* Panel titles used to share a line with their controls and wrap mid-word;
+     stack them instead. */
+  .panel-head { flex-direction: column; align-items: stretch; gap: 8px; }
+  .panel-head-actions { justify-content: flex-start; flex-wrap: wrap; }
+  .insurance-verified-badge { white-space: nowrap; }
+  /* Filter bar: source pills + period on one row, search on its own, the
+     merchant/review pills in one swipeable row, then category + toggle. */
+  .filters { gap: 8px; }
+  .filters > #transaction-source-pills { flex: 1 1 auto; }
+  .filters > .period { flex: 0 0 auto; }
+  .filters > input[type="search"] { flex: 1 1 100%; min-width: 0; }
+  .source-filter-strip {
+    display: flex; flex: 1 1 100%; gap: 8px; overflow-x: auto; padding-bottom: 2px;
+    scrollbar-width: none; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  }
+  .source-filter-strip::-webkit-scrollbar { display: none; }
+  .source-filter-strip > * { flex: 0 0 auto; white-space: nowrap; }
+  .filters > #category-filter { flex: 1 1 auto; min-width: 0; }
+  /* Ledger: the fixed Remarks column left the description one letter wide.
+     Remarks stay editable in the drawer and, when present, read under the
+     description; grouped and bank ledgers still need the column. */
+  .ledger:not(.bank-ledger) .col-remark,
+  .ledger.bank-ledger.grouped-ledger .col-remark { display: none; }
+  .row-remark-inline {
+    display: block; margin-top: 2px; color: var(--text-3); font-size: var(--fs-micro);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Individual bank rows: the amount matters more than the running balance on
+     a phone; the balance stays in the drawer. Grouped bank rows keep their
+     total and fold the count under the counterparty like the card ledger. */
+  .ledger.bank-ledger:not(.grouped-ledger) .col-amt { display: none; }
+  .ledger.bank-ledger:not(.grouped-ledger) .col-remark { width: 96px; text-align: right; }
+  .ledger.bank-ledger:not(.grouped-ledger) .row-remark-inline { display: none; }
   .tab .icon { display: none; }
   main { padding: 14px 14px 40px; }
   .context-toolbar { justify-content: flex-end; }
@@ -1774,7 +1859,30 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .remark-input { padding-left: 5px; padding-right: 5px; font-size: var(--fs-caption); }
   .ledger .col-cat, .ledger .col-owner { display: none; }
   .insurance-table .insurance-type-col, .insurance-table .insurance-term { display: none; }
-  .insurance-table { min-width: 650px; }
+  /* Policy register as stacked cards: no sideways scroll, no clipped words. */
+  .insurance-table-wrap { overflow-x: visible; }
+  .insurance-table, .insurance-table tbody { display: block; min-width: 0; width: 100%; }
+  .insurance-table thead { display: none; }
+  .insurance-policy-row {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 6px 14px;
+    padding: 12px 0; border-bottom: 1px solid var(--border);
+  }
+  .insurance-policy-row td {
+    display: block; padding: 0 !important; border: 0; overflow: visible; white-space: normal;
+  }
+  .insurance-policy-row .insurance-policy-name,
+  .insurance-policy-row .insurance-benefit-summary { grid-column: 1 / -1; }
+  .insurance-policy-row .insurance-policy-name > span { white-space: normal; }
+  .insurance-policy-row .insurance-policy-verify-button { margin-left: 0; margin-top: 6px; }
+  .insurance-policy-row td[data-label]::before {
+    content: attr(data-label); display: block; margin-bottom: 1px; color: var(--text-3);
+    font-size: var(--fs-micro); font-weight: 650; letter-spacing: .06em; text-transform: uppercase;
+  }
+  .insurance-policy-summary-row, .insurance-policy-summary-row td {
+    display: block; padding-left: 0 !important; padding-right: 0 !important;
+  }
+  .phone-only { display: inline-flex !important; margin-top: 6px; }
+  .ledger.bank-ledger:not(.grouped-ledger) .phone-only { display: none !important; }
   .insurance-policy-inline-summary { grid-template-columns: 1fr; align-items: start; gap: 12px; }
   .insurance-bundle-groups { grid-template-columns: 1fr; }
   .insurance-policy-full-button { justify-self: start; }

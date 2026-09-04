@@ -892,5 +892,98 @@ class ManualInputTests(unittest.TestCase):
         self.assertIn("1 legacy owner-tag key(s) match no card row", output)
 
 
+class TripBookingLinkTests(unittest.TestCase):
+    """validate_trip re-derives the matcher's rule on the published rows."""
+
+    def booking(self, **overrides):
+        base = {
+            "bookingNo": "1234567890123", "status": "Completed", "productType": "Hotels",
+            "bookingDate": "June 12, 2026", "productName": "Example Hotel",
+            "travelTime": "June 20, 2026", "traveller": "Example Traveller",
+            "currency": "SGD", "amount": 321.45, "sourceFile": "synthetic.xlsx",
+        }
+        base.update(overrides)
+        return base
+
+    def linked_row(self, **overrides):
+        detail = self.booking()
+        row = {
+            "id": "tx_trip0000000000001", "date": "2026-06-13", "type": "debit",
+            "description": "TRIP.COM SINGAPORE", "amount": 321.45,
+            "displayName": "Example Hotel", "displayNameSource": "trip-booking",
+            "tripBooking": detail, "trip": {"status": "booking-matched"},
+        }
+        row.update(overrides)
+        return row
+
+    def check(self, row=None, manual=None, quality=None, output_extra=None):
+        row = row or self.linked_row()
+        manual = {"bookings": [self.booking()]} if manual is None else manual
+        summary = {"bookings": 1, "matched": 1, "matchedCancelled": 0}
+        if quality is not None:
+            summary.update(quality)
+        output = {"quality": {"trip": summary}}
+        output.update(output_extra or {})
+        errors = []
+        validate_data.validate_trip(manual, output, {row["id"]: row}, errors)
+        return errors
+
+    def test_a_clean_link_passes(self):
+        self.assertEqual(self.check(), [])
+
+    def test_an_absent_import_and_summary_is_silent(self):
+        errors = []
+        validate_data.validate_trip({}, {"quality": {}}, {}, errors)
+        self.assertEqual(errors, [])
+
+    def test_each_broken_rule_is_named(self):
+        cases = {
+            "refund": (self.linked_row(type="refund"), "not a Trip.com charge"),
+            "other merchant": (self.linked_row(description="SOME HOTEL"), "not a Trip.com charge"),
+            "amount": (self.linked_row(amount=321.44), "disagrees on amount"),
+            "window": (self.linked_row(date="2026-07-30"), "outside the match window"),
+            "renamed": (self.linked_row(displayName="Other"), "not the product name"),
+            "no source": (self.linked_row(displayNameSource=None), "no display-name source"),
+            "unknown": (self.linked_row(tripBooking=self.booking(bookingNo="9999999999999")),
+                        "unknown Trip.com booking"),
+            "altered": (self.linked_row(tripBooking=self.booking(status="Used")),
+                        "changed status during build"),
+            "foreign": (self.linked_row(tripBooking=self.booking(currency="CNY")),
+                        "non-SGD"),
+            "name without booking": (
+                {"id": "tx_x", "displayNameSource": "trip-booking", "displayName": "X"},
+                "claims a Trip.com name without a booking"),
+            "missing marker": (self.linked_row(trip=None), "inconsistent Trip.com marker"),
+            "wrong marker": (self.linked_row(trip={"status": "unmatched"}),
+                             "inconsistent Trip.com marker"),
+            "unmatched row without marker": (
+                {"id": "tx_y", "type": "debit", "description": "TRIP.COM SINGAPORE",
+                 "amount": 5.0},
+                "inconsistent Trip.com marker"),
+            "marker on a non-trip row": (
+                {"id": "tx_z", "type": "debit", "description": "SOME CAFE", "amount": 5.0,
+                 "trip": {"status": "unmatched"}},
+                "inconsistent Trip.com marker"),
+        }
+        for label, (row, message) in cases.items():
+            with self.subTest(label):
+                errors = self.check(row=row)
+                self.assertTrue(any(message in error for error in errors), errors)
+
+    def test_the_summary_and_the_export_are_checked(self):
+        self.assertTrue(any("summary disagrees" in e for e in self.check(quality={"matched": 0})))
+        self.assertTrue(any("miscounts cancelled" in e
+                            for e in self.check(quality={"matchedCancelled": 1})))
+        self.assertTrue(any("must not be published" in e
+                            for e in self.check(output_extra={"tripBookings": []})))
+        self.assertTrue(any("duplicate booking number" in e for e in self.check(
+            manual={"bookings": [self.booking(), self.booking()]})))
+        cancelled = self.check(
+            row=self.linked_row(tripBooking=self.booking(status="Cancelled")),
+            manual={"bookings": [self.booking(status="Cancelled")]},
+            quality={"matchedCancelled": 1})
+        self.assertEqual(cancelled, [])
+
+
 if __name__ == "__main__":
     unittest.main()

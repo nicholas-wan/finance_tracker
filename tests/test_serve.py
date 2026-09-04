@@ -787,6 +787,39 @@ class SaveWritePathTests(unittest.TestCase):
             {self.TX_ID: {"category": "Games"}},
         )
 
+    def test_a_derived_trip_name_is_not_frozen_by_an_unrelated_save(self):
+        # The drawer posts "" for an untouched booking name; the rebuilt row
+        # then shows the derived name again, which is not a failed save.
+        trip = self.row(displayName="Example Hotel", displayNameSource="trip-booking",
+                        tripBooking={"bookingNo": "1234567890123"})
+        self.write_transactions([trip])
+        self.stage_rebuild(displayName="Example Hotel", displayNameSource="trip-booking",
+                           tripBooking={"bookingNo": "1234567890123"}, remark="Weekend away")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Shopping", "", "Weekend away")
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"], {})
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        self.assertEqual([change["field"] for change in changes], ["Remarks"])
+
+    def test_retyping_the_derived_trip_name_pins_nothing(self):
+        trip = self.row(displayName="Example Hotel", displayNameSource="trip-booking")
+        self.write_transactions([trip])
+        self.stage_rebuild(displayName="Example Hotel", displayNameSource="trip-booking")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Shopping", "Example Hotel", "")
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"], {})
+
+    def test_a_different_name_over_a_trip_booking_is_an_override(self):
+        trip = self.row(displayName="Example Hotel", displayNameSource="trip-booking")
+        self.write_transactions([trip])
+        self.stage_rebuild(displayName="Anniversary stay", displayNameSource="override")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Shopping", "Anniversary stay", "")
+        self.assertEqual(
+            self.read("OVERRIDE_PATH")["overridesById"],
+            {self.TX_ID: {"displayName": "Anniversary stay"}},
+        )
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        self.assertEqual(changes, [
+            {"field": "Display name", "before": "", "after": "Anniversary stay"}])
+
     def test_saving_the_winning_category_confirms_an_overlap(self):
         overlap = self.row(
             ruleCategory="Shopping",
@@ -1297,6 +1330,8 @@ class ManualFileBootstrapTests(unittest.TestCase):
         "OWNER_PATH": ("owner_tags.json", {"tags": {}, "tagsById": {}}),
         "RISK_REVIEW_PATH": ("risk_reviews.json", {"recognizedSignals": []}),
         "ACCOUNT_REVIEW_PATH": ("account_reviews.json", {"recognizedSignals": []}),
+        "CARD_FEE_REVIEW_PATH": ("card_fee_reviews.json", {"resolvedIds": []}),
+        "INSURANCE_VERIFICATION_PATH": ("insurance_verifications.json", {"verifiedById": {}}),
         "REMARK_PATH": ("transaction_remarks.json", {"remarksById": {}}),
         "OVERRIDE_PATH": ("transaction_overrides.json", {"overridesById": {}}),
         "AUDIT_PATH": ("audit_history.json", {"entries": []}),
@@ -1315,7 +1350,15 @@ class ManualFileBootstrapTests(unittest.TestCase):
     def contents(self, filename):
         return json.loads((self.manual / filename).read_text(encoding="utf-8"))
 
-    def test_creates_exactly_the_six_server_owned_files(self):
+    def test_every_server_owned_path_is_repointed_at_the_sandbox(self):
+        # A path constant missing from EXPECTED would make ensure_manual_files
+        # write into the real manual/ of whoever runs the suite.
+        self.assertEqual(
+            sorted(getattr(serve, attribute) for attribute in self.EXPECTED),
+            sorted(serve.manual_file_defaults()),
+        )
+
+    def test_creates_exactly_the_eight_server_owned_files(self):
         created = serve.ensure_manual_files()
         expected = sorted(name for name, _ in self.EXPECTED.values())
         self.assertEqual(sorted(path.name for path in created), expected)

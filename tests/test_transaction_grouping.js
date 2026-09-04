@@ -997,6 +997,92 @@ test("a tied grouped label resolves the same way in either row order", function 
   assert.equal(grouping.groupPurchases(rows.slice().reverse())[0].label, "Alpha Mart");
 });
 
+// ---------- Reversed charge/refund pairs ----------
+
+function tripRow(id, type, amount, date, extra) {
+  return Object.assign(transaction({
+    id: id, type: type, amount: amount, date: date, month: date.slice(0, 7),
+    description: "TRIP.COM SINGAPORE", category: "Travel"
+  }), extra || {});
+}
+
+test("a charge refunded in full by the same merchant is paired and folded", function () {
+  var rows = [
+    tripRow("tx_c1", "debit", 412.55, "2026-08-08"),
+    tripRow("tx_r1", "refund", 412.55, "2026-08-08"),
+    tripRow("tx_c2", "debit", 928.65, "2026-06-28"),
+    tripRow("tx_r2", "refund", 928.65, "2026-08-08"),
+    tripRow("tx_keep", "debit", 76.23, "2026-06-27")
+  ];
+  var result = grouping.reversedPairs(rows);
+  assert.equal(result.pairs.length, 2);
+  assert.deepEqual(Object.keys(result.hidden).sort(), ["tx_c1", "tx_c2", "tx_r1", "tx_r2"]);
+  var visible = rows.filter(function (t) { return !result.hidden[t.id]; });
+  assert.deepEqual(visible.map(function (t) { return t.id; }), ["tx_keep"]);
+  // Folding the pairs never moves the net.
+  assert.equal(grouping.summarize(rows, {}).netCost, grouping.summarize(visible, {}).netCost);
+});
+
+test("a refund is paired only when its charge is unambiguous", function () {
+  // Two identical charges before one refund: either could be the refunded one.
+  var twoCharges = grouping.reversedPairs([
+    tripRow("tx_a", "debit", 150.99, "2026-06-09"),
+    tripRow("tx_b", "debit", 150.99, "2026-06-09"),
+    tripRow("tx_r", "refund", 150.99, "2026-06-20")
+  ]);
+  assert.equal(twoCharges.pairs.length, 0);
+  // A refund dated before its charge is not a reversal of it.
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_r", "refund", 50, "2026-06-01"),
+    tripRow("tx_c", "debit", 50, "2026-06-02")
+  ]).pairs.length, 0);
+  // Beyond the window, a same-priced refund is a different story.
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2025-06-01"),
+    tripRow("tx_r", "refund", 50, "2026-06-01")
+  ]).pairs.length, 0);
+  // Another merchant or another amount never pairs.
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2026-06-01", { description: "KLOOK SINGAPORE" }),
+    tripRow("tx_r", "refund", 50, "2026-06-02")
+  ]).pairs.length, 0);
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2026-06-01"),
+    tripRow("tx_r", "refund", 49.99, "2026-06-02")
+  ]).pairs.length, 0);
+  // Once a charge is claimed, a second identical refund has no candidate.
+  var oneChargeTwoRefunds = grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2026-06-01"),
+    tripRow("tx_r1", "refund", 50, "2026-06-02"),
+    tripRow("tx_r2", "refund", 50, "2026-06-03")
+  ]);
+  assert.equal(oneChargeTwoRefunds.pairs.length, 1);
+  assert.deepEqual(Object.keys(oneChargeTwoRefunds.hidden).sort(), ["tx_c", "tx_r1"]);
+});
+
+test("a Trip.com booking name labels its own charge but never the merchant group", function () {
+  var rows = [
+    transaction({ description: "TRIP.COM SINGAPORE", category: "Travel", amount: 300,
+      displayName: "Example Hotel", displayNameSource: "trip-booking",
+      tripBooking: { bookingNo: "1234567890123", status: "Completed" } }),
+    transaction({ description: "TRIP.COM SINGAPORE", category: "Travel", amount: 120,
+      date: "2026-07-02" }),
+    transaction({ description: "TRIP.COM SINGAPORE", category: "Travel", amount: 80,
+      date: "2026-07-03" })
+  ];
+  var groups = grouping.groupPurchases(rows);
+  assert.equal(groups.length, 1);
+  assert.notEqual(groups[0].label, "Example Hotel");
+  assert.equal(grouping.userDisplayName(rows[0]), "");
+  assert.equal(groups[0].label, grouping.merchantDisplayName("TRIP.COM SINGAPORE"));
+  // A name the user typed on the same merchant still wins, as before.
+  rows[1].displayName = "Trip.com hotels";
+  rows[1].displayNameSource = "override";
+  assert.equal(grouping.groupPurchases(rows)[0].label, "Trip.com hotels");
+  // Older builds carry no source marker; a bare display name is the user's.
+  assert.equal(grouping.userDisplayName({ displayName: "Mine" }), "Mine");
+});
+
 test("a name you set outranks one derived from statement text", function () {
   var rows = [
     transaction({ description: "HARBOUR DELI SINGAPORE" }),

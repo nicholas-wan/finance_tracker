@@ -43,7 +43,7 @@ FLOW_RULES = [
     # on purpose because PayNow transfers to a person called Phillip would collide.
     # A misfiled Investment row is the worst case here: it is dropped from spending
     # totals as if it were still your money, so every short token is anchored.
-    ("Investment", ["INTERACTIVE BROKERS", " IBKR ", "TIGER BROKERS", " MOOMOO ", " SAXO ",
+    ("Investment", ["INTERACTIVE BROKERS", "INTERACTIVE BR", " IBKR ", "TIGER BROKERS", " MOOMOO ", " SAXO ",
                     " ENDOWUS ", " SYFE ", "PHILLIP SECURITIES", "PHILLIP SEC"]),
     ("Retirement (SRS)", [" SRS", "-SRS"]),
     # The own fixed-deposit account numbers are private and are folded in at
@@ -51,7 +51,10 @@ FLOW_RULES = [
     ("Fixed deposit", ["FCFD", "FIXED DEPOSIT", "PRINCIPAL CREDIT"]),
     ("Credit card bill", ["UOB CARD", "CARD PAYMENT", "PAYMENT TO CARD", "IB CARD PAYMENT", "CREDIT CARD",
                           "HSBC CC", "MBK-HSBC"]),
-    ("Salary", ["SALARY", "PAYROLL", "GIRO SALARY"]),
+    # UOB account statements label Yx's main salary as "Inward CR - GIRO
+    # PAYNOW SALA ..."; keep this specific marker ahead of the generic GIRO
+    # transfer rule so ordinary GIRO credits are not reclassified.
+    ("Salary", ["SALARY", "PAYROLL", "GIRO SALARY", "INWARD CR - GIRO PAYNOW SALA"]),
     # IRAS prints as "INLAND REVENUE AUTHO..." over PayNow, which never says IRAS.
     ("Tax", ["IRAS", "INCOME TAX", "TAXS", "INLAND REVENUE"]),
     ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST", "INTEREST CREDIT"]),
