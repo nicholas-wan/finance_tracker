@@ -16,7 +16,9 @@ from datetime import date, datetime
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from build_data import (  # noqa: E402
+    SHOPEE_EXACT_MATCH_NOTE,
     is_grab_description,
+    is_shopee_description,
     merge_grab_web_history,
     prepare_insurance,
     tag_key,
@@ -254,23 +256,95 @@ def validate_shopee(manual_data, output, final_by_id, errors):
     published_by_id = {o.get("orderId"): o for o in published if isinstance(o, dict)}
     if len(source_by_id) != len(source) or set(source_by_id) != set(published_by_id):
         errors.append("published Shopee orders do not exactly match the manual import")
+    # Reviewed bundles: one statement charge paying for several orders. Each
+    # must be published exactly as recorded, with the aggregate evidence.
+    expected_aggregates = {}
+    aggregates = manual_data.get("statementAggregates", []) if isinstance(manual_data, dict) else []
+    if not isinstance(aggregates, list):
+        errors.append("manual Shopee statementAggregates must be a list")
+        aggregates = []
+    for index, aggregate in enumerate(aggregates, 1):
+        if not isinstance(aggregate, dict):
+            errors.append("Shopee statement aggregate %d must be an object" % index)
+            continue
+        transaction_id = aggregate.get("transactionId")
+        order_ids = aggregate.get("orderIds")
+        note = aggregate.get("note")
+        if (not isinstance(transaction_id, str) or not transaction_id
+                or not isinstance(order_ids, list) or len(order_ids) < 2
+                or any(not isinstance(value, str) or not value for value in order_ids)
+                or len(set(order_ids)) != len(order_ids)
+                or not isinstance(note, str) or not note.strip()):
+            errors.append("Shopee statement aggregate %d is incomplete" % index)
+            continue
+        if transaction_id in expected_aggregates:
+            errors.append("Shopee statement aggregates repeat transaction %s" % transaction_id)
+            continue
+        expected_aggregates[transaction_id] = {
+            "orderIds": order_ids,
+            "note": note.strip(),
+        }
+
     attached = {}
+    surfaced_aggregates = set()
     for tx_id, transaction in final_by_id.items():
-        detail = transaction.get("shopee")
-        if not isinstance(detail, dict):
+        primary = transaction.get("shopee")
+        plural = transaction.get("shopeeOrders")
+        if plural is not None:
+            if not isinstance(plural, list) or not plural:
+                errors.append("transaction %s has invalid Shopee order details" % tx_id)
+                details = []
+            else:
+                details = plural
+                if primary != details[0]:
+                    errors.append("transaction %s has inconsistent primary Shopee order" % tx_id)
+        else:
+            details = [primary] if isinstance(primary, dict) else []
+        if not details:
+            if transaction.get("shopeeMatch") is not None:
+                errors.append("transaction %s has Shopee match evidence without an order" % tx_id)
             continue
-        order_id = detail.get("orderId")
-        if order_id in attached:
-            errors.append("Shopee order %s is attached to more than one transaction" % order_id)
-        attached[order_id] = tx_id
-        if order_id not in published_by_id:
-            errors.append("transaction %s names unknown Shopee order %r" % (tx_id, order_id))
-            continue
-        published_order = published_by_id[order_id]
-        for field in ("merchant", "status", "amount", "items", "historyIndex"):
-            if detail.get(field) != published_order.get(field):
-                errors.append(
-                    "transaction %s Shopee detail disagrees on %s" % (tx_id, field))
+        if (not is_shopee_description(transaction.get("description", ""))
+                or transaction.get("type") != "debit"):
+            errors.append("transaction %s is not a Shopee charge but carries an order" % tx_id)
+        published_ids = []
+        total_cents = 0
+        for detail in details:
+            if not isinstance(detail, dict):
+                errors.append("transaction %s has invalid Shopee order details" % tx_id)
+                continue
+            order_id = detail.get("orderId")
+            published_ids.append(order_id)
+            if order_id in attached:
+                errors.append("Shopee order %s is attached to more than one transaction" % order_id)
+            attached[order_id] = tx_id
+            if order_id not in published_by_id:
+                errors.append("transaction %s names unknown Shopee order %r" % (tx_id, order_id))
+                continue
+            published_order = published_by_id[order_id]
+            for field in (
+                    "merchant", "status", "amount", "items", "historyIndex", "category"):
+                if detail.get(field) != published_order.get(field):
+                    errors.append(
+                        "transaction %s Shopee detail disagrees on %s" % (tx_id, field))
+            total_cents += int(round(float(detail.get("amount", 0)) * 100))
+        if total_cents != int(round(float(transaction.get("amount", 0)) * 100)):
+            errors.append("transaction %s Shopee order totals disagree with its amount" % tx_id)
+        match = transaction.get("shopeeMatch")
+        expected = expected_aggregates.get(tx_id)
+        if expected:
+            surfaced_aggregates.add(tx_id)
+            if published_ids != expected["orderIds"]:
+                errors.append("transaction %s disagrees with its Shopee aggregate" % tx_id)
+            if match != {"kind": "aggregate", "note": expected["note"]}:
+                errors.append("transaction %s has inconsistent Shopee aggregate evidence" % tx_id)
+        else:
+            if len(details) != 1:
+                errors.append("transaction %s has an unreviewed Shopee aggregate" % tx_id)
+            if match != {"kind": "exact", "note": SHOPEE_EXACT_MATCH_NOTE}:
+                errors.append("transaction %s has inconsistent Shopee exact-match evidence" % tx_id)
+    for transaction_id in set(expected_aggregates) - surfaced_aggregates:
+        errors.append("Shopee statement aggregate %s is not published" % transaction_id)
     for order_id, order in published_by_id.items():
         original = source_by_id.get(order_id)
         if not original:
@@ -281,10 +355,10 @@ def validate_shopee(manual_data, output, final_by_id, errors):
         tx_id = order.get("statementTransactionId")
         if tx_id:
             transaction = final_by_id.get(tx_id)
+            # The amount check lives in the per-transaction pass above, where
+            # a reviewed bundle's orders are summed before comparison.
             if not transaction or attached.get(order_id) != tx_id:
                 errors.append("Shopee order %s link is not reciprocal" % order_id)
-            elif transaction.get("amount") != order.get("amount"):
-                errors.append("Shopee order %s link disagrees on amount" % order_id)
         elif order_id in attached:
             errors.append("unmatched Shopee order %s is attached to a transaction" % order_id)
     summary = output.get("quality", {}).get("shopee", {})
@@ -721,6 +795,11 @@ def main():
     # and the source's credit flag. Without this a refund silently becomes a
     # debit, or a plain charge silently becomes a settled payment.
     overrides_by_id = override_data.get("overridesById", {})
+    shopee_categories_by_id = {
+        order.get("orderId"): order.get("category")
+        for order in output.get("shopeeOrders", [])
+        if isinstance(order, dict)
+    }
     for row in output.get("transactions", []):
         tx_id = row.get("id")
         category = row.get("category")
@@ -735,8 +814,7 @@ def main():
         shopee_category = (
             row.get("categorySource") == "shopee-order"
             and isinstance(row.get("shopee"), dict)
-            and category == "Groceries"
-            and row["shopee"].get("merchant", "").lower() == "shopee supermarket"
+            and category == shopee_categories_by_id.get(row["shopee"].get("orderId"))
         )
         grab_category = (
             row.get("categorySource") in (

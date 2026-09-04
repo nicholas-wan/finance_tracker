@@ -49,6 +49,8 @@
     foodpandaOnly: false,
     shopeeOnly: false,
     grabOnly: false,
+    // Charge/refund pairs that net to zero are folded away until asked for.
+    showReversed: false,
     range: "6",
     series: { income: true, spent: true, invested: true },
     search: "",
@@ -130,8 +132,47 @@
     return "cat-" + category.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
   }
   function transactionName(t) {
+    var shopeeOrders = shopeeOrdersFor(t);
     return t.displayName || (t.foodpanda && t.foodpanda.merchant) ||
-      (t.shopee && t.shopee.merchant) || grabTransactionName(t) || t.description;
+      (shopeeOrders.length > 1 ? shopeeOrders.length + " Shopee orders" :
+        (t.shopee && t.shopee.merchant)) || grabTransactionName(t) || t.description;
+  }
+  // A reviewed Shopee bundle publishes every order under shopeeOrders and the
+  // first one as the primary detail; a plain exact match has only the latter.
+  function shopeeOrdersFor(transaction) {
+    if (Array.isArray(transaction.shopeeOrders) && transaction.shopeeOrders.length) {
+      return transaction.shopeeOrders;
+    }
+    return transaction.shopee ? [transaction.shopee] : [];
+  }
+  // The ledger shows a bundled statement charge as one row per order, all on
+  // the statement date, so each purchase can be read and categorised on its
+  // own. The original charge stays attached as shopeeSplit evidence and the
+  // rows share the source transaction's ID, so remarks and owner edits still
+  // land on the one real statement row.
+  function splitShopeeLedgerRows(transactions) {
+    var rows = [];
+    transactions.forEach(function (transaction) {
+      var orders = shopeeOrdersFor(transaction);
+      if (orders.length <= 1) {
+        rows.push(transaction);
+        return;
+      }
+      orders.forEach(function (order, index) {
+        var row = Object.assign({}, transaction);
+        row.shopee = order;
+        row.shopeeOrders = null;
+        row.amount = order.amount;
+        row.category = order.category || transaction.category;
+        row.shopeeSplit = {
+          index: index,
+          count: orders.length,
+          statementAmount: transaction.amount
+        };
+        rows.push(row);
+      });
+    });
+    return rows;
   }
   function grabReceiptName(receipt) {
     if (!receipt) return "";
@@ -288,6 +329,166 @@
       }
     }
     window.requestAnimationFrame(frame);
+  }
+  // ---------- Wi-Fi sharing ----------
+  //
+  // The editable server can start a read-only copy of the dashboard on the
+  // LAN. The control lives in the header: one click shows what sharing means
+  // and asks for confirmation; once running it offers the link (already on
+  // the clipboard), a copy button, and a stop button.
+  var share = { running: false, url: null, stopsAt: null, busy: false, open: false };
+
+  function shareElements() {
+    return {
+      control: document.getElementById("share-control"),
+      button: document.getElementById("share-button"),
+      label: document.getElementById("share-label"),
+      popover: document.getElementById("share-popover")
+    };
+  }
+  function copyText(text) {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      return navigator.clipboard.writeText(text).then(function () { return true; }, function () { return false; });
+    }
+    return Promise.resolve(false);
+  }
+  function shareRequest(action) {
+    share.busy = true;
+    renderShareControl();
+    return fetch("api/share", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ action: action })
+    }).then(function (response) {
+      return response.json().catch(function () {
+        return { error: "The local server returned an unreadable response." };
+      }).then(function (payload) {
+        if (!response.ok) throw new Error(payload.error || "Sharing request failed.");
+        return payload;
+      });
+    }).then(function (payload) {
+      share.busy = false;
+      applyShareStatus(payload);
+      return payload;
+    }).catch(function (error) {
+      share.busy = false;
+      renderShareControl();
+      showToast(error.message, "error");
+      throw error;
+    });
+  }
+  function applyShareStatus(payload) {
+    share.running = !!(payload && payload.running);
+    share.url = share.running ? payload.url : null;
+    share.stopsAt = share.running ? payload.stopsAt : null;
+    renderShareControl();
+  }
+  function renderShareControl() {
+    var els = shareElements();
+    if (!els.control) return;
+    els.control.classList.toggle("hidden", !editor.available);
+    els.button.classList.toggle("sharing", share.running);
+    els.button.setAttribute("aria-expanded", share.open ? "true" : "false");
+    els.label.textContent = share.running ? "Sharing on Wi-Fi" : "Share on Wi-Fi";
+    els.popover.classList.toggle("hidden", !share.open);
+    if (!share.open) return;
+    clear(els.popover);
+    if (share.running) {
+      els.popover.appendChild(el("h3", "", "Sharing on Wi-Fi"));
+      els.popover.appendChild(el("p", "", "Anyone on this Wi-Fi can open the read-only copy at this link until you stop it."));
+      var urlRow = el("div", "share-url");
+      var urlInput = document.createElement("input");
+      urlInput.type = "text";
+      urlInput.readOnly = true;
+      urlInput.value = share.url || "";
+      urlInput.setAttribute("aria-label", "Share link");
+      urlInput.addEventListener("focus", function () { urlInput.select(); });
+      urlRow.appendChild(urlInput);
+      var copy = el("button", "link-button", "Copy");
+      copy.type = "button";
+      copy.addEventListener("click", function () {
+        copyText(share.url).then(function (ok) {
+          showToast(ok ? "Link copied." : "Copy failed; select the link and copy it by hand.", ok ? "success" : "error");
+          if (!ok) { urlInput.focus(); urlInput.select(); }
+        });
+      });
+      urlRow.appendChild(copy);
+      els.popover.appendChild(urlRow);
+      if (share.stopsAt) {
+        els.popover.appendChild(el("p", "share-status",
+          "Stops by itself at " + share.stopsAt.slice(11) + ", or when this dashboard closes."));
+      }
+      var running = el("div", "share-actions");
+      var close = el("button", "link-button", "Close");
+      close.type = "button";
+      close.addEventListener("click", function () { share.open = false; renderShareControl(); });
+      var stop = el("button", "link-button share-danger", share.busy ? "Stopping…" : "Stop sharing");
+      stop.type = "button";
+      stop.disabled = share.busy;
+      stop.addEventListener("click", function () {
+        shareRequest("stop").then(function () {
+          showToast("Sharing stopped. The link no longer works.", "success");
+        }).catch(function () {});
+      });
+      running.appendChild(close);
+      running.appendChild(stop);
+      els.popover.appendChild(running);
+      return;
+    }
+    els.popover.appendChild(el("h3", "", "Share on Wi-Fi?"));
+    els.popover.appendChild(el("p", "share-warning",
+      "This starts a read-only copy that anyone on your Wi-Fi can open, including every statement row. " +
+      "Editing stays on this computer."));
+    els.popover.appendChild(el("p", "",
+      "The link is copied to your clipboard. Sharing stops by itself after two hours, when you press Stop, " +
+      "or when this dashboard closes."));
+    var actions = el("div", "share-actions");
+    var cancel = el("button", "link-button", "Cancel");
+    cancel.type = "button";
+    cancel.addEventListener("click", function () { share.open = false; renderShareControl(); });
+    var start = el("button", "share-primary", share.busy ? "Starting…" : "Start and copy link");
+    start.type = "button";
+    start.disabled = share.busy;
+    start.addEventListener("click", function () {
+      shareRequest("start").then(function (payload) {
+        return copyText(payload.url || "").then(function (ok) {
+          showToast(ok ? "Sharing started. Link copied: " + payload.url
+            : "Sharing started at " + payload.url + " (copy it from the panel).", "success");
+        });
+      }).catch(function () {});
+    });
+    actions.appendChild(cancel);
+    actions.appendChild(start);
+    els.popover.appendChild(actions);
+  }
+  function initShareControl() {
+    var els = shareElements();
+    if (!els.control || !editor.available) return;
+    els.button.addEventListener("click", function () {
+      share.open = !share.open;
+      renderShareControl();
+      // The share may have expired or been stopped elsewhere since the last
+      // look; refresh before showing a link that might be dead.
+      if (share.open) loadJson("api/share").then(applyShareStatus).catch(function () {});
+    });
+    document.addEventListener("click", function (event) {
+      // The popover re-renders while a click inside it is still bubbling,
+      // so the clicked button may be detached by now; the composed path
+      // still records where the click began.
+      var path = event.composedPath ? event.composedPath() : [];
+      var inside = path.indexOf(els.control) !== -1 || els.control.contains(event.target);
+      if (share.open && !inside) {
+        share.open = false;
+        renderShareControl();
+      }
+    });
+    document.addEventListener("keydown", function (event) {
+      if (event.key === "Escape" && share.open) {
+        share.open = false;
+        renderShareControl();
+      }
+    });
+    loadJson("api/share").then(applyShareStatus).catch(function () { renderShareControl(); });
   }
   function showToast(message, tone) {
     var toast = document.getElementById("toast");
@@ -822,8 +1023,10 @@
     if (t.foodpanda) {
       summaryTags.appendChild(el("span", "source-badge foodpanda-source", "Foodpanda"));
     }
-    if (t.shopee) {
-      summaryTags.appendChild(el("span", "source-badge shopee-source", "Shopee"));
+    var transactionShopeeOrders = shopeeOrdersFor(t);
+    if (transactionShopeeOrders.length) {
+      summaryTags.appendChild(el("span", "source-badge shopee-source",
+        transactionShopeeOrders.length === 1 && !t.shopeeSplit ? "Shopee" : "Shopee bundle"));
     }
     if (t.grab) {
       summaryTags.appendChild(el("span", "source-badge grab-source", "Grab"));
@@ -856,23 +1059,41 @@
       orderEvidence.appendChild(orderMeta);
       body.appendChild(orderEvidence);
     }
-    if (t.shopee) {
+    if (transactionShopeeOrders.length) {
       var shopeeEvidence = el("section", "drawer-section shopee-evidence");
-      shopeeEvidence.appendChild(el("h3", "", "Shopee order"));
-      var shopeeMeta = el("div", "drawer-meta");
-      shopeeMeta.appendChild(drawerMetaRow("Seller", t.shopee.merchant));
-      shopeeMeta.appendChild(drawerMetaRow("Order number", t.shopee.orderId, true));
-      shopeeMeta.appendChild(drawerMetaRow("Status",
-        t.shopee.status.replace(/-/g, " ").replace(/^./, function (c) { return c.toUpperCase(); })));
-      shopeeMeta.appendChild(drawerMetaRow("Order total", fmt(t.shopee.amount)));
-      shopeeEvidence.appendChild(shopeeMeta);
-      if (Array.isArray(t.shopee.items) && t.shopee.items.length) {
-        shopeeEvidence.appendChild(el("h4", "drawer-subheading", "Items"));
-        var itemList = el("ul", "drawer-item-list");
-        t.shopee.items.forEach(function (item) {
-          itemList.appendChild(el("li", "", item));
-        });
-        shopeeEvidence.appendChild(itemList);
+      shopeeEvidence.appendChild(el("h3", "",
+        transactionShopeeOrders.length === 1 ? "Shopee order" : "Shopee orders"));
+      transactionShopeeOrders.forEach(function (order, index) {
+        if (transactionShopeeOrders.length > 1) {
+          shopeeEvidence.appendChild(el("h4", "drawer-subheading",
+            "Order " + (index + 1) + " of " + transactionShopeeOrders.length));
+        }
+        var shopeeMeta = el("div", "drawer-meta");
+        shopeeMeta.appendChild(drawerMetaRow("Seller", order.merchant));
+        shopeeMeta.appendChild(drawerMetaRow("Order number", order.orderId, true));
+        shopeeMeta.appendChild(drawerMetaRow("Status",
+          order.status.replace(/-/g, " ").replace(/^./, function (c) { return c.toUpperCase(); })));
+        shopeeMeta.appendChild(drawerMetaRow("Order total", fmt(order.amount)));
+        if (t.shopeeSplit) {
+          // A split ledger row: say which of the bundle's orders this is and
+          // keep the real statement charge in view as the evidence.
+          shopeeMeta.appendChild(drawerMetaRow("Bundle position",
+            "Order " + (t.shopeeSplit.index + 1) + " of " + t.shopeeSplit.count));
+          shopeeMeta.appendChild(drawerMetaRow(
+            "Combined statement charge", fmt(t.shopeeSplit.statementAmount)));
+        }
+        shopeeEvidence.appendChild(shopeeMeta);
+        if (Array.isArray(order.items) && order.items.length) {
+          shopeeEvidence.appendChild(el("h4", "drawer-subheading", "Items"));
+          var itemList = el("ul", "drawer-item-list");
+          order.items.forEach(function (item) {
+            itemList.appendChild(el("li", "", item));
+          });
+          shopeeEvidence.appendChild(itemList);
+        }
+      });
+      if (t.shopeeMatch && t.shopeeMatch.note) {
+        shopeeEvidence.appendChild(el("p", "drawer-note", t.shopeeMatch.note));
       }
       body.appendChild(shopeeEvidence);
     }
@@ -1416,16 +1637,26 @@
     );
     document.getElementById("owner-pills").classList.toggle("hidden", bank);
     document.getElementById("show-excluded-label").classList.toggle("hidden", bank);
+    // A merchant pill with nothing behind it reads as broken; show each only
+    // when the published data actually links that source.
+    var hasSource = { foodpanda: false, shopee: false, trip: false, grab: false };
+    (data && data.transactions || []).forEach(function (t) {
+      if (t.foodpanda) hasSource.foodpanda = true;
+      if (t.shopee) hasSource.shopee = true;
+      if (t.trip) hasSource.trip = true;
+      if (t.grab) hasSource.grab = true;
+    });
     var foodpandaFilter = document.getElementById("foodpanda-filter");
-    foodpandaFilter.classList.toggle("hidden", bank);
+    foodpandaFilter.classList.toggle("hidden", bank || !hasSource.foodpanda);
     foodpandaFilter.classList.toggle("active", state.foodpandaOnly);
     setPressed(foodpandaFilter, state.foodpandaOnly);
     var shopeeFilter = document.getElementById("shopee-filter");
-    shopeeFilter.classList.toggle("hidden", bank);
+    shopeeFilter.classList.toggle("hidden", bank || !hasSource.shopee);
     shopeeFilter.classList.toggle("active", state.shopeeOnly);
     setPressed(shopeeFilter, state.shopeeOnly);
+    document.getElementById("source-filter-strip").classList.toggle("hidden", bank);
     var grabFilter = document.getElementById("grab-filter");
-    grabFilter.classList.toggle("hidden", bank);
+    grabFilter.classList.toggle("hidden", bank || !hasSource.grab);
     grabFilter.classList.toggle("active", state.grabOnly);
     setPressed(grabFilter, state.grabOnly);
     document.getElementById("bank-review-controls").classList.toggle("hidden", !bank);
@@ -1493,6 +1724,7 @@
     state.grabOnly = !!options.grabOnly;
     state.reviewMode = options.reviewMode || null;
     state.showExcluded = false;
+    state.showReversed = false;
     // Bank-only filters reset with everything else; a drill-down that landed
     // on the bank view used to inherit a leftover "needs review" or direction
     // filter and silently hide most of the month.
@@ -2129,6 +2361,15 @@
     var years = data.salaryYears || [];
     var latest = steps[steps.length - 1];
     var prev = steps[steps.length - 2];
+    // The hand-kept salary sheet is optional: a clone without one shows only
+    // what the bank history supports, rather than empty panels.
+    var stepPanel = document.getElementById("salary-steps-panel");
+    var yearPanel = document.getElementById("salary-years-panel");
+    var historyGrid = document.getElementById("income-history-grid");
+    stepPanel.classList.toggle("hidden", !steps.length);
+    yearPanel.classList.toggle("hidden", !years.length);
+    historyGrid.classList.toggle("income-history-single", !years.length);
+    wrap.classList.toggle("hidden", !latest && !years.length);
 
     if (latest) {
       var note = null, tone = null;
@@ -2175,7 +2416,7 @@
       stepWrap.appendChild(row);
     });
 
-    // Annual table
+    // Annual table, most recent year first
     var yearWrap = document.getElementById("salary-years");
     clear(yearWrap);
     var table = el("table", "mini");
@@ -2185,7 +2426,7 @@
       head.appendChild(th);
     });
     table.appendChild(head);
-    years.forEach(function (y) {
+    years.slice().reverse().forEach(function (y) {
       var tr = document.createElement("tr");
       tr.appendChild(el("td", "", String(y.year)));
       tr.appendChild(el("td", "num", fmt0(y.income)));
@@ -2222,6 +2463,148 @@
       "Import the matching account statements to populate monthly income.",
       "wallet"
     ));
+
+    renderIncomeOutlook();
+  }
+
+  // The outlook is derived from salary-labelled bank credits only: recurring
+  // payroll streams set the base, and a bonus month is forecast separately
+  // only when it repeated in both of the latest complete years. Nothing here
+  // is a target; the long-range cards are growth scenarios on the current
+  // year's estimate.
+  var INCOME_GROWTH_LOW = 0.03;
+  var INCOME_GROWTH_BASE = 0.05;
+  var INCOME_GROWTH_HIGH = 0.07;
+  var INCOME_HORIZONS = [3, 5, 10];
+
+  function renderIncomeOutlook() {
+    var statsWrap = document.getElementById("income-stats");
+    var longRangeWrap = document.getElementById("income-long-range");
+    var periodNode = document.getElementById("income-outlook-period");
+    var methodologyWrap = document.getElementById("income-methodology-content");
+    clear(statsWrap);
+    clear(longRangeWrap);
+    clear(methodologyWrap);
+
+    var forecast = window.Insights.incomeForecast(account.transactions, account.months);
+    if (!forecast) {
+      periodNode.textContent = "waiting for salary credits";
+      statsWrap.appendChild(emptyState(
+        "No income forecast yet",
+        "Import salary-bearing account statements to calculate the outlook.",
+        "target"
+      ));
+      return;
+    }
+
+    periodNode.textContent = "salary credits through " + monthLabel(forecast.latestMonth);
+    statsWrap.appendChild(metric(
+      forecast.latestYear + " year to date",
+      fmt0(forecast.ytd),
+      forecast.yoy === null ? forecast.elapsedMonths + " months recorded" :
+        (forecast.yoy >= 0 ? "+" : "") + forecast.yoy.toFixed(1) +
+          "% vs same period " + (forecast.latestYear - 1),
+      null,
+      "wallet"
+    ));
+    statsWrap.appendChild(metric(
+      "Recurring monthly pay",
+      fmt0(forecast.baseMonthly),
+      forecast.baseStreams + " recurring payroll stream" +
+        (forecast.baseStreams === 1 ? "" : "s"),
+      null,
+      "calendar"
+    ));
+    statsWrap.appendChild(metric(
+      "Variable pay received",
+      fmt0(forecast.bonusReceivedYtd),
+      "YTD credits above recurring pay",
+      null,
+      "up"
+    ));
+    statsWrap.appendChild(metric(
+      forecast.latestYear + " forecast",
+      fmt0(forecast.forecastCentral),
+      fmt0(forecast.forecastFloor) + " floor" +
+        (forecast.futurePatterns.length ? " · includes repeated bonus months" : ""),
+      null,
+      "target"
+    ));
+
+    INCOME_HORIZONS.forEach(function (yearsAhead) {
+      var annualLow = forecast.forecastCentral * Math.pow(1 + INCOME_GROWTH_LOW, yearsAhead);
+      var annualBase = forecast.forecastCentral * Math.pow(1 + INCOME_GROWTH_BASE, yearsAhead);
+      var annualHigh = forecast.forecastCentral * Math.pow(1 + INCOME_GROWTH_HIGH, yearsAhead);
+      // Sum of the next N years at the midpoint growth rate.
+      var cumulative = forecast.forecastCentral * (1 + INCOME_GROWTH_BASE) *
+        (Math.pow(1 + INCOME_GROWTH_BASE, yearsAhead) - 1) / INCOME_GROWTH_BASE;
+      var card = el("div", "income-long-card");
+      var heading = el("div", "income-long-heading");
+      heading.appendChild(el("strong", "", yearsAhead + " years"));
+      heading.appendChild(el("span", "", String(forecast.latestYear + yearsAhead)));
+      card.appendChild(heading);
+      card.appendChild(el("p", "income-long-value", fmt0(annualBase) + "/year"));
+      card.appendChild(el("p", "income-long-range",
+        fmt0(annualLow) + "–" + fmt0(annualHigh).replace("S$", "") + " range"));
+      var divider = el("div", "income-long-divider");
+      divider.appendChild(el("span", "", "Total earned"));
+      divider.appendChild(el("strong", "", fmt0(cumulative)));
+      card.appendChild(divider);
+      longRangeWrap.appendChild(card);
+    });
+
+    var formula = el("div", "income-method-block");
+    formula.appendChild(el("h4", "", "Current-year calculation"));
+    formula.appendChild(el("p", "", fmt0(forecast.ytd) + " received + " +
+      forecast.remainingMonths + " remaining month" + (forecast.remainingMonths === 1 ? "" : "s") +
+      " × " + fmt0(forecast.baseMonthly) + " recurring pay + " + fmt0(forecast.expectedFutureBonus) +
+      " expected remaining bonus = " + fmt0(forecast.forecastCentral) + "."));
+    formula.appendChild(el("p", "income-method-note", "The " +
+      fmt0(forecast.forecastFloor) + " floor assumes no further variable payment. Bonuses " +
+      "already received are counted once, as actual credits, and are never spread over the " +
+      "remaining months."));
+    methodologyWrap.appendChild(formula);
+
+    var history = el("div", "income-method-block");
+    history.appendChild(el("h4", "", "What the bank history says"));
+    var bonusMonths = forecast.bonusPatterns.map(function (pattern) {
+      return MONTH_NAMES[pattern.month - 1];
+    });
+    history.appendChild(el("p", "", "Recurring pay is estimated from payroll streams present in at least " +
+      "60% of the latest 12 salary months, using the median of their latest three ordinary payments. " +
+      "A bonus month must exceed that year's ordinary-pay baseline by at least 25% in both of the " +
+      "latest complete years" +
+      (forecast.completeYears.length ? " (" + forecast.completeYears.join(" and ") + ")" : "") + "."));
+    history.appendChild(el("p", "income-method-note", bonusMonths.length
+      ? "Repeated variable-pay months detected: " + bonusMonths.join(", ") +
+        ". Only the months still ahead this year are estimated, at the median of their past uplift."
+      : forecast.completeYears.length >= 2
+        ? "No bonus month repeated strongly enough to forecast separately."
+        : "Fewer than two complete years of salary history, so no bonus month is forecast yet."));
+    methodologyWrap.appendChild(history);
+
+    var guidance = el("div", "income-method-block");
+    guidance.appendChild(el("h4", "", "Singapore public-service reference"));
+    guidance.appendChild(el("p", "", "PSD identifies separate mid-year and year-end Annual Variable " +
+      "Components, a 1-month Non-Pensionable Annual Allowance (13th month), and individual " +
+      "performance-linked pay. The tracker uses that structure, but not the published civil-service " +
+      "multiples, because agency schemes and individual awards can differ."));
+    var links = el("p", "income-method-links");
+    [
+      ["2024 mid-year", "https://www.psd.gov.sg/newsroom/civil-service-mid-year-payment-2024/"],
+      ["2024 year-end", "https://www.psd.gov.sg/newsroom/civil-service-year-end-payment-2024/"],
+      ["2025 mid-year", "https://www.psd.gov.sg/newsroom/civil-service-mid-year-payment-2025/"],
+      ["2025 year-end", "https://www.psd.gov.sg/newsroom/civil-service-year-end-payment-2025/"]
+    ].forEach(function (source, index) {
+      if (index) links.appendChild(document.createTextNode(" · "));
+      var link = el("a", "", source[0]);
+      link.href = source[1];
+      link.target = "_blank";
+      link.rel = "noopener noreferrer";
+      links.appendChild(link);
+    });
+    guidance.appendChild(links);
+    methodologyWrap.appendChild(guidance);
   }
 
   // ---------- Key spending ----------
@@ -2376,15 +2759,66 @@
       annualCashPremium: 0, annualCpfPremium: 0, monthlyEquivalent: 0
     };
   }
-  function insuranceChargeRows() {
-    var selected = selectedInsurancePeople();
+  // A policy paid by GIRO or from a bank account reconciles against the
+  // imported bank statements; everything else against the card statements.
+  // Each source has its own latest-statement cutoff, so a bank-paid premium
+  // is never called missing just because the card statement runs later.
+  function policyStatementSource(policy) {
+    var method = String(policy.paymentMethod || "").toUpperCase();
+    return (/BANK ACCOUNT|GIRO/.test(method) && method.indexOf("CREDIT CARD") === -1)
+      ? "bank" : "card";
+  }
+  function insurancePaymentRows(policyEntries) {
     var owners = {};
-    selected.forEach(function (person) { owners[person.owner || person.name] = true; });
-    return data.transactions.filter(function (t) {
-      if (t.category !== "Insurance") return false;
-      var year = (t.date || t.month).slice(0, 4);
-      if (state.insuranceYear && year !== state.insuranceYear) return false;
-      return state.insurancePerson === "all" || owners[t.owner];
+    policyEntries.forEach(function (entry) {
+      owners[entry.person.owner || entry.person.name] = true;
+    });
+    var cardRows = data.transactions.filter(function (transaction) {
+      return transaction.category === "Insurance" &&
+        (state.insurancePerson === "all" || owners[transaction.owner]);
+    }).map(function (transaction) {
+      return Object.assign({}, transaction, {
+        statementSource: "card",
+        paymentSource: "Card"
+      });
+    });
+    var bankPolicies = policyEntries.filter(function (entry) {
+      return entry.policy.reconcileWithImportedStatements !== false &&
+        policyPaymentAmount(entry.policy) > 0 &&
+        policyStatementSource(entry.policy) === "bank";
+    });
+    // Bank rows count only when exactly one bank-paid policy claims them, by
+    // policy number in the description or by insurer plus exact premium.
+    var bankRows = (account.transactions || []).map(function (transaction) {
+      var normalized = String(transaction.description || "")
+        .replace(/[^0-9A-Z]/gi, "").toUpperCase();
+      var direct = bankPolicies.filter(function (entry) {
+        var number = String(entry.policy.policyNumber || "")
+          .replace(/[^0-9A-Z]/gi, "").toUpperCase();
+        return number && !/^NODETAILS$/.test(number) && normalized.indexOf(number) !== -1;
+      });
+      var candidates = direct.length ? direct : bankPolicies.filter(function (entry) {
+        return Math.abs(policyPaymentAmount(entry.policy) - transaction.amount) < 0.01 &&
+          policyMatchesDescription(entry.policy, transaction.description);
+      });
+      if (candidates.length !== 1) return null;
+      var entry = candidates[0];
+      return Object.assign({}, transaction, {
+        type: transaction.direction === "withdrawal" ? "debit" : "refund",
+        category: "Insurance",
+        owner: entry.person.owner || entry.person.name,
+        card: "Bank account",
+        statementSource: "bank",
+        paymentSource: "Bank account",
+        matchedPolicyId: entry.policy.id
+      });
+    }).filter(Boolean);
+    return cardRows.concat(bankRows);
+  }
+  function insuranceChargeRows() {
+    return insurancePaymentRows(insurancePolicies()).filter(function (transaction) {
+      var year = (transaction.date || transaction.month).slice(0, 4);
+      return !state.insuranceYear || year === state.insuranceYear;
     });
   }
   function insuranceNet(rows) {
@@ -2395,10 +2829,13 @@
     return roundMoney(Number(premiums.cashWithValue || 0) +
       Number(premiums.cashWithoutValue || 0));
   }
-  function insuranceCutoff(year) {
-    var latestYear = data.months[data.months.length - 1].slice(0, 4);
+  function insuranceCutoff(year, source) {
+    var sourceRows = source === "bank" ? (account.transactions || []) : data.transactions;
+    var sourceMonths = source === "bank" ? (account.months || []) : data.months;
+    var latestYear = sourceMonths.length
+      ? sourceMonths[sourceMonths.length - 1].slice(0, 4) : year;
     if (year < latestYear) return year + "-12-31";
-    var dates = data.transactions.filter(function (t) {
+    var dates = sourceRows.filter(function (t) {
       return t.date && t.date.slice(0, 4) === year;
     }).map(function (t) { return t.date.slice(0, 10); }).sort();
     return dates.length ? dates[dates.length - 1] : year + "-12-31";
@@ -2446,8 +2883,8 @@
       return String(entry.policy.status || "In Force") === "In Force" &&
         policyPaymentAmount(entry.policy) > 0;
     });
-    var rows = data.transactions.filter(function (transaction) {
-      return transaction.category === "Insurance" && transaction.type === "debit";
+    var rows = insurancePaymentRows(policyEntries).filter(function (transaction) {
+      return transaction.type === "debit";
     }).sort(function (a, b) {
       return String(b.date || b.month).localeCompare(String(a.date || a.month));
     });
@@ -2455,7 +2892,8 @@
       var description = String(transaction.description || "");
       var normalizedDescription = description.replace(/[^0-9A-Z]/gi, "").toUpperCase();
       var sameOwner = active.filter(function (entry) {
-        return !entry.person.owner || entry.person.owner === transaction.owner;
+        return (!entry.person.owner || entry.person.owner === transaction.owner) &&
+          policyStatementSource(entry.policy) === transaction.statementSource;
       });
       var direct = sameOwner.filter(function (entry) {
         var number = String(entry.policy.policyNumber || "")
@@ -2484,14 +2922,17 @@
     return history;
   }
   function reconcileInsurance(rows) {
-    var cutoff = insuranceCutoff(state.insuranceYear);
     var policies = insurancePolicies().filter(function (entry) {
       return entry.policy.reconcileWithImportedStatements !== false;
     }).map(function (entry) {
+      var source = policyStatementSource(entry.policy);
+      var cutoff = insuranceCutoff(state.insuranceYear, source);
       var scheduled = scheduledPolicyPayments(entry.policy, cutoff);
       return {
         person: entry.person,
         policy: entry.policy,
+        statementSource: source,
+        cutoff: cutoff,
         scheduledCount: scheduled.count,
         scheduledAmount: scheduled.amount,
         matchedCount: 0,
@@ -2503,13 +2944,15 @@
     var unmatched = [];
     debits.forEach(function (transaction) {
       var direct = policies.filter(function (entry) {
+        if (entry.statementSource !== transaction.statementSource) return false;
         var number = String(entry.policy.policyNumber || "").replace(/[^0-9A-Z]/gi, "").toUpperCase();
         return number && !/^NODETAILS$/.test(number) &&
           String(transaction.description || "").replace(/[^0-9A-Z]/gi, "").toUpperCase()
             .indexOf(number) !== -1;
       });
       var candidates = direct.length ? direct : policies.filter(function (entry) {
-        return Math.abs(policyPaymentAmount(entry.policy) - transaction.amount) < 0.01 &&
+        return entry.statementSource === transaction.statementSource &&
+          Math.abs(policyPaymentAmount(entry.policy) - transaction.amount) < 0.01 &&
           policyMatchesDescription(entry.policy, transaction.description);
       });
       if (candidates.length === 1) {
@@ -2543,7 +2986,11 @@
     var tallies = Math.abs(actualAmount - expectedAmount) < 0.01 &&
       !unmatched.length && !missingPolicies.length;
     return {
-      cutoff: cutoff,
+      cutoff: policies.reduce(function (latest, entry) {
+        return entry.cutoff > latest ? entry.cutoff : latest;
+      }, ""),
+      cardCutoff: insuranceCutoff(state.insuranceYear, "card"),
+      bankCutoff: insuranceCutoff(state.insuranceYear, "bank"),
       expectedAmount: expectedAmount,
       expectedCount: expectedCount,
       actualAmount: actualAmount,
@@ -2596,16 +3043,21 @@
     statusLine.appendChild(el("strong", "", result.tallies ? "Tallies" : "Doesn't tally"));
     status.appendChild(statusLine);
     var difference = result.difference;
+    var usesBank = result.policies.some(function (entry) { return entry.statementSource === "bank"; });
+    var cutoffText = !usesBank || result.cardCutoff === result.bankCutoff
+      ? "through " + dateLabel(result.cutoff)
+      : "through the latest card (" + dateLabel(result.cardCutoff) + ") and bank (" +
+        dateLabel(result.bankCutoff) + ") statements";
     status.appendChild(el("p", "", result.tallies
-      ? "All charges due through " + dateLabel(result.cutoff) + " match: " +
+      ? "All payments due " + cutoffText + " match: " +
         (scheduledCadence.length ? scheduledCadence.join(" and ") : "no cash premiums due") + "."
       : fmt(Math.abs(difference)) + (difference < 0 ? " below" : " above") +
-        " the scheduled amount through " + dateLabel(result.cutoff) + "."));
+        " the scheduled amount " + cutoffText + "."));
     wrap.appendChild(status);
 
     [
       ["Scheduled cash", fmt(result.expectedAmount), compactCadence("due") || "No payments due"],
-      ["On statements", fmt(result.actualAmount), rows.length + " charges, net"],
+      ["On statements", fmt(result.actualAmount), rows.length + " payment" + (rows.length === 1 ? "" : "s") + ", net"],
       ["Matched", fmt(result.matchedAmount), compactCadence("matched") || "No scheduled payments"]
     ].forEach(function (item) {
       var metricNode = el("div", "insurance-reconciliation-metric");
@@ -3117,7 +3569,17 @@
       tr.setAttribute("aria-controls", summaryId);
       tr.setAttribute("aria-label", "Show a summary of " + policy.plan);
       var nameCell = el("td", "insurance-policy-name");
-      nameCell.appendChild(el("strong", "", policy.plan));
+      // The verification badge sits on the title line, with the same static
+      // "Verified" wording the payment list uses; the source and date stay in
+      // the tooltip. Verification is recorded in manual/insurance.json only.
+      var titleLine = el("div", "insurance-policy-title-line");
+      titleLine.appendChild(el("strong", "", policy.plan));
+      if (policyVerification(policy)) {
+        var verifiedBadge = el("span", "insurance-verified-badge", "✓ Verified");
+        verifiedBadge.title = verificationTitle(policy);
+        titleLine.appendChild(verifiedBadge);
+      }
+      nameCell.appendChild(titleLine);
       var sourceLine = el("span", "insurance-policy-source");
       var bundleComponents = insuranceBundleComponents(policy);
       var policyIdentity = entry.person.name + " · " + shortPolicyNumber(policy.policyNumber);
@@ -3134,20 +3596,21 @@
       }
       sourceLine.appendChild(document.createTextNode(policy.company + " · " + policyIdentity +
         (status === "In Force" ? "" : " · " + status)));
-      if (policyVerification(policy)) {
-        var verifiedBadge = el("span", "insurance-verified-badge",
-          /MySinglife/i.test(policy.verification.source) ? "✓ MySinglife verified" : "✓ Verified");
-        verifiedBadge.title = verificationTitle(policy);
-        sourceLine.appendChild(verifiedBadge);
-      }
       nameCell.appendChild(sourceLine);
       tr.appendChild(nameCell);
       var typeCell = el("td", "insurance-type-col");
       typeCell.appendChild(el("span", "insurance-type-pill", insuranceTypeLabel(policy.type)));
       tr.appendChild(typeCell);
-      tr.appendChild(el("td", "insurance-benefit-summary", policyBenefitSummary(policy)));
-      tr.appendChild(el("td", "insurance-money", policyCyclePremium(policy)));
-      tr.appendChild(el("td", "insurance-money insurance-annual", policyAnnualPremiumLabel(policy)));
+      // Phones lay each row out as a card and label the cells from data-label.
+      var benefitCell = el("td", "insurance-benefit-summary", policyBenefitSummary(policy));
+      benefitCell.dataset.label = "Coverage";
+      tr.appendChild(benefitCell);
+      var paymentCell = el("td", "insurance-money", policyCyclePremium(policy));
+      paymentCell.dataset.label = "Payment";
+      tr.appendChild(paymentCell);
+      var annualCell = el("td", "insurance-money insurance-annual", policyAnnualPremiumLabel(policy));
+      annualCell.dataset.label = "Per year";
+      tr.appendChild(annualCell);
       tr.appendChild(el("td", "insurance-term", policy.payableTerm || "Not stated"));
 
       var detailRow = el("tr", "insurance-policy-summary-row hidden");
@@ -3241,7 +3704,8 @@
         person: entry.person,
         scheduledCount: entry.scheduledCount,
         matchedCount: entry.matchedCount,
-        cutoff: result.cutoff,
+        cutoff: entry.cutoff,
+        statementSource: entry.statementSource,
         annualDueDate: frequency === "Annual" ? annualDueDate(entry.policy) : "",
         paymentHistory: statementHistory[entry.policy.id] || [],
         lastPayment: (statementHistory[entry.policy.id] || [])[0] || null,
@@ -3291,7 +3755,9 @@
       previous.textContent = "Last statement charge · " + fmt(transaction.amount) + " on " +
         dateLabel(transaction.date || transaction.month + "-01") +
         (evidence.amountChanged ? " · amount differs" : "");
-      previous.title = "Matched from the card statement by " + evidence.matchType + ".";
+      previous.title = "Matched from the " +
+        (transaction.statementSource === "bank" ? "bank" : "card") +
+        " statement by " + evidence.matchType + ".";
       parent.appendChild(previous);
     } else {
       parent.appendChild(el("span", "insurance-last-payment unavailable",
@@ -3419,17 +3885,40 @@
     policyCell.appendChild(el("span", "insurance-charge-expand", "›"));
     var policyCopy = el("span", "insurance-charge-policy-copy");
     policyCopy.appendChild(el("strong", "", group.label));
+    // The overview row stays one line: cadence and its state, the statement
+    // source, and the verification badge. Calendar, payment history and the
+    // statement entries live in the expandable detail row.
     var meta = el("span", "insurance-charge-meta");
     if (group.policy) {
       var frequency = String(group.policy.premiums && group.policy.premiums.frequency || "");
       var paymentState = group.scheduledCount === 0 && group.annualDueDate > group.cutoff
         ? "upcoming" : group.matchedCount >= group.scheduledCount && group.scheduledCount > 0
           ? "matched" : "missing";
-      meta.appendChild(el("small", "insurance-charge-cadence", frequency || "Unscheduled"));
-      meta.appendChild(el("small", paymentState,
-        paymentState === "matched" ? "Matched" : paymentState === "upcoming" ? "Upcoming" : "Check payment"));
+      var cadenceLabel;
+      if (frequency === "Monthly") {
+        cadenceLabel = group.scheduledCount
+          ? "Monthly · " + group.matchedCount + "/" + group.scheduledCount + " paid"
+          : "Monthly · upcoming";
+      } else if (frequency === "Annual") {
+        cadenceLabel = "Yearly · " + (paymentState === "matched" ? "paid"
+          : paymentState === "upcoming" ? "upcoming" : "missing");
+      } else {
+        cadenceLabel = "Unscheduled";
+      }
+      var cadenceBadge = el("small", "insurance-charge-cadence " + paymentState, cadenceLabel);
+      cadenceBadge.title = paymentState === "matched" ? "Every payment due so far is on a statement"
+        : paymentState === "upcoming" ? "Nothing due yet this year"
+        : "A payment due by the statement cutoff has not been found";
+      meta.appendChild(cadenceBadge);
+      var sourceBadge = el("small", "insurance-charge-source",
+        group.statementSource === "bank" ? "Bank" : "Card");
+      sourceBadge.title = group.statementSource === "bank"
+        ? "Reconciled against the imported bank statements"
+        : "Reconciled against the imported card statements";
+      meta.appendChild(sourceBadge);
       if (policyVerification(group.policy)) {
         var verificationBadge = el("small", "verified-source", "✓ Verified");
+        verificationBadge.setAttribute("aria-label", "Verified");
         verificationBadge.title = verificationTitle(group.policy);
         meta.appendChild(verificationBadge);
       }
@@ -3437,15 +3926,8 @@
       meta.appendChild(el("small", "unlinked", group.detail));
     }
     policyCopy.appendChild(meta);
-    if (group.policy && String(group.policy.premiums && group.policy.premiums.frequency) === "Monthly") {
-      appendMonthlyInsuranceTimeline(policyCopy, group);
-    } else if (group.policy && String(group.policy.premiums && group.policy.premiums.frequency) === "Annual") {
-      appendAnnualInsuranceTimeline(policyCopy, group);
-    }
-    if (group.policy) appendInsurancePaymentHistory(policyCopy, group);
     policyCell.appendChild(policyCopy);
     row.appendChild(policyCell);
-    row.appendChild(el("td", "insurance-charge-count", String(group.transactions.length)));
     row.appendChild(el("td", "insurance-charge-latest", group.latest
       ? shortDate(group.latest, false)
       : group.annualDueDate ? shortDate(group.annualDueDate, true) : "—"));
@@ -3459,8 +3941,18 @@
     var detailRow = el("tr", "insurance-charge-detail-row hidden");
     detailRow.id = id;
     var detailCell = document.createElement("td");
-    detailCell.colSpan = 4;
+    detailCell.colSpan = 3;
     var detail = el("div", "insurance-charge-detail");
+    if (group.policy) {
+      var expandedSummary = el("div", "insurance-charge-expanded-summary");
+      if (String(group.policy.premiums && group.policy.premiums.frequency) === "Monthly") {
+        appendMonthlyInsuranceTimeline(expandedSummary, group);
+      } else if (String(group.policy.premiums && group.policy.premiums.frequency) === "Annual") {
+        appendAnnualInsuranceTimeline(expandedSummary, group);
+      }
+      appendInsurancePaymentHistory(expandedSummary, group);
+      detail.appendChild(expandedSummary);
+    }
     var head = el("div", "insurance-charge-detail-head");
     head.appendChild(el("span", "", group.transactions.length + " statement entr" +
       (group.transactions.length === 1 ? "y" : "ies")));
@@ -3485,7 +3977,23 @@
         (credit ? "+" : "−") + fmt(transaction.amount)));
       item.addEventListener("click", function (event) {
         event.stopPropagation();
-        openTransactionDrawer(transaction);
+        if (transaction.statementSource === "bank") {
+          // Bank rows have no card drawer; open them in the bank ledger,
+          // narrowed to the row's month and exact description.
+          openTransactions({
+            source: "bank",
+            search: transaction.description,
+            ids: [transaction.id],
+            filterLabel: "Insurance payment",
+            period: {
+              mode: "month",
+              year: String(transaction.month || transaction.date).slice(0, 4),
+              month: String(transaction.month || transaction.date).slice(5, 7)
+            }
+          });
+        } else {
+          openTransactionDrawer(transaction);
+        }
       });
       list.appendChild(item);
     });
@@ -3513,7 +4021,7 @@
     if (hasEntries) body.appendChild(detailRow);
   }
   function renderInsuranceCharges() {
-    var all = data.transactions.filter(function (t) { return t.category === "Insurance"; });
+    var all = insurancePaymentRows(insurancePolicies());
     var years = {};
     all.forEach(function (t) { years[(t.date || t.month).slice(0, 4)] = true; });
     var yearList = Object.keys(years).sort();
@@ -3540,20 +4048,27 @@
     });
     if (!groups.length) {
       var emptyRow = document.createElement("tr");
-      var emptyCell = el("td", "empty", "No matching insurance charges in this year");
-      emptyCell.colSpan = 4;
+      var emptyCell = el("td", "empty", "No matching insurance payments in this year");
+      emptyCell.colSpan = 3;
       emptyRow.appendChild(emptyCell);
       body.appendChild(emptyRow);
     }
     document.getElementById("insurance-charge-note").textContent =
-      "Monthly calendars mark every paid instalment. Annual calendars highlight only the single payment month: green when paid, blue when upcoming and red when overdue. MediSave/CPF premiums are excluded from card reconciliation.";
-    document.getElementById("insurance-charge-note").textContent +=
-      " Policies paid from external accounts are also excluded. Future annual dates use each policy's premium anniversary. Previous-payment lines come from matched card statements.";
+      "Each row shows the policy's cadence and how much of this year is paid. Expand a policy for its " +
+      "calendar (monthly calendars mark every paid instalment; annual calendars highlight the single " +
+      "payment month: green when paid, blue when upcoming, red when overdue), its payment history and the " +
+      "statement entries behind it. Card and imported bank-account payments reconcile on their own " +
+      "statement cutoffs. MediSave/CPF premiums and policies paid from accounts that are not imported " +
+      "are excluded.";
     renderInsuranceReconciliation(rows, reconciliation);
     var foot = document.getElementById("insurance-charge-foot");
     clear(foot);
+    var verifiedGroups = groups.filter(function (group) {
+      return group.policy && Boolean(policyVerification(group.policy));
+    }).length;
     foot.appendChild(el("span", "", groups.length + " polic" +
-      (groups.length === 1 ? "y" : "ies") + " shown · " + rows.length + " posted charge" +
+      (groups.length === 1 ? "y" : "ies") + " · " + verifiedGroups + " verified · " +
+      rows.length + " posted payment" +
       (rows.length === 1 ? "" : "s")));
     foot.appendChild(el("strong", "", "Net " + fmt(insuranceNet(rows))));
   }
@@ -3587,16 +4102,20 @@
 
     var personPills = document.getElementById("insurance-person-pills");
     clear(personPills);
-    [{ id: "all", name: "All" }].concat(people).forEach(function (person) {
-      var active = person.id === state.insurancePerson;
-      var button = el("button", "pill" + (active ? " active" : ""), person.name);
-      setPressed(button, active);
-      button.addEventListener("click", function () {
-        state.insurancePerson = person.id;
-        renderInsurance();
+    // A single insured person needs no All/Name switch.
+    personPills.classList.toggle("hidden", people.length <= 1);
+    if (people.length > 1) {
+      [{ id: "all", name: "All" }].concat(people).forEach(function (person) {
+        var active = person.id === state.insurancePerson;
+        var button = el("button", "pill" + (active ? " active" : ""), person.name);
+        setPressed(button, active);
+        button.addEventListener("click", function () {
+          state.insurancePerson = person.id;
+          renderInsurance();
+        });
+        personPills.appendChild(button);
       });
-      personPills.appendChild(button);
-    });
+    }
 
     var totals = insuranceTotals();
     var kpis = document.getElementById("insurance-kpis");
@@ -4168,7 +4687,7 @@
   }
 
   function filteredLedger() {
-    return data.transactions.filter(function (t) {
+    return splitShopeeLedgerRows(data.transactions).filter(function (t) {
       return matchesLedgerFilters(t, false);
     }).sort(function (a, b) { return (b.date || b.month).localeCompare(a.date || a.month); });
   }
@@ -4265,6 +4784,25 @@
   // figure from the same call: "Net cost" always drops Payment and Rebates.
   // With "show excluded" on, what those rows contribute is reported beside it
   // instead of being silently folded into a second, differently-signed "Net".
+  var ledgerReversed = { hidden: {}, pairs: [] };
+  function appendReversedToggle(foot) {
+    var count = ledgerReversed.pairs.length;
+    if (!count) return;
+    var label = count + " refunded charge" + (count === 1 ? "" : "s");
+    var toggle = el("button", "ledger-more ledger-reversed-toggle", state.showReversed
+      ? "Hide " + label
+      : "Show " + label);
+    toggle.type = "button";
+    toggle.title = state.showReversed
+      ? "Fold away charges that were refunded in full by the same merchant"
+      : "These charges were refunded in full by the same merchant, so they net to zero";
+    toggle.setAttribute("aria-pressed", state.showReversed ? "true" : "false");
+    toggle.addEventListener("click", function () {
+      state.showReversed = !state.showReversed;
+      renderLedger();
+    });
+    foot.appendChild(toggle);
+  }
   function appendLedgerNet(foot, rows) {
     var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
     var text = "Net cost " + fmt(totals.netCost);
@@ -4536,6 +5074,21 @@
       var description = el("td", "bank-counterparty", group.label);
       if (group.reviewCount) description.appendChild(el(
         "span", "risk-badge risk-medium", group.reviewCount + " review"));
+      description.appendChild(el("small", "row-remark-inline",
+        group.count + " row" + (group.count === 1 ? "" : "s")));
+      if (group.reviewCount && editor.available) {
+        // Phones hide the Transactions column, so the batch action also
+        // lives under the counterparty and shows only there.
+        var phoneBatch = el("button", "batch-review-button phone-only",
+          "Review all " + group.reviewCount);
+        phoneBatch.type = "button";
+        phoneBatch.title = "Mark every flagged row from " + group.label + " as reviewed";
+        phoneBatch.addEventListener("click", function (event) {
+          event.stopPropagation();
+          saveAccountReviewBatch(group.reviewIds.slice(), phoneBatch);
+        });
+        description.appendChild(phoneBatch);
+      }
       tr.appendChild(description);
       var flow = el("td", "col-cat");
       flow.appendChild(el("span", "cat-pill bank-flow", group.flow));
@@ -4579,7 +5132,8 @@
     var rows = filteredAccountLedger();
     renderAccountSummary(rows);
     var showYear = state.period.mode !== "month";
-    document.querySelector(".ledger").classList.add("bank-ledger");
+    ledgerTable().classList.add("bank-ledger");
+    ledgerTable().classList.toggle("grouped-ledger", !!state.groupPurchases);
     if (state.groupPurchases) {
       renderGroupedAccountLedger(body, rows, showYear);
       return;
@@ -4658,6 +5212,13 @@
     return window.FinanceGrouping.groupPurchases(rows);
   }
 
+  // The insurance tables share the .ledger class and come first in the
+  // document, so a bare querySelector(".ledger") used to style the wrong
+  // table. Resolve the transactions ledger from its body instead.
+  function ledgerTable() {
+    return document.getElementById("ledger-body").closest("table");
+  }
+
   function renderGroupedLedger(body, rows, showYear) {
     var groups = groupedPurchases(rows);
     document.getElementById("ledger-date-head").textContent = "Latest";
@@ -4688,8 +5249,10 @@
       var owner = el("td", "col-owner");
       owner.appendChild(buildOwnerPicker(group.ids || [], group.owner, group.label));
       tr.appendChild(owner);
-      tr.appendChild(el("td", "col-remark grouped-count",
-        window.FinanceGrouping.groupCountLabel(group)));
+      var countLabel = window.FinanceGrouping.groupCountLabel(group);
+      // Phones hide the Purchases column; the count reads under the merchant.
+      description.appendChild(el("small", "row-remark-inline", countLabel));
+      tr.appendChild(el("td", "col-remark grouped-count", countLabel));
       tr.appendChild(el("td", "col-amt" + (group.amount < 0 ? " credit" : ""),
         fmt(group.amount)));
       body.appendChild(tr);
@@ -4708,6 +5271,7 @@
       " · " + rows.length + " transaction" + (rows.length === 1 ? "" : "s");
     if (groups.length > shown) left += " (showing " + shown + ")";
     foot.appendChild(el("span", "", left));
+    appendReversedToggle(foot);
     if (groups.length > shown) {
       var more = el("button", "ledger-more", "Load " +
         Math.min(LEDGER_CAP, groups.length - shown) + " more");
@@ -4761,10 +5325,16 @@
       renderAccountLedger(body);
       return;
     }
-    var rows = filteredLedger();
+    var allRows = filteredLedger();
+    ledgerReversed = window.FinanceGrouping.reversedPairs(allRows);
+    // The net is identical either way; hiding the pairs only removes noise.
+    var rows = state.showReversed ? allRows : allRows.filter(function (t) {
+      return !ledgerReversed.hidden[t.id];
+    });
     renderTransactionSummary(rows);
     var showYear = state.period.mode !== "month";
-    document.querySelector(".ledger").classList.remove("bank-ledger");
+    ledgerTable().classList.remove("bank-ledger");
+    ledgerTable().classList.toggle("grouped-ledger", !!state.groupPurchases);
     document.getElementById("ledger-category-head").textContent = "Category";
     document.getElementById("ledger-owner-head").textContent = "Owner";
     if (state.groupPurchases) {
@@ -4783,8 +5353,20 @@
       var d = t.date ? t.date.slice(8, 10) + " " + MONTH_NAMES[parseInt(t.date.slice(5, 7), 10) - 1] : "—";
       if (showYear && t.date) d += " " + t.date.slice(2, 4);
       tr.appendChild(el("td", "col-date", d));
-      var shopeeItems = t.shopee && Array.isArray(t.shopee.items)
-        ? t.shopee.items.filter(Boolean) : [];
+      var rowShopeeOrders = shopeeOrdersFor(t);
+      var shopeeItems = [];
+      rowShopeeOrders.forEach(function (order) {
+        if (Array.isArray(order.items)) {
+          order.items.filter(Boolean).forEach(function (item) {
+            if (shopeeItems.indexOf(item) === -1) shopeeItems.push(item);
+          });
+        }
+      });
+      var shopeeSellers = rowShopeeOrders.map(function (order) {
+        return order.merchant;
+      }).filter(function (merchant, index, merchants) {
+        return merchant && merchants.indexOf(merchant) === index;
+      });
       var grabReceipts = t.grab && Array.isArray(t.grab.receipts) ? t.grab.receipts : [];
       var grabName = grabTransactionName(t);
       var tdDesc = document.createElement("td");
@@ -4807,18 +5389,29 @@
         tdDesc.appendChild(el("span", "purchase-description-primary", transactionName(t)));
         tdDesc.appendChild(el("small", "purchase-description-secondary",
           "Wallet funding · unreconciled"));
-      } else if (shopeeItems.length && !t.displayName) {
+      } else if (rowShopeeOrders.length && !t.displayName) {
         tdDesc.className = "purchase-description";
-        tdDesc.appendChild(el("span", "purchase-description-primary", shopeeItems.join(" · ")));
-        var shopMeta = el("small", "purchase-description-secondary", t.shopee.merchant);
+        tdDesc.appendChild(el("span", "purchase-description-primary",
+          shopeeItems.length ? shopeeItems.join(" · ") :
+            (rowShopeeOrders.length > 1 ? rowShopeeOrders.length + " Shopee orders" :
+              rowShopeeOrders[0].merchant)));
+        var shopMeta = el("small", "purchase-description-secondary", shopeeSellers.join(" · "));
+        if (t.shopeeSplit) {
+          // One of several orders paid by a single statement charge.
+          shopMeta.appendChild(el("span", "source-badge shopee-source",
+            "Bundle " + (t.shopeeSplit.index + 1) + "/" + t.shopeeSplit.count +
+            " · charge " + fmt(t.shopeeSplit.statementAmount)));
+        }
         tdDesc.appendChild(shopMeta);
       } else {
         tdDesc.appendChild(document.createTextNode(transactionName(t)));
       }
       tdDesc.title = grabReceipts.length
         ? grabName + " · Grab receipt · Statement: " + t.description
-        : shopeeItems.length
-        ? shopeeItems.join(" · ") + " · Seller: " + t.shopee.merchant +
+        : rowShopeeOrders.length
+        ? (shopeeItems.length ? shopeeItems.join(" · ") : transactionName(t)) +
+          " · Seller: " + shopeeSellers.join(" · ") +
+          (t.shopeeSplit ? " · Combined statement charge " + fmt(t.shopeeSplit.statementAmount) : "") +
           " · Statement: " + t.description
         : (t.displayName || t.foodpanda || t.shopee || t.grab)
           ? transactionName(t) + " · Statement: " + t.description
@@ -4827,6 +5420,13 @@
         tdDesc.appendChild(el("span", "risk-badge risk-" + t.risk.severity,
           t.risk.severity === "high" ? "Check now" : "Check"));
       }
+      if (ledgerReversed.hidden[t.id]) {
+        tr.classList.add("reversed-row");
+        tdDesc.appendChild(el("span", "source-badge reversed-source",
+          t.type === "refund" ? "Refund of charge" : "Refunded in full"));
+      }
+      // Phones hide the Remarks column; a saved remark still shows here.
+      if (t.remark) tdDesc.appendChild(el("small", "row-remark-inline", t.remark));
       addMerchantLogo(tdDesc, t);
       tr.appendChild(tdDesc);
       var tdCat = el("td", "col-cat");
@@ -4880,6 +5480,7 @@
     var shown = Math.min(rows.length, state.ledgerLimit);
     if (rows.length > shown) left += " (showing " + shown + ")";
     foot.appendChild(el("span", "", left));
+    appendReversedToggle(foot);
     // Filter down to a review queue, then clear it in one click instead of one
     // drawer round trip per row.
     var bulk = buildOwnerBulkAction(rows);
@@ -5144,35 +5745,21 @@
       state.ledgerLimit = LEDGER_CAP;
       renderLedger();
     });
-    document.getElementById("foodpanda-filter").addEventListener("click", function () {
-      state.foodpandaOnly = !state.foodpandaOnly;
-      if (state.foodpandaOnly) {
-        state.shopeeOnly = false;
-        state.grabOnly = false;
-      }
-      state.ledgerLimit = LEDGER_CAP;
-      syncTransactionSourceControls();
-      renderLedger();
-    });
-    document.getElementById("shopee-filter").addEventListener("click", function () {
-      state.shopeeOnly = !state.shopeeOnly;
-      if (state.shopeeOnly) {
-        state.foodpandaOnly = false;
-        state.grabOnly = false;
-      }
-      state.ledgerLimit = LEDGER_CAP;
-      syncTransactionSourceControls();
-      renderLedger();
-    });
-    document.getElementById("grab-filter").addEventListener("click", function () {
-      state.grabOnly = !state.grabOnly;
-      if (state.grabOnly) {
-        state.foodpandaOnly = false;
-        state.shopeeOnly = false;
-      }
-      state.ledgerLimit = LEDGER_CAP;
-      syncTransactionSourceControls();
-      renderLedger();
+    // One merchant-source pill at a time: turning one on turns the others off.
+    var SOURCE_PILLS = [
+      ["foodpanda-filter", "foodpandaOnly"],
+      ["shopee-filter", "shopeeOnly"],
+      ["grab-filter", "grabOnly"]
+    ];
+    SOURCE_PILLS.forEach(function (pill) {
+      document.getElementById(pill[0]).addEventListener("click", function () {
+        var enabled = !state[pill[1]];
+        SOURCE_PILLS.forEach(function (other) { state[other[1]] = false; });
+        state[pill[1]] = enabled;
+        state.ledgerLimit = LEDGER_CAP;
+        syncTransactionSourceControls();
+        renderLedger();
+      });
     });
     document.getElementById("show-excluded").addEventListener("change", function (e) {
       state.showExcluded = e.target.checked;
@@ -5278,6 +5865,8 @@
     });
     document.addEventListener("keydown", function (e) {
       if (e.key === "Escape") {
+        // The share popover has its own Escape; leave the drawer behind it alone.
+        if (share.open) return;
         closePeriod();
         closeTransactionDrawer();
         closeAuditHistory();
@@ -5331,6 +5920,7 @@
       });
       cardFeeReviews = loaded[2] || { resolvedIds: [] };
       refreshAccountAnalysis();
+      initShareControl();
     })
     .then(function () {
       state.month = data.months[data.months.length - 1];

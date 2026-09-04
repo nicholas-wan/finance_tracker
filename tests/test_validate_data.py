@@ -892,5 +892,103 @@ class ManualInputTests(unittest.TestCase):
         self.assertIn("1 legacy owner-tag key(s) match no card row", output)
 
 
+class ShopeeOrderLinkTests(unittest.TestCase):
+    """validate_shopee re-derives exact and reviewed-aggregate links."""
+
+    def source_orders(self):
+        return [
+            {"orderId": "242058592217954", "merchant": "First Store",
+             "status": "completed", "amount": 10.25, "items": ["First item"],
+             "historyIndex": 0},
+            {"orderId": "242058592217955", "merchant": "Second Store",
+             "status": "completed", "amount": 8.65, "items": ["Second item"],
+             "historyIndex": 1},
+        ]
+
+    def published(self, orders, tx_id):
+        return [dict(order, category="Shopping", statementTransactionId=tx_id,
+                     date="2026-08-24") for order in orders]
+
+    def details(self, published):
+        return [{key: order[key] for key in (
+            "orderId", "merchant", "status", "amount", "items", "historyIndex", "category"
+        )} for order in published]
+
+    def test_reviewed_aggregate_passes_and_covers_each_order(self):
+        source_orders = self.source_orders()
+        note = "Two adjacent orders add exactly to the statement charge."
+        manual = {
+            "orders": source_orders,
+            "statementAggregates": [{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [order["orderId"] for order in source_orders],
+                "note": note,
+            }],
+        }
+        published = self.published(source_orders, "tx_shopee000000000001")
+        details = self.details(published)
+        row = {
+            "id": "tx_shopee000000000001", "date": "2026-08-24",
+            "description": "SHOPEE SG MP SINGAPORE", "type": "debit", "amount": 18.90,
+            "shopee": details[0], "shopeeOrders": details,
+            "shopeeMatch": {"kind": "aggregate", "note": note},
+        }
+        output = {
+            "shopeeOrders": published,
+            "quality": {"shopee": {
+                "orders": 2, "matched": 2, "unmatched": 0, "groceries": 0,
+            }},
+        }
+        errors = []
+        validate_data.validate_shopee(manual, output, {row["id"]: row}, errors)
+        self.assertEqual(errors, [])
+
+    def test_an_unreviewed_bundle_is_reported(self):
+        source_orders = self.source_orders()
+        manual = {"orders": source_orders}
+        published = self.published(source_orders, "tx_shopee000000000001")
+        details = self.details(published)
+        row = {
+            "id": "tx_shopee000000000001", "date": "2026-08-24",
+            "description": "SHOPEE SG MP SINGAPORE", "type": "debit", "amount": 18.90,
+            "shopee": details[0], "shopeeOrders": details,
+            "shopeeMatch": {"kind": "aggregate", "note": "Not in the manual file."},
+        }
+        output = {
+            "shopeeOrders": published,
+            "quality": {"shopee": {
+                "orders": 2, "matched": 2, "unmatched": 0, "groceries": 0,
+            }},
+        }
+        errors = []
+        validate_data.validate_shopee(manual, output, {row["id"]: row}, errors)
+        self.assertTrue(any("unreviewed Shopee aggregate" in error for error in errors))
+
+    def test_an_exact_link_needs_its_evidence_note(self):
+        source_orders = self.source_orders()[:1]
+        manual = {"orders": source_orders}
+        published = self.published(source_orders, "tx_shopee000000000001")
+        details = self.details(published)
+        row = {
+            "id": "tx_shopee000000000001", "date": "2026-08-24",
+            "description": "SHOPEE SG MP SINGAPORE", "type": "debit", "amount": 10.25,
+            "shopee": details[0],
+            "shopeeMatch": {"kind": "exact", "note": validate_data.SHOPEE_EXACT_MATCH_NOTE},
+        }
+        output = {
+            "shopeeOrders": published,
+            "quality": {"shopee": {
+                "orders": 1, "matched": 1, "unmatched": 0, "groceries": 0,
+            }},
+        }
+        errors = []
+        validate_data.validate_shopee(manual, output, {row["id"]: row}, errors)
+        self.assertEqual(errors, [])
+        row["shopeeMatch"] = None
+        errors = []
+        validate_data.validate_shopee(manual, output, {row["id"]: row}, errors)
+        self.assertTrue(any("exact-match evidence" in error for error in errors))
+
+
 if __name__ == "__main__":
     unittest.main()

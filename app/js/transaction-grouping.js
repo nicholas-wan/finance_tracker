@@ -421,6 +421,50 @@
     return parts.join(" · ");
   }
 
+  // A charge and a later refund from the same merchant for the same cents
+  // net to nothing and say nothing about spending; the ledger folds them
+  // away by default. "Guaranteed" is taken literally: a refund is paired
+  // only when exactly one unpaired charge of that merchant and amount sits
+  // on or before it inside the window. Two identical charges before one
+  // refund, or a refund that precedes its charge, stay visible.
+  var REVERSAL_WINDOW_DAYS = 180;
+
+  function daysBetween(earlier, later) {
+    return Math.round((Date.parse(later + "T00:00:00Z") - Date.parse(earlier + "T00:00:00Z")) / 86400000);
+  }
+
+  function reversedPairs(rows) {
+    var byKey = {};
+    rows.forEach(function (transaction) {
+      if (transaction.type !== "debit" && transaction.type !== "refund") return;
+      if (!transaction.id || !transaction.date) return;
+      var key = (transaction.merchantKey || merchantKey(transaction.description)) + "|" +
+        Math.round(Math.abs(transaction.amount) * 100);
+      (byKey[key] = byKey[key] || []).push(transaction);
+    });
+    var hidden = {};
+    var pairs = [];
+    Object.keys(byKey).forEach(function (key) {
+      var byDate = function (a, b) { return a.date.localeCompare(b.date) || a.id.localeCompare(b.id); };
+      var charges = byKey[key].filter(function (t) { return t.type === "debit"; }).sort(byDate);
+      var refunds = byKey[key].filter(function (t) { return t.type === "refund"; }).sort(byDate);
+      if (!charges.length || !refunds.length) return;
+      var used = {};
+      refunds.forEach(function (refund) {
+        var candidates = charges.filter(function (charge) {
+          return !used[charge.id] && charge.date <= refund.date &&
+            daysBetween(charge.date, refund.date) <= REVERSAL_WINDOW_DAYS;
+        });
+        if (candidates.length !== 1) return;
+        used[candidates[0].id] = true;
+        hidden[candidates[0].id] = true;
+        hidden[refund.id] = true;
+        pairs.push({ chargeId: candidates[0].id, refundId: refund.id, amount: refund.amount });
+      });
+    });
+    return { hidden: hidden, pairs: pairs };
+  }
+
   function groupPurchases(rows) {
     var groups = {};
     var displayNames = {};
@@ -835,6 +879,7 @@
     merchantKey: merchantKey,
     monthLabel: monthLabel,
     settlementPosition: settlementPosition,
+    reversedPairs: reversedPairs,
     summarize: summarize,
     summarizeAccount: summarizeAccount
   };

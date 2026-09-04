@@ -6,9 +6,13 @@ and rebuilds the previous state.
 """
 
 import argparse
+import atexit
+import hmac
 import json
 import os
+import secrets
 import shutil
+import socket
 import subprocess
 import sys
 import tempfile
@@ -17,9 +21,10 @@ import time
 import uuid
 from datetime import datetime
 from http import HTTPStatus
+from http.cookies import SimpleCookie
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 from file_lock import FinanceWriteLock
 
@@ -1210,6 +1215,9 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "recognizedSignals": recognized_signals,
             })
             return
+        if endpoint == "/api/share":
+            self.send_json(200, dict(share_status(), ok=True))
+            return
         if endpoint == "/api/card-fee-reviews":
             try:
                 with WRITE_LOCK:
@@ -1267,6 +1275,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             "/api/transaction-detail",
             "/api/account-review",
             "/api/card-fee-review",
+            "/api/share",
         }:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint."})
             return
@@ -1309,6 +1318,16 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object.")
                 result = save_card_fee_review(payload.get("id"), payload.get("resolved"))
+            elif endpoint == "/api/share":
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                action = payload.get("action")
+                if action == "start":
+                    result = dict(start_share(), ok=True)
+                elif action == "stop":
+                    result = dict(stop_share(), ok=True)
+                else:
+                    raise ValueError("Share action must be start or stop.")
             else:
                 # Read under the write lock: on Windows a concurrent rebuild's
                 # os.replace onto this file raises PermissionError, which would
@@ -1415,6 +1434,10 @@ class DashboardLifecycle:
             return len(self.clients)
 
     def _should_shutdown(self):
+        # A running Wi-Fi share keeps the server up for its guests even after the
+        # owner closes their own tab; the share's own timer bounds that.
+        if share_running():
+            return False
         now = time.monotonic()
         with self.lock:
             stale = [client_id for client_id, seen in self.clients.items()
@@ -1436,12 +1459,255 @@ class DashboardLifecycle:
                 return
 
 
+# ---------- Wi-Fi sharing ----------
+#
+# "Share on Wi-Fi" opens a second, read-only view of the dashboard on every
+# network interface so a phone on the same network can read it. It runs as a
+# thread inside this process, so it can never outlive the dashboard, it never
+# lists directories, it answers no write, and every request must carry the
+# random code from the link (as a query parameter on the first visit, then as
+# a cookie). It stops after SHARE_MAX_MINUTES, on Stop, or with this server.
+# Only the local dashboard can start or stop it, through the same origin
+# checks as every other write.
+SHARE_PORT_OFFSET = 1000
+SHARE_MAX_MINUTES = 120
+SHARE_PORT = 3402 + SHARE_PORT_OFFSET
+SHARE_COOKIE = "finance_share"
+SHARE_LOCK = threading.Lock()
+share_state = {"server": None, "thread": None, "port": None, "url": None, "token": None,
+               "startedAt": None, "stopsAt": None, "timer": None, "generation": 0}
+
+# What the shared copy answers for the dashboard's start-up API calls, so a
+# guest's page settles into read-only mode without a single failed request.
+SHARE_READ_ONLY_API = {
+    "/api/status": {"ok": True, "editable": False, "shared": True},
+    "/api/account-reviews": {"ok": True, "recognizedSignals": []},
+    "/api/card-fee-reviews": {"ok": True, "resolvedIds": []},
+    "/api/insurance-verifications": {"ok": True, "verifiedById": {}},
+    "/api/audit-history": {"ok": True, "entries": []},
+}
+
+
+def lan_address():
+    """The IPv4 address other devices on this network reach this machine by.
+
+    Connecting a UDP socket sends nothing; it only makes the OS pick the
+    outbound interface. Falls back to the hostname's address.
+    """
+    address = None
+    probe = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        probe.connect(("192.0.2.1", 9))
+        address = probe.getsockname()[0]
+    except OSError:
+        address = None
+    finally:
+        probe.close()
+    if not address or address.startswith("127."):
+        try:
+            address = socket.gethostbyname(socket.gethostname())
+        except OSError:
+            address = None
+    if not address or address.startswith("127."):
+        return None
+    return address
+
+
+class ShareHandler(SimpleHTTPRequestHandler):
+    """Read-only, code-gated copy of app/ for other devices on the network."""
+
+    _set_cookie = False
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, directory=str(APP_DIR), **kwargs)
+
+    def log_message(self, *args):
+        # Guests' paths and addresses do not belong in the dashboard console.
+        pass
+
+    def send_json(self, status, payload):
+        body = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def end_headers(self):
+        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("Referrer-Policy", "same-origin")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'none'")
+        if self._set_cookie:
+            self.send_header("Set-Cookie", "%s=%s; Path=/; HttpOnly; SameSite=Lax"
+                             % (SHARE_COOKIE, self.server.share_token))
+        super().end_headers()
+
+    def authorised(self):
+        token = self.server.share_token
+        query = parse_qs(urlparse(self.path).query)
+        offered = query.get("k", [""])[0]
+        if offered and hmac.compare_digest(offered, token):
+            self._set_cookie = True
+            return True
+        jar = SimpleCookie()
+        try:
+            jar.load(self.headers.get("Cookie", ""))
+        except Exception:
+            return False
+        morsel = jar.get(SHARE_COOKIE)
+        return morsel is not None and hmac.compare_digest(morsel.value, token)
+
+    def refuse(self):
+        self.send_json(403, {"ok": False, "error": "This link only works with the code from the dashboard."})
+
+    def list_directory(self, path):
+        self.send_json(404, {"ok": False, "error": "Not found."})
+        return None
+
+    def do_GET(self):
+        if not self.authorised():
+            self.refuse()
+            return
+        path = urlparse(self.path).path
+        if path in SHARE_READ_ONLY_API:
+            self.send_json(200, SHARE_READ_ONLY_API[path])
+            return
+        if path.startswith("/api/"):
+            self.send_json(404, {"ok": False, "error": "Not available on the shared copy."})
+            return
+        super().do_GET()
+
+    def do_HEAD(self):
+        if not self.authorised():
+            self.refuse()
+            return
+        super().do_HEAD()
+
+    def do_POST(self):
+        path = urlparse(self.path).path
+        if path in ("/api/client-heartbeat", "/api/client-disconnect"):
+            # The page pings these every few seconds; answer quietly so a
+            # guest's console stays clean. Nothing is recorded.
+            self.send_response(204)
+            self.end_headers()
+            return
+        if not self.authorised():
+            self.refuse()
+            return
+        self.send_json(405, {"ok": False, "error": "The shared copy is read-only."})
+
+
+class ShareServer(ThreadingHTTPServer):
+    daemon_threads = True
+    # A clash must fail loudly rather than quietly share a port with a
+    # leftover server.
+    allow_reuse_address = False
+
+
+def share_running():
+    with SHARE_LOCK:
+        return share_state["server"] is not None
+
+
+def share_status_locked():
+    running = share_state["server"] is not None
+    return {
+        "running": running,
+        "url": share_state["url"] if running else None,
+        "port": share_state["port"] if running else None,
+        "startedAt": share_state["startedAt"] if running else None,
+        "stopsAt": share_state["stopsAt"] if running else None,
+        "maxMinutes": SHARE_MAX_MINUTES,
+    }
+
+
+def share_status():
+    with SHARE_LOCK:
+        return share_status_locked()
+
+
+def _stop_share_locked():
+    server = share_state["server"]
+    thread = share_state["thread"]
+    timer = share_state["timer"]
+    if timer is not None:
+        timer.cancel()
+    if server is not None:
+        server.shutdown()
+        server.server_close()
+    if thread is not None:
+        thread.join(timeout=3)
+    share_state.update({"server": None, "thread": None, "port": None, "url": None,
+                        "token": None, "startedAt": None, "stopsAt": None, "timer": None})
+
+
+def _expire_share(generation):
+    # A timer from an earlier share must not stop a later one.
+    with SHARE_LOCK:
+        if share_state["generation"] != generation or share_state["server"] is None:
+            return
+        _stop_share_locked()
+
+
+def start_share(port=None):
+    port = SHARE_PORT if port is None else port
+    with SHARE_LOCK:
+        if share_state["server"] is not None:
+            return share_status_locked()
+        address = lan_address()
+        if not address:
+            raise ValueError("Could not work out this computer's Wi-Fi address.")
+        token = secrets.token_urlsafe(9)
+        try:
+            server = ShareServer(("0.0.0.0", port), ShareHandler)
+        except OSError as error:
+            raise RuntimeError(
+                "Port %d is already in use, so the share could not start (%s). "
+                "Close whatever is using it or start this dashboard with --share-port."
+                % (port, error.strerror or error))
+        server.share_token = token
+        bound_port = server.server_address[1]
+        thread = threading.Thread(target=server.serve_forever, name="wifi-share", daemon=True)
+        thread.start()
+        share_state["generation"] += 1
+        timer = threading.Timer(SHARE_MAX_MINUTES * 60, _expire_share,
+                                args=(share_state["generation"],))
+        timer.daemon = True
+        timer.start()
+        started = time.time()
+        share_state.update({
+            "server": server, "thread": thread, "port": bound_port, "token": token,
+            "url": "http://%s:%d/?k=%s" % (address, bound_port, token),
+            "startedAt": datetime.fromtimestamp(started).strftime("%Y-%m-%d %H:%M"),
+            "stopsAt": datetime.fromtimestamp(
+                started + SHARE_MAX_MINUTES * 60).strftime("%Y-%m-%d %H:%M"),
+            "timer": timer,
+        })
+        return share_status_locked()
+
+
+def stop_share():
+    with SHARE_LOCK:
+        _stop_share_locked()
+        return share_status_locked()
+
+
+atexit.register(stop_share)
+
+
 def main():
+    global SHARE_PORT
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=3402)
     parser.add_argument("--auto-stop", action="store_true",
                         help="stop after the last dashboard tab closes")
+    parser.add_argument("--share-port", type=int, default=None,
+                        help="port for the read-only Wi-Fi share (default: port + %d)"
+                        % SHARE_PORT_OFFSET)
     args = parser.parse_args()
+    SHARE_PORT = args.share_port if args.share_port is not None else args.port + SHARE_PORT_OFFSET
     # A fresh clone has no manual/ at all; seed the files this server writes
     # before any request can read one that is not there.
     for created in ensure_manual_files():

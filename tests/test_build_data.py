@@ -195,12 +195,14 @@ class FoodpandaOrderTests(unittest.TestCase):
 
 
 class ShopeeOrderTests(unittest.TestCase):
-    def source(self, orders):
-        return {
+    def source(self, orders, **overrides):
+        source = {
             "statementFrom": "2026-02-01",
             "statementThrough": "2026-09-30",
             "orders": orders,
         }
+        source.update(overrides)
+        return source
 
     def order(self, order_id="242058592217954", amount=18.90):
         return {"orderId": order_id, "merchant": "Example Store",
@@ -227,6 +229,71 @@ class ShopeeOrderTests(unittest.TestCase):
             self.source([self.order()]), rows)
         self.assertNotIn("statementTransactionId", orders[0])
         self.assertEqual(matches, {})
+
+    def test_orders_beyond_the_history_cutoff_never_link(self):
+        # An older order priced exactly like a statement charge must not be
+        # linked by coincidence once it sits outside the statement window.
+        older = self.order("242058592217955", amount=18.90)
+        older["historyIndex"] = 7
+        source = self.source([older], statementOrderMaxHistoryIndex=5)
+        orders, matches = build_data.prepare_shopee_orders(source, [self.card()])
+        self.assertNotIn("statementTransactionId", orders[0])
+        self.assertEqual(matches, {})
+
+    def test_reviewed_aggregate_links_multiple_orders_to_one_charge(self):
+        first = self.order(amount=10.25)
+        second = self.order("242058592217955", amount=8.65)
+        second["historyIndex"] = 1
+        source = self.source(
+            [first, second],
+            statementAggregates=[{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [first["orderId"], second["orderId"]],
+                "note": "Two adjacent orders add exactly to the statement charge.",
+            }],
+        )
+        orders, matches = build_data.prepare_shopee_orders(source, [self.card()])
+        self.assertEqual(
+            [order["statementTransactionId"] for order in orders],
+            ["tx_shopee000000000001", "tx_shopee000000000001"],
+        )
+        self.assertEqual([order["date"] for order in orders], ["2026-08-24"] * 2)
+        self.assertEqual(matches["tx_shopee000000000001"]["kind"], "aggregate")
+        self.assertEqual(
+            [order["orderId"] for order in matches["tx_shopee000000000001"]["orders"]],
+            [first["orderId"], second["orderId"]],
+        )
+
+    def test_reviewed_aggregate_must_equal_the_statement_charge(self):
+        first = self.order(amount=10.00)
+        second = self.order("242058592217955", amount=8.00)
+        second["historyIndex"] = 1
+        source = self.source(
+            [first, second],
+            statementAggregates=[{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [first["orderId"], second["orderId"]],
+                "note": "Synthetic mismatch.",
+            }],
+        )
+        with self.assertRaisesRegex(SystemExit, "do not equal"):
+            build_data.prepare_shopee_orders(source, [self.card()])
+
+    def test_reviewed_aggregate_rejects_orders_beyond_the_history_cutoff(self):
+        first = self.order(amount=10.25)
+        second = self.order("242058592217955", amount=8.65)
+        second["historyIndex"] = 9
+        source = self.source(
+            [first, second],
+            statementOrderMaxHistoryIndex=5,
+            statementAggregates=[{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [first["orderId"], second["orderId"]],
+                "note": "Synthetic cutoff breach.",
+            }],
+        )
+        with self.assertRaisesRegex(SystemExit, "history cutoff"):
+            build_data.prepare_shopee_orders(source, [self.card()])
 
 
 class GrabReceiptTests(unittest.TestCase):

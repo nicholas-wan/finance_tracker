@@ -35,6 +35,22 @@ For a view-only dashboard:
 python -m http.server 3402 --directory app
 ```
 
+### Share on Wi-Fi
+
+The **Share on Wi-Fi** button in the header (editable server only) opens a
+read-only copy of the dashboard on every network interface on port 4402
+(`--share-port` overrides it), copies a link of the form
+`http://<this PC's address>:4402/?k=<code>` to the clipboard, and shows it with
+**Copy** and **Stop sharing** buttons. The copy runs inside the dashboard
+process, so it cannot outlive it; it answers only to requests carrying the
+random code (the first visit stores it as a cookie), never lists folders, and
+refuses every write. Whoever has the link can read every statement row, so the
+share stops by itself after two hours, when you press Stop, or when the
+dashboard server exits. While a share is live the server ignores auto-stop, so
+closing your own tab does not cut the guest off. Windows may ask once to allow
+Python through the firewall on private networks. Editing never leaves this
+computer.
+
 ## Create a separate household copy
 
 Use a separate clone rather than putting two people's source data in one working
@@ -59,6 +75,10 @@ trackers need to be open together, give the second one a different local port:
 
 Do not copy this repository's `manual/`, `statements/`, or `app/data/` folders
 into the new clone. Back up each clone's private folders separately.
+
+Give the clone its own header identity: change the monogram text in the
+`.brand-mark` SVG in `app/index.html`, the `--brand` and `--brand-ink` colours
+(light and dark) at the top of `app/css/styles.css`, and `app/favicon.svg`.
 
 ## Import statements
 
@@ -91,9 +111,29 @@ preserved.
 The Transactions page supports period, search, category/flow, owner, direction, and
 review-status filters.
 
+- The header identifies the tracker at a glance: an **N** monogram tile beside the
+  wordmark, with the green brand colour on the top bar, a faint header tint, and the
+  wordmark, in both themes.
+- The **Income** tab keeps the hand-entered salary sheet (steps and annual
+  income/tax) when `manual/salary.json` has entries and hides those panels when
+  it is empty. The **Income outlook** below it is derived from salary-labelled
+  bank credits only: recurring payroll streams set the monthly base, and a bonus
+  month is forecast separately only when it exceeded the ordinary-pay baseline
+  by at least 25% in both of the latest complete years. Bonuses already received
+  count once, as actual credits, and an early lump sum is never spread over the
+  remaining months. Three-, five-, and ten-year cards show 3%, 5%, and 7% annual
+  growth around the current-year estimate. **How this forecast is calculated**
+  expands to the live formula, the detected bonus months, and the Public Service
+  Division references that distinguish mid-year/year-end AVC, NPAA/13th-month,
+  and performance-linked pay; published civil-service multiples are context only,
+  and no salary target is shown.
 - Card summaries show net cost after refunds, category and owner breakdowns, and
   6M/12M comparisons. **Group purchases** combines normalized merchants without
   merging the source rows.
+- A charge refunded in full by the same merchant (same amount, refund on or
+  after the charge, within 180 days, and no other candidate charge) is folded
+  away with its refund by default; the footer's **Show N refunded charges**
+  button brings both rows back, badged. Folding never changes the net cost.
 - Recognized recurring brands show a compact locally bundled icon beside the
   transaction. Unmatched merchants stay text-only, and the browser never contacts
   a merchant or third-party logo service to render the ledger.
@@ -128,7 +168,14 @@ review-status filters.
   the item and seller with a Shopee logo, and the drawer shows the order number,
   status, total, and every item name captured from the purchase card. Since
   Shopee hid order dates behind a slider check, only amount groups with equal
-  order/statement cardinality inside the statement-era history are linked.
+  order/statement cardinality inside the statement-era history are linked, and
+  orders past `statementOrderMaxHistoryIndex` never take part. Reviewed bundled
+  charges can be recorded in `statementAggregates`; each entry names one stable
+  transaction ID, two or more order IDs, and an evidence note, and the order
+  totals must add to the statement charge exactly. The ledger displays those
+  bundles as one row per order, all on the statement date and badged with the
+  combined charge, while the drawer keeps the original charge and the evidence
+  note; the validator re-derives every link.
 - **Grab only** shows every Grab statement charge. Safely matched food rows lead
   with the stall name, while rides use friendly saved location names where
   configured. Food item lines and delivery addresses stay out of the interface;
@@ -141,12 +188,19 @@ review-status filters.
   insured person. Its compact table keeps the key fields visible; selecting a
   policy expands a concise explanation, with the full record available as a
   secondary action. Matured and lapsed policies sit in a separate archive modal.
-  Scheduled annualised premiums and actual card charges are deliberately separate because a policy
-  may be paid through another account or CPF. The statement section compares
-  premiums due through the latest imported date with matched card charges,
-  identifies missing and unlinked payments, groups repeated charges by policy,
-  and states whether they tally. Policies checked directly against an insurer
-  portal carry a source-specific verification badge and verification date.
+  Scheduled annualised premiums and posted payments are deliberately separate
+  because a policy may be paid by card, by GIRO from the imported bank account,
+  or by CPF. A policy whose `paymentMethod` names GIRO or a bank account
+  reconciles against the bank statements, everything else against the card
+  statements, each on its own latest-statement cutoff. The statement section
+  identifies missing and unlinked payments, groups repeated payments by policy,
+  shows monthly/yearly cadence and the statement source on one compact line per
+  policy, and states whether the totals tally. Expanding a row reveals its
+  calendar, payment history, and statement entries; a bank entry opens in the
+  bank ledger. Policies checked directly against an insurer portal (a
+  `verification` object in `manual/insurance.json`) carry the same static
+  **Verified** badge in the register and the payment list, with the source and
+  date in the tooltip; there is no user-facing “mark verified” control.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
 renames or extraction line shifts do not detach decisions (replacing a CSV source
@@ -190,7 +244,11 @@ generated-data rebuilds are atomic and roll back if validation fails.
   `Groceries`, while a saved transaction override remains authoritative.
 - Shopee purchase history: `manual/shopee_orders.json` (also Git-ignored). The
   import retains older history and item names even when no statement link can
-  be made safely.
+  be made safely. Set `statementOrderMaxHistoryIndex` at the last order covered
+  by the statement window so an older same-priced order cannot be linked by
+  coincidence; `statementAggregates` records explicitly reviewed order bundles
+  (`transactionId`, `orderIds`, `note`), and the build refuses a bundle whose
+  order totals do not equal the charge or that names an order past the cutoff.
 - Grab Gmail capture: `manual/grab_receipt_search_raw.json` plus any later mail
   in `manual/grab_receipt_search_supplemental.json`, parsed with `python
   scripts/import_grab_receipts.py` into `manual/grab_receipts.json`. These files

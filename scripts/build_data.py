@@ -34,6 +34,9 @@ OUT_PATH = os.path.join(DATA_DIR, "transactions.json")
 FOODPANDA_CATEGORIES = ("Food & dining", "Groceries")
 FOODPANDA_FULFILMENT = ("delivery", "pickup")
 SHOPEE_STATUSES = ("to-receive", "completed", "rated")
+# Published beside every automatic Shopee link so the drawer can say why the
+# order is attached; the validator re-derives the same text.
+SHOPEE_EXACT_MATCH_NOTE = "The order total uniquely matches this Shopee statement charge."
 GRAB_CATEGORIES = ("Food & dining", "Groceries", "Transport")
 GRAB_PROFILES = ("personal", "business", "corporate", "unknown")
 INSURANCE_BENEFITS = (
@@ -353,7 +356,16 @@ def is_shopee_description(description):
 
 
 def prepare_shopee_orders(order_data, card_rows):
-    """Validate Shopee orders and link only equal-cardinality amount groups."""
+    """Validate Shopee orders and link exact or explicitly bundled charges.
+
+    Automatic links need an amount group with equal order/statement
+    cardinality inside the statement window, and only orders at or below
+    ``statementOrderMaxHistoryIndex`` take part. ``statementAggregates`` adds
+    reviewed bundles: one statement charge that paid for two or more orders
+    whose totals add to it exactly. Those orders share the charge's date and
+    transaction ID, and the dashboard shows them one row per order while
+    keeping the combined charge as evidence.
+    """
     raw_orders = order_data.get("orders", []) if isinstance(order_data, dict) else []
     if not isinstance(raw_orders, list):
         raise SystemExit("manual/shopee_orders.json orders must be a list")
@@ -419,21 +431,87 @@ def prepare_shopee_orders(order_data, card_rows):
             ),
         })
 
-    order_groups = {}
-    for order in orders:
-        if (match_history_limit is not None
-                and order["historyIndex"] > match_history_limit):
-            continue
-        order_groups.setdefault(int(round(order["amount"] * 100)), []).append(order)
-    card_groups = {}
+    eligible_rows = {}
     for row in card_rows:
         row_date = row.get("date")
         if (row.get("credit") or not is_shopee_description(row.get("description", ""))
                 or not row_date or not start or row_date < start or row_date > through):
             continue
-        card_groups.setdefault(int(round(float(row.get("amount", 0)) * 100)), []).append(row)
+        row_id = row.get("id")
+        if not isinstance(row_id, str) or not row_id:
+            raise SystemExit("Shopee statement row has no stable transaction ID")
+        if row_id in eligible_rows:
+            raise SystemExit("Shopee statement rows repeat a stable transaction ID")
+        eligible_rows[row_id] = row
 
     by_transaction = {}
+    reserved_orders = set()
+    reserved_rows = set()
+    aggregate_matches = order_data.get("statementAggregates", [])
+    if not isinstance(aggregate_matches, list):
+        raise SystemExit("Shopee statementAggregates must be a list")
+    orders_by_id = {order["orderId"]: order for order in orders}
+    for index, raw in enumerate(aggregate_matches, 1):
+        label = "Shopee statement aggregate %d" % index
+        if not isinstance(raw, dict):
+            raise SystemExit("%s must be an object" % label)
+        transaction_id = raw.get("transactionId")
+        order_ids = raw.get("orderIds")
+        note = raw.get("note")
+        if not isinstance(transaction_id, str) or not transaction_id:
+            raise SystemExit("%s has an invalid transactionId" % label)
+        if (not isinstance(order_ids, list) or len(order_ids) < 2
+                or any(not isinstance(value, str) or not value for value in order_ids)
+                or len(set(order_ids)) != len(order_ids)):
+            raise SystemExit("%s has invalid orderIds" % label)
+        if not isinstance(note, str) or not note.strip():
+            raise SystemExit("%s must explain the reconciliation evidence" % label)
+        row = eligible_rows.get(transaction_id)
+        if row is None:
+            raise SystemExit("%s names an unknown Shopee transaction" % label)
+        if transaction_id in reserved_rows:
+            raise SystemExit("%s repeats a Shopee transaction" % label)
+        linked_orders = []
+        for order_id in order_ids:
+            order = orders_by_id.get(order_id)
+            if order is None:
+                raise SystemExit("%s names an unknown Shopee order" % label)
+            if order_id in reserved_orders:
+                raise SystemExit("%s repeats a Shopee order" % label)
+            if (match_history_limit is not None
+                    and order["historyIndex"] > match_history_limit):
+                raise SystemExit("%s names an order beyond the statement history cutoff" % label)
+            linked_orders.append(order)
+        order_cents = sum(int(round(order["amount"] * 100)) for order in linked_orders)
+        row_cents = int(round(float(row.get("amount", 0)) * 100))
+        if order_cents != row_cents:
+            raise SystemExit("%s order totals do not equal the statement charge" % label)
+        linked_orders.sort(key=lambda item: item["historyIndex"])
+        for order in linked_orders:
+            order["statementTransactionId"] = transaction_id
+            order["date"] = row["date"]
+            reserved_orders.add(order["orderId"])
+        reserved_rows.add(transaction_id)
+        by_transaction[transaction_id] = {
+            "orders": linked_orders,
+            "kind": "aggregate",
+            "note": note.strip(),
+        }
+
+    order_groups = {}
+    for order in orders:
+        if order["orderId"] in reserved_orders:
+            continue
+        if (match_history_limit is not None
+                and order["historyIndex"] > match_history_limit):
+            continue
+        order_groups.setdefault(int(round(order["amount"] * 100)), []).append(order)
+    card_groups = {}
+    for row_id, row in eligible_rows.items():
+        if row_id in reserved_rows:
+            continue
+        card_groups.setdefault(int(round(float(row.get("amount", 0)) * 100)), []).append(row)
+
     for cents, grouped_orders in order_groups.items():
         grouped_rows = card_groups.get(cents, [])
         if not grouped_orders or len(grouped_orders) != len(grouped_rows):
@@ -1182,7 +1260,20 @@ def main():
         rule_category = rule_categories[0] if rule_categories else "Other"
         override = transaction_overrides.get(r["id"], {})
         foodpanda_order = foodpanda_by_transaction.get(r["id"])
-        shopee_order = shopee_by_transaction.get(r["id"])
+        shopee_match = shopee_by_transaction.get(r["id"])
+        if shopee_match and "orders" in shopee_match:
+            shopee_row_orders = shopee_match["orders"]
+            shopee_match_kind = shopee_match["kind"]
+            shopee_match_note = shopee_match["note"]
+        elif shopee_match:
+            shopee_row_orders = [shopee_match]
+            shopee_match_kind = "exact"
+            shopee_match_note = SHOPEE_EXACT_MATCH_NOTE
+        else:
+            shopee_row_orders = []
+            shopee_match_kind = None
+            shopee_match_note = None
+        shopee_order = shopee_row_orders[0] if shopee_row_orders else None
         grab_matches = grab_by_transaction.get(r["id"], [])
         grab_statement = is_grab_description(r["description"])
         grab_unreconciled = grab_statement and not grab_matches
@@ -1271,11 +1362,25 @@ def main():
                 for key in ("orderId", "date", "time", "fulfillment", "merchant", "amount")
             }
         if shopee_order:
-            record["shopee"] = {
-                key: shopee_order[key]
-                for key in (
-                    "orderId", "merchant", "status", "amount", "items", "historyIndex"
-                )
+            # A reviewed bundle publishes every order under shopeeOrders and
+            # keeps the first as the primary detail; the match evidence says
+            # whether the link was an exact amount or a reviewed aggregate.
+            shopee_details = [
+                {
+                    key: order[key]
+                    for key in (
+                        "orderId", "merchant", "status", "amount", "items", "historyIndex",
+                        "category"
+                    )
+                }
+                for order in shopee_row_orders
+            ]
+            record["shopee"] = shopee_details[0]
+            if len(shopee_details) > 1:
+                record["shopeeOrders"] = shopee_details
+            record["shopeeMatch"] = {
+                "kind": shopee_match_kind,
+                "note": shopee_match_note,
             }
         if grab_statement:
             record["grab"] = {
@@ -1491,8 +1596,12 @@ def main():
         },
         "shopee": {
             "orders": len(shopee_orders),
-            "matched": len(shopee_by_transaction),
-            "unmatched": len(shopee_orders) - len(shopee_by_transaction),
+            "matched": sum(
+                1 for order in shopee_orders if order.get("statementTransactionId")
+            ),
+            "unmatched": sum(
+                1 for order in shopee_orders if not order.get("statementTransactionId")
+            ),
             "groceries": sum(
                 1 for order in shopee_orders if order["category"] == "Groceries"
             ),
@@ -1586,8 +1695,11 @@ def main():
     print("Transaction overrides %d" % len(transaction_overrides))
     print("Foodpanda orders %d (%d matched to statement rows)"
           % (len(foodpanda_orders), len(foodpanda_by_transaction)))
-    print("Shopee orders %d (%d matched to statement rows)"
-          % (len(shopee_orders), len(shopee_by_transaction)))
+    shopee_matched_orders = sum(
+        1 for order in shopee_orders if order.get("statementTransactionId")
+    )
+    print("Shopee orders %d (%d matched across %d statement rows)"
+          % (len(shopee_orders), shopee_matched_orders, len(shopee_by_transaction)))
     print("Grab receipts %d (%d matched receipts across %d statement rows; %d corporate excluded)"
           % (
               len(grab_receipts),

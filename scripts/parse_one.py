@@ -43,7 +43,7 @@ FLOW_RULES = [
     # on purpose because PayNow transfers to a person called Phillip would collide.
     # A misfiled Investment row is the worst case here: it is dropped from spending
     # totals as if it were still your money, so every short token is anchored.
-    ("Investment", ["INTERACTIVE BROKERS", " IBKR ", "TIGER BROKERS", " MOOMOO ", " SAXO ",
+    ("Investment", ["INTERACTIVE BROKERS", "INTERACTIVE BR", " IBKR ", "TIGER BROKERS", " MOOMOO ", " SAXO ",
                     " ENDOWUS ", " SYFE ", "PHILLIP SECURITIES", "PHILLIP SEC"]),
     ("Retirement (SRS)", [" SRS", "-SRS"]),
     # The own fixed-deposit account numbers are private and are folded in at

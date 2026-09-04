@@ -973,6 +973,69 @@ test("an owner outside the known set still gets a bucket", function () {
   assert.equal(Object.keys(result.ownerTotals).length, 1);
 });
 
+// ---------- Reversed charge/refund pairs ----------
+
+function cardRow(id, type, amount, date, extra) {
+  return Object.assign(transaction({
+    id: id, type: type, amount: amount, date: date, month: date.slice(0, 7),
+    description: "EXAMPLE TRAVEL SINGAPORE", category: "Travel"
+  }), extra || {});
+}
+
+test("a charge refunded in full by the same merchant is paired and folded", function () {
+  var rows = [
+    cardRow("tx_c1", "debit", 412.55, "2026-08-08"),
+    cardRow("tx_r1", "refund", 412.55, "2026-08-08"),
+    cardRow("tx_c2", "debit", 928.65, "2026-06-28"),
+    cardRow("tx_r2", "refund", 928.65, "2026-08-08"),
+    cardRow("tx_keep", "debit", 76.23, "2026-06-27")
+  ];
+  var result = grouping.reversedPairs(rows);
+  assert.equal(result.pairs.length, 2);
+  assert.deepEqual(Object.keys(result.hidden).sort(), ["tx_c1", "tx_c2", "tx_r1", "tx_r2"]);
+  var visible = rows.filter(function (t) { return !result.hidden[t.id]; });
+  assert.deepEqual(visible.map(function (t) { return t.id; }), ["tx_keep"]);
+  // Folding the pairs never moves the net.
+  assert.equal(grouping.summarize(rows, {}).netCost, grouping.summarize(visible, {}).netCost);
+});
+
+test("a refund is paired only when its charge is unambiguous", function () {
+  // Two identical charges before one refund: either could be the refunded one.
+  var twoCharges = grouping.reversedPairs([
+    cardRow("tx_a", "debit", 150.99, "2026-06-09"),
+    cardRow("tx_b", "debit", 150.99, "2026-06-09"),
+    cardRow("tx_r", "refund", 150.99, "2026-06-20")
+  ]);
+  assert.equal(twoCharges.pairs.length, 0);
+  // A refund dated before its charge is not a reversal of it.
+  assert.equal(grouping.reversedPairs([
+    cardRow("tx_r", "refund", 50, "2026-06-01"),
+    cardRow("tx_c", "debit", 50, "2026-06-02")
+  ]).pairs.length, 0);
+  // Beyond the window, a same-priced refund is a different story.
+  assert.equal(grouping.reversedPairs([
+    cardRow("tx_c", "debit", 50, "2025-06-01"),
+    cardRow("tx_r", "refund", 50, "2026-06-01")
+  ]).pairs.length, 0);
+  // Another merchant or another amount never pairs.
+  assert.equal(grouping.reversedPairs([
+    cardRow("tx_c", "debit", 50, "2026-06-01", { description: "OTHER SHOP SINGAPORE" }),
+    cardRow("tx_r", "refund", 50, "2026-06-02")
+  ]).pairs.length, 0);
+  assert.equal(grouping.reversedPairs([
+    cardRow("tx_c", "debit", 50, "2026-06-01"),
+    cardRow("tx_r", "refund", 49.99, "2026-06-02")
+  ]).pairs.length, 0);
+  // Once a charge is claimed, a second identical refund has no candidate.
+  var oneChargeTwoRefunds = grouping.reversedPairs([
+    cardRow("tx_c", "debit", 50, "2026-06-01"),
+    cardRow("tx_r1", "refund", 50, "2026-06-02"),
+    cardRow("tx_r2", "refund", 50, "2026-06-03")
+  ]);
+  assert.equal(oneChargeTwoRefunds.pairs.length, 1);
+  assert.deepEqual(Object.keys(oneChargeTwoRefunds.hidden).sort(), ["tx_c", "tx_r1"]);
+});
+
 // ---------- Deterministic grouped label ----------
 
 test("the grouped label is the most frequent name, not the last one written", function () {
@@ -1248,4 +1311,82 @@ test("spending summary states the change, driver and largest purchase", function
   assert.match(summary.text, /higher than your recent typical month/);
   assert.match(summary.text, /Shopping was the main driver/);
   assert.match(summary.text, /largest charge was S\$180\.00 for Standing desk/);
+});
+
+// ---------- Income forecast ----------
+
+test("income forecast separates recurring pay from repeated bonus months", function () {
+  var insights = loadInsights();
+  var months = [];
+  var rows = [];
+  [2024, 2025, 2026].forEach(function (year) {
+    var lastMonth = year === 2026 ? 8 : 12;
+    for (var month = 1; month <= lastMonth; month += 1) {
+      var key = year + "-" + String(month).padStart(2, "0");
+      var base = year === 2024 ? 5000 : year === 2025 ? 5500 : 6000;
+      months.push(key);
+      rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: base,
+        description: "Agency payroll 123456789"
+      });
+      rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: 50,
+        description: "Recurring payroll allowance 987654321"
+      });
+      if (month === 5) rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: base * 2,
+        description: "Agency payroll 123456789"
+      });
+      if (month === 12) rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: base,
+        description: "Agency payroll 123456789"
+      });
+    }
+  });
+  var forecast = insights.incomeForecast(rows, months);
+  assert.equal(forecast.baseMonthly, 6050);
+  assert.deepEqual(Array.from(forecast.completeYears), ["2024", "2025"]);
+  assert.deepEqual(Array.from(forecast.bonusPatterns, function (item) { return item.month; }), [5, 12]);
+  assert.ok(forecast.forecastCentral > forecast.forecastFloor);
+  assert.equal(forecast.futurePatterns.length, 1);
+  assert.equal(forecast.futurePatterns[0].month, 12);
+  // The May bonus already sits in the year-to-date total and is not spread
+  // over the remaining months: the floor is YTD plus recurring pay only.
+  assert.equal(forecast.forecastFloor, forecast.ytd + forecast.baseMonthly * 4);
+  assert.ok(Math.abs(forecast.expectedFutureBonus - (forecast.forecastCentral - forecast.forecastFloor)) < 0.01);
+});
+
+test("income forecast never annualises a one-off lump sum", function () {
+  var insights = loadInsights();
+  var months = [];
+  var rows = [];
+  [2024, 2025, 2026].forEach(function (year) {
+    var lastMonth = year === 2026 ? 6 : 12;
+    for (var month = 1; month <= lastMonth; month += 1) {
+      var key = year + "-" + String(month).padStart(2, "0");
+      months.push(key);
+      rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: 4000,
+        description: "Employer payroll 55555"
+      });
+    }
+  });
+  // A single back-payment in one year only.
+  rows.push({
+    month: "2025-03", direction: "deposit", flow: "Salary", amount: 9000,
+    description: "Employer payroll 55555"
+  });
+  var forecast = insights.incomeForecast(rows, months);
+  assert.equal(forecast.baseMonthly, 4000);
+  assert.equal(forecast.bonusPatterns.length, 0);
+  assert.equal(forecast.forecastCentral, forecast.forecastFloor);
+  assert.equal(forecast.forecastFloor, 4000 * 12);
+});
+
+test("income forecast is empty without salary credits", function () {
+  var insights = loadInsights();
+  assert.equal(insights.incomeForecast([], ["2026-01"]), null);
+  assert.equal(insights.incomeForecast([
+    { month: "2026-01", direction: "deposit", flow: "Interest", amount: 12, description: "Interest" }
+  ], ["2026-01"]), null);
 });
