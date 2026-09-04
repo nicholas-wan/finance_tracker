@@ -12,17 +12,23 @@ $stdoutLog = Join-Path $logDirectory "finance-server.stdout.log"
 $stderrLog = Join-Path $logDirectory "finance-server.stderr.log"
 
 function Test-FinanceServer {
+    # A healthy server is one that answers and can still save edits. autoStop is
+    # deliberately NOT required: a server started by hand with
+    # "python scripts/serve.py" runs without it and must be reused, not replaced,
+    # so it keeps running until its own Ctrl+C.
     try {
         $status = Invoke-RestMethod -Uri $statusUrl -TimeoutSec 2
-        return $status.ok -eq $true -and $status.editable -eq $true -and `
-            $status.autoStop -eq $true
+        return $status.ok -eq $true -and $status.editable -eq $true
     } catch {
         return $false
     }
 }
 
 function Get-FinanceServerProcesses {
-    @(Get-CimInstance Win32_Process | Where-Object {
+    # Enumerating every process on the machine just to read CommandLine is slow;
+    # ask the CIM provider for the python hosts only.
+    @(Get-CimInstance Win32_Process `
+        -Filter "Name = 'python.exe' OR Name = 'pythonw.exe'" | Where-Object {
         $_.CommandLine -and
         $_.CommandLine.IndexOf($serverScript, [StringComparison]::OrdinalIgnoreCase) -ge 0
     })
@@ -47,6 +53,9 @@ try {
     $serverProcesses = @(Get-FinanceServerProcesses)
     $serverReady = Test-FinanceServer
 
+    # One healthy server - however it was started - is left alone; just open the
+    # dashboard against it.
+    #
     # Recover from an interrupted launch or an older launcher that left more
     # than one copy running. Multiple listeners can make requests fail at random.
     if (-not $serverReady -or $serverProcesses.Count -gt 1) {
@@ -63,6 +72,8 @@ try {
         }
 
         $python = Get-Command python.exe -ErrorAction Stop
+        # Start-Process truncates both redirect targets on every launch, which is
+        # what we want (one launch, one log); it only needs tmp/ to exist first.
         New-Item -ItemType Directory -Force -Path $logDirectory | Out-Null
 
         Start-Process `

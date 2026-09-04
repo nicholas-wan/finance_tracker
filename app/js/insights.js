@@ -38,27 +38,54 @@ window.Insights = (function () {
     return s.length % 2 ? s[mid] : (s[mid - 1] + s[mid]) / 2;
   }
 
-  // Groups noisy merchant strings ("Grab* GPC-8b60...", "fp*Food Panda") into one name.
-  function merchantKey(description) {
-    var s = description
-      .replace(/GPC-[0-9a-zA-Z]+/g, "")
-      .replace(/[0-9a-f]{12,}/gi, "")
-      .replace(/[#*]/g, " ")
-      .replace(/\b\d{4,}\b/g, "")
-      .replace(/\bSINGAPORE\b/gi, "")
-      .replace(/\s+/g, " ")
-      .trim()
-      .toUpperCase();
-    if (/FOOD ?PANDA|^FP /.test(s)) return "Foodpanda";
-    if (/^GRAB/.test(s)) return "Grab";
-    if (/BUS ?\/ ?MRT/.test(s)) return "Bus and MRT";
-    if (/SHOPEE/.test(s)) return "Shopee";
-    if (/PRUDENTIAL/.test(s)) return "Prudential";
-    if (/TOKIO MARINE/.test(s)) return "Tokio Marine";
-    if (/HOYOVERSE|COGNOSPHERE/.test(s)) return "HoYoverse";
-    if (/LIHO/.test(s)) return "LiHO";
-    if (/MYACTIVESG/.test(s)) return "ActiveSG";
-    return s.split(" ").slice(0, 3).join(" ").replace(/\s+$/, "") || "Unknown";
+  // Merchant grouping is the ledger's, not a second opinion: this module had
+  // its own normalizer with its own alias table, so "Group purchases" and the
+  // habit insight could name and count the same merchant differently. Both now
+  // key on FinanceGrouping.merchantKey and label with FinanceGrouping's
+  // merchantDisplayName. The aliases that table carried are gone with it -
+  // "Grab" survives because the shared key already canonicalizes it, and the
+  // rest are whatever the ledger calls them. (The Python owner-rule key in
+  // scripts/build_data.py is a different concept and is untouched.)
+  //
+  // Same precedence the ledger's grouped rows use: a name you set yourself
+  // outranks statement text, and the most common name in the group wins, ties
+  // broken by sort order so an unrelated edit cannot retitle a group.
+  function dominant(counts) {
+    return Object.keys(counts).sort(function (left, right) {
+      return counts[right] - counts[left] || left.localeCompare(right);
+    })[0] || null;
+  }
+  function countName(counts, name) {
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  function transactionLabel(transaction) {
+    return transaction.displayName ||
+      window.FinanceGrouping.merchantDisplayName(transaction.description);
+  }
+
+  // build_data.py emits no per-account monthly rollup, so the account-level
+  // findings derive their own from the rows the dashboard already holds:
+  // interest and salary arrive as deposits, card bills leave as withdrawals.
+  function accountMonthTotals(account, throughMonth) {
+    var months = [];
+    var byMonth = {};
+    if (!account || !account.transactions) return { months: months, byMonth: byMonth };
+    (account.months || []).forEach(function (month) {
+      if (month > throughMonth || byMonth[month]) return;
+      months.push(month);
+      byMonth[month] = { interest: 0, income: 0, ccBills: 0 };
+    });
+    account.transactions.forEach(function (t) {
+      var row = byMonth[t.month];
+      if (!row) return;
+      if (t.direction === "deposit" && t.flow === "Interest") row.interest += t.amount;
+      else if (t.direction === "deposit" && t.flow === "Salary") row.income += t.amount;
+      else if (t.direction === "withdrawal" && t.flow === "Credit card bill") {
+        row.ccBills += t.amount;
+      }
+    });
+    months.sort();
+    return { months: months, byMonth: byMonth };
   }
 
   function monthlySpend(data, month) {
@@ -71,6 +98,7 @@ window.Insights = (function () {
   }
 
   var WEALTH = { "Investment": 1, "Retirement (SRS)": 1, "Fixed deposit": 1 };
+  var INTEREST_BASELINE_MIN = 5;
 
   function accountInsights(data, currentMonth, account, out) {
     if (!account || !account.transactions.length) return;
@@ -200,20 +228,29 @@ window.Insights = (function () {
     var byMerchant = {};
     spendable(data.transactions).forEach(function (t) {
       if (last12.indexOf(t.month) === -1 || t.type !== "debit") return;
-      var k = merchantKey(t.description);
-      if (!byMerchant[k]) byMerchant[k] = { total: 0, count: 0, months: {}, ids: [] };
+      var k = window.FinanceGrouping.merchantKey(t.description);
+      if (!byMerchant[k]) {
+        byMerchant[k] = {
+          total: 0, count: 0, months: {}, ids: [],
+          displayNames: {}, statementNames: {}
+        };
+      }
       byMerchant[k].total += t.amount;
       byMerchant[k].count += 1;
       byMerchant[k].months[t.month] = true;
-      // The display alias ("Foodpanda", "Bus and MRT") never appears in the
-      // statement text, so a free-text drill-down found only a fraction of
-      // these rows. Carry the matched ids and filter on them exactly.
+      // The label the ledger shows never appears verbatim in statement text, so
+      // a free-text drill-down found only a fraction of these rows. Carry the
+      // matched ids and filter on them exactly.
       byMerchant[k].ids.push(t.id);
+      if (t.displayName) countName(byMerchant[k].displayNames, t.displayName);
+      else countName(byMerchant[k].statementNames,
+        window.FinanceGrouping.merchantDisplayName(t.description));
     });
     var habits = Object.keys(byMerchant).map(function (k) {
       var m = byMerchant[k];
       return {
-        name: k, total: m.total, count: m.count,
+        name: dominant(m.displayNames) || dominant(m.statementNames) || k,
+        total: m.total, count: m.count,
         months: Object.keys(m.months).length, ids: m.ids
       };
     }).filter(function (h) { return h.months >= 6 && h.count >= 12; });
@@ -235,13 +272,14 @@ window.Insights = (function () {
     });
 
     // 4. Account-level: interest trend and savings rate
-    var acctMonths = (data.accountMonths || []).filter(function (m) {
-      return m <= currentMonth;
-    });
-    var acct = data.accounts || {};
+    var accountTotals = accountMonthTotals(account, currentMonth);
+    var acctMonths = accountTotals.months;
+    var acct = accountTotals.byMonth;
     if (acctMonths.length >= 6) {
       var first = acct[acctMonths[0]], latest = acct[acctMonths[acctMonths.length - 1]];
-      if (first && latest && first.interest > 0) {
+      // A few cents of interest in the first month makes any later figure a
+      // four-digit percentage. Compare only from a baseline worth talking about.
+      if (first && latest && first.interest >= INTEREST_BASELINE_MIN) {
         var drop = pct(latest.interest, first.interest);
         if (drop !== null && Math.abs(drop) >= 20) {
           out.push({
@@ -301,14 +339,15 @@ window.Insights = (function () {
         return t.month === currentMonth && t.type === "debit";
       })).sort(function (a, b) { return b.amount - a.amount; })[0];
       if (biggest && biggest.amount >= 150) {
+        var biggestName = transactionLabel(biggest);
         out.push({
           kind: "info",
           icon: "receipt",
           scope: "monthly",
-          title: "Largest charge: " + money(biggest.amount) + " at " + merchantKey(biggest.description),
+          title: "Largest charge: " + money(biggest.amount) + " at " + biggestName,
           detail: biggest.description + " on " + (biggest.date || currentMonth) + ", filed under " + biggest.category + ".",
           ids: [biggest.id],
-          filterLabel: merchantKey(biggest.description),
+          filterLabel: biggestName,
         });
       }
     }
@@ -362,5 +401,7 @@ window.Insights = (function () {
     return out;
   }
 
-  return { build: build, merchantKey: merchantKey, money: money, monthLabel: label };
+  // merchantKey is no longer part of the public surface: the one normalizer
+  // now lives in FinanceGrouping, and nothing outside this module used it.
+  return { build: build, money: money, monthLabel: label };
 })();

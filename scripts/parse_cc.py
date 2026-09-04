@@ -10,6 +10,8 @@ import glob
 import json
 import os
 import re
+import tempfile
+import time
 
 from pypdf import PdfReader
 from data_ids import assign_provenance, source_name
@@ -427,11 +429,31 @@ def write_output(payload, ok):
     """
     if not ok:
         return False
-    os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
-    tmp_path = OUT_PATH + ".tmp"
-    with open(tmp_path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=1)
-    os.replace(tmp_path, OUT_PATH)
+    out_dir = os.path.dirname(OUT_PATH)
+    os.makedirs(out_dir, exist_ok=True)
+    # Write through a per-process temp file rather than a fixed OUT_PATH +
+    # ".tmp": two concurrent parser runs would otherwise interleave writes into
+    # one shared name. os.replace is retried because on Windows it fails while
+    # a reader still holds the destination open; build_data.py has the same
+    # guard.
+    descriptor, tmp_path = tempfile.mkstemp(
+        prefix=os.path.basename(OUT_PATH) + ".", suffix=".tmp", dir=out_dir)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, indent=1)
+            handle.flush()
+            os.fsync(handle.fileno())
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, OUT_PATH)
+                break
+            except PermissionError:
+                if attempt == 4:
+                    raise
+                time.sleep(0.05)
+    finally:
+        if os.path.exists(tmp_path):
+            os.unlink(tmp_path)
     return True
 
 

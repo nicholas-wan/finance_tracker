@@ -1,5 +1,6 @@
 import http.client
 import importlib
+import io
 import json
 import shutil
 import sys
@@ -148,12 +149,57 @@ class OwnerApiValidationTests(unittest.TestCase):
         result = serve.validate_account_review_request(
             {"id": "tx_abc123", "reviewed": True}, self.transactions
         )
-        self.assertEqual(result, ("tx_abc123", True))
+        # A single "id" still resolves, as a one-element batch.
+        self.assertEqual(result, (["tx_abc123"], True))
 
     def test_rejects_missing_account_review_transaction(self):
         with self.assertRaisesRegex(ValueError, "not present"):
             serve.validate_account_review_request(
                 {"id": "tx_missing", "reviewed": True}, self.transactions
+            )
+
+    def test_accepts_a_batch_of_account_reviews(self):
+        result = serve.validate_account_review_request(
+            {"ids": ["tx_def456", "tx_abc123"], "reviewed": True},
+            self.transactions,
+        )
+        self.assertEqual(result, (["tx_abc123", "tx_def456"], True))
+
+    def test_collapses_a_repeated_account_review_id(self):
+        result = serve.validate_account_review_request(
+            {"ids": ["tx_abc123", "tx_abc123"], "reviewed": False},
+            self.transactions,
+        )
+        self.assertEqual(result, (["tx_abc123"], False))
+
+    def test_rejects_an_empty_account_review_batch(self):
+        with self.assertRaisesRegex(ValueError, "Between 1 and"):
+            serve.validate_account_review_request(
+                {"ids": [], "reviewed": True}, self.transactions
+            )
+
+    def test_rejects_an_account_review_batch_over_the_limit(self):
+        oversized = [
+            "tx_%06d" % n for n in range(serve.MAX_ACCOUNT_REVIEW_BATCH + 1)
+        ]
+        with self.assertRaisesRegex(ValueError, "Between 1 and"):
+            serve.validate_account_review_request(
+                {"ids": oversized, "reviewed": True}, self.transactions
+            )
+
+    def test_rejects_a_whole_account_review_batch_for_one_unknown_id(self):
+        # Half a review is worse than none: the page would show rows cleared
+        # that were never written.
+        with self.assertRaisesRegex(ValueError, "not present"):
+            serve.validate_account_review_request(
+                {"ids": ["tx_abc123", "tx_missing"], "reviewed": True},
+                self.transactions,
+            )
+
+    def test_rejects_a_non_boolean_batch_decision(self):
+        with self.assertRaisesRegex(ValueError, "true or false"):
+            serve.validate_account_review_request(
+                {"ids": ["tx_abc123"], "reviewed": "yes"}, self.transactions
             )
 
     def test_accepts_trimmed_remark(self):
@@ -463,6 +509,8 @@ class SaveWritePathTests(unittest.TestCase):
 
     TX_ID = "tx_write0001"
     SECOND_ID = "tx_write0002"
+    BANK_ID = "tx_bank000001"
+    SECOND_BANK_ID = "tx_bank000002"
 
     def setUp(self):
         self.dir = Path(tempfile.mkdtemp(prefix="serve-write-"))
@@ -477,16 +525,25 @@ class SaveWritePathTests(unittest.TestCase):
             "REMARK_PATH": manual / "transaction_remarks.json",
             "OVERRIDE_PATH": manual / "transaction_overrides.json",
             "AUDIT_PATH": manual / "audit_history.json",
+            "ACCOUNT_REVIEW_PATH": manual / "account_reviews.json",
             "TRANSACTIONS_PATH": data / "transactions.json",
+            "ACCOUNT_TRANSACTIONS_PATH": data / "account_transactions.json",
         }
         seeds = {
             "OWNER_PATH": {"tagsById": {}},
             "REMARK_PATH": {"remarksById": {}},
             "OVERRIDE_PATH": {"overridesById": {}},
             "AUDIT_PATH": {"entries": []},
+            "ACCOUNT_REVIEW_PATH": {"reviewedIds": []},
             "TRANSACTIONS_PATH": {
                 "transactions": [self.row()],
                 "quality": {"seed": True},
+            },
+            "ACCOUNT_TRANSACTIONS_PATH": {
+                "transactions": [
+                    self.bank_row(),
+                    self.bank_row(id=self.SECOND_BANK_ID, amount=-9.0),
+                ],
             },
         }
         for name, payload in seeds.items():
@@ -556,6 +613,16 @@ class SaveWritePathTests(unittest.TestCase):
         base.update(overrides)
         return base
 
+    def bank_row(self, **overrides):
+        base = {
+            "id": self.BANK_ID,
+            "date": "2026-01-03",
+            "description": "REDACTED TRANSFER",
+            "amount": -25.0,
+        }
+        base.update(overrides)
+        return base
+
     def stage_rebuild(self, **overrides):
         """What the stub build will publish as the rebuilt dashboard."""
         self.stage_rebuild_rows([self.row(**overrides)])
@@ -590,11 +657,14 @@ class SaveWritePathTests(unittest.TestCase):
                 "%s should have been rolled back to its original bytes" % name,
             )
 
+    def backups(self, name):
+        """Every rotating backup of one file, oldest first."""
+        return serve.backup_generations(self.paths[name])
+
     def assert_backup_matches_original(self, name):
-        backup = self.paths[name].with_suffix(
-            self.paths[name].suffix + ".bak")
-        self.assertTrue(backup.exists(), "%s.bak missing" % name)
-        self.assertEqual(backup.read_bytes(), self.originals[name])
+        generations = self.backups(name)
+        self.assertTrue(generations, "no backup written for %s" % name)
+        self.assertEqual(generations[-1].read_bytes(), self.originals[name])
 
     def test_save_owner_persists_tag_audit_and_reports_quality(self):
         self.stage_rebuild(owner="Shared", ownerSource="exact-id")
@@ -755,10 +825,65 @@ class SaveWritePathTests(unittest.TestCase):
         self.assert_untouched(
             "OWNER_PATH", "REMARK_PATH", "OVERRIDE_PATH", "AUDIT_PATH")
 
+    def test_backups_land_in_the_backups_folder_under_one_timestamp(self):
+        self.stage_rebuild(owner="Shared", ownerSource="exact-id")
+        serve.save_owner(self.TX_ID, "Shared")
+        stamps = set()
+        for name in ("OWNER_PATH", "AUDIT_PATH"):
+            generations = self.backups(name)
+            self.assertEqual(len(generations), 1)
+            backup = generations[0]
+            self.assertEqual(backup.parent, self.paths[name].parent / "backups")
+            # <name>.<YYYYmmdd_HHMMSS_ffffff>.bak
+            self.assertTrue(backup.name.startswith(self.paths[name].name + "."))
+            stamps.add(backup.name.split(".json.", 1)[1][:-len(".bak")])
+            # The single overwritten <file>.bak is not written any more.
+            self.assertFalse(
+                self.paths[name].with_name(
+                    self.paths[name].name + ".bak").exists())
+        # One save is one identifiable generation across every file it touched.
+        self.assertEqual(len(stamps), 1)
+        stamp = stamps.pop()
+        self.assertRegex(stamp, r"^\d{8}_\d{6}_\d{6}$")
+
+    def test_two_consecutive_saves_leave_two_generations(self):
+        # The old single .bak meant a save after a bad save destroyed the only
+        # copy of the good state.
+        self.stage_rebuild(owner="Shared", ownerSource="exact-id")
+        serve.save_owner(self.TX_ID, "Shared")
+        after_first = self.paths["OWNER_PATH"].read_bytes()
+        self.write_transactions([self.row(owner="Shared", ownerSource="exact-id")])
+        self.stage_rebuild(owner="Yx", ownerSource="exact-id")
+        serve.save_owner(self.TX_ID, "Yx")
+
+        generations = self.backups("OWNER_PATH")
+        self.assertEqual(len(generations), 2)
+        # Oldest first: the pre-first-save file, then the state the first save
+        # left behind - the one a bad second save has to be undone to.
+        self.assertEqual(generations[0].read_bytes(), self.originals["OWNER_PATH"])
+        self.assertEqual(generations[1].read_bytes(), after_first)
+        self.assertEqual(len(self.backups("AUDIT_PATH")), 2)
+
+    def test_backup_cap_prunes_the_oldest_generations(self):
+        path = self.paths["OWNER_PATH"]
+        self.assertEqual(serve.BACKUP_GENERATIONS, 30)
+        for index in range(5):
+            path.write_text(
+                json.dumps({"tagsById": {}, "generation": index}),
+                encoding="utf-8")
+            serve.snapshot_backups((path,), keep=3)
+        generations = serve.backup_generations(path)
+        self.assertEqual(len(generations), 3)
+        self.assertEqual(
+            [json.loads(copy.read_text(encoding="utf-8"))["generation"]
+             for copy in generations],
+            [2, 3, 4],
+        )
+
     def test_all_backups_snapshot_before_any_write(self):
-        # A write that dies on the LAST file must still find every .bak at the
-        # original generation; the old interleaved order left the audit backup
-        # unwritten in this scenario.
+        # A write that dies on the LAST file must still find every backup at
+        # the original generation; the old interleaved order left the audit
+        # backup unwritten in this scenario.
         self.stage_rebuild(owner="Shared", ownerSource="exact-id")
         real_write = serve.atomic_write_json
 
@@ -774,6 +899,79 @@ class SaveWritePathTests(unittest.TestCase):
         for name in ("OWNER_PATH", "AUDIT_PATH"):
             self.assert_backup_matches_original(name)
         self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+
+    def test_account_review_batch_writes_once_and_audits_once(self):
+        # "Review all N" used to post N requests, each running the validator
+        # and writing its own history row.
+        result = serve.save_account_review(
+            [self.SECOND_BANK_ID, self.BANK_ID], True)
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["ids"], [self.BANK_ID, self.SECOND_BANK_ID])
+        self.assertEqual(result["id"], self.BANK_ID)
+        self.assertTrue(result["reviewed"])
+        self.assertEqual(
+            self.read("ACCOUNT_REVIEW_PATH")["reviewedIds"],
+            [self.BANK_ID, self.SECOND_BANK_ID],
+        )
+        entries = self.read("AUDIT_PATH")["entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["action"], "Reviewed 2 bank transactions")
+        self.assertEqual(
+            entries[0]["transactionIds"], [self.BANK_ID, self.SECOND_BANK_ID])
+        self.assertEqual(entries[0]["changes"], [{
+            "field": "Bank review",
+            "before": "Needs review",
+            "after": "Reviewed",
+        }])
+        # One validation run for the whole batch, not one per row.
+        self.assertEqual(self.script_runs(), ["validate"])
+
+    def test_account_review_batch_records_a_mixed_before_state(self):
+        self.paths["ACCOUNT_REVIEW_PATH"].write_text(
+            json.dumps({"reviewedIds": [self.BANK_ID]}), encoding="utf-8")
+        serve.save_account_review([self.BANK_ID, self.SECOND_BANK_ID], True)
+        change = self.read("AUDIT_PATH")["entries"][0]["changes"][0]
+        self.assertEqual(change["before"], "Reviewed, Needs review")
+        self.assertEqual(change["after"], "Reviewed")
+
+    def test_account_review_batch_reopening_clears_every_row(self):
+        self.paths["ACCOUNT_REVIEW_PATH"].write_text(
+            json.dumps({"reviewedIds": [self.BANK_ID, self.SECOND_BANK_ID]}),
+            encoding="utf-8")
+        serve.save_account_review([self.BANK_ID, self.SECOND_BANK_ID], False)
+        self.assertEqual(self.read("ACCOUNT_REVIEW_PATH")["reviewedIds"], [])
+        entries = self.read("AUDIT_PATH")["entries"]
+        self.assertEqual(entries[0]["action"], "Reopened 2 bank transactions")
+
+    def test_single_account_review_is_unchanged(self):
+        result = serve.save_account_review(self.BANK_ID, True)
+        self.assertEqual(result["id"], self.BANK_ID)
+        self.assertTrue(result["reviewed"])
+        # The single form gained "ids" and nothing else.
+        self.assertEqual(result["ids"], [self.BANK_ID])
+        self.assertEqual(
+            self.read("ACCOUNT_REVIEW_PATH")["reviewedIds"], [self.BANK_ID])
+        entries = self.read("AUDIT_PATH")["entries"]
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["action"], "Reviewed bank transaction")
+        self.assertEqual(entries[0]["transactionId"], self.BANK_ID)
+
+    def test_account_review_batch_with_an_unknown_id_writes_nothing(self):
+        with self.assertRaisesRegex(ValueError, "not present"):
+            serve.save_account_review([self.BANK_ID, "tx_bank_missing"], True)
+        self.assert_untouched("ACCOUNT_REVIEW_PATH", "AUDIT_PATH")
+
+    def test_account_review_batch_over_the_limit_writes_nothing(self):
+        oversized = ["tx_%06d" % n
+                     for n in range(serve.MAX_ACCOUNT_REVIEW_BATCH + 1)]
+        with self.assertRaisesRegex(ValueError, "Between 1 and"):
+            serve.save_account_review(oversized, True)
+        self.assert_untouched("ACCOUNT_REVIEW_PATH", "AUDIT_PATH")
+
+    def test_account_review_backs_up_before_writing(self):
+        serve.save_account_review(self.BANK_ID, True)
+        for name in ("ACCOUNT_REVIEW_PATH", "AUDIT_PATH"):
+            self.assert_backup_matches_original(name)
 
     def test_restore_reports_unrestorable_files_and_restores_the_rest(self):
         good = self.dir / "restorable.json"
@@ -972,6 +1170,35 @@ class PostEndpointTests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertIn("not present", body["error"])
 
+    def test_account_review_batch_reaches_the_save_path(self):
+        # Routes through the real account_transactions.json read; the IDs
+        # cannot exist, so an "ids" body must come back as a validation error
+        # rather than as the single form's "a valid ID is required".
+        status, body = self.post("/api/account-review", json.dumps(
+            {"ids": ["tx_nope0001", "tx_nope0002"], "reviewed": True}))
+        self.assertEqual(status, 400)
+        self.assertIn("not present", body["error"])
+
+    def test_oversized_account_review_batch_is_rejected(self):
+        oversized = ["tx_%06d" % n
+                     for n in range(serve.MAX_ACCOUNT_REVIEW_BATCH + 1)]
+        status, body = self.post("/api/account-review", json.dumps(
+            {"ids": oversized, "reviewed": True}))
+        self.assertEqual(status, 400)
+        self.assertIn("Between 1 and 100", body["error"])
+
+    def test_status_advertises_the_account_review_batch_cap(self):
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("GET", "/api/status",
+                               headers={"Host": "127.0.0.1:%d" % self.port})
+            response = connection.getresponse()
+            status = json.loads(response.read())
+            self.assertEqual(status["accountReviewBatch"], 100)
+            self.assertTrue(status["accountReviews"])
+        finally:
+            connection.close()
+
     def test_browser_lifecycle_heartbeat_and_disconnect(self):
         client_id = "3ecadfb6-1d6b-4f7a-8b5c-2a4373ec2e13"
         status, body = self.post(
@@ -993,6 +1220,168 @@ class PostEndpointTests(unittest.TestCase):
         self.assertIn("UUID", body["error"])
 
 
+class ManualFileBootstrapTests(unittest.TestCase):
+    """A fresh clone has no manual/ at all: Git ignores the whole folder.
+
+    Every save reads the file it is about to update, and two GET endpoints read
+    theirs, so a missing file used to surface as a 500 with a traceback rather
+    than as an empty dashboard.
+    """
+
+    EXPECTED = {
+        "OWNER_PATH": ("owner_tags.json", {"tags": {}, "tagsById": {}}),
+        "RISK_REVIEW_PATH": ("risk_reviews.json", {"recognizedSignals": []}),
+        "ACCOUNT_REVIEW_PATH": ("account_reviews.json", {"reviewedIds": []}),
+        "REMARK_PATH": ("transaction_remarks.json", {"remarksById": {}}),
+        "OVERRIDE_PATH": ("transaction_overrides.json", {"overridesById": {}}),
+        "AUDIT_PATH": ("audit_history.json", {"entries": []}),
+    }
+
+    def setUp(self):
+        self.dir = Path(tempfile.mkdtemp(prefix="serve-bootstrap-"))
+        self.addCleanup(shutil.rmtree, self.dir, ignore_errors=True)
+        # The tree is empty: not even manual/ exists yet.
+        self.manual = self.dir / "manual"
+        for attribute, (filename, _) in self.EXPECTED.items():
+            original = getattr(serve, attribute)
+            setattr(serve, attribute, self.manual / filename)
+            self.addCleanup(setattr, serve, attribute, original)
+
+    def contents(self, filename):
+        return json.loads((self.manual / filename).read_text(encoding="utf-8"))
+
+    def test_creates_exactly_the_six_server_owned_files(self):
+        created = serve.ensure_manual_files()
+        expected = sorted(name for name, _ in self.EXPECTED.values())
+        self.assertEqual(sorted(path.name for path in created), expected)
+        # Nothing else: identity, salary, settlements, game sales, owner rules
+        # and the legacy ledger are user content, and an empty stand-in would
+        # make a file the user has yet to write look answered.
+        self.assertEqual(
+            sorted(path.name for path in self.manual.iterdir()), expected)
+        for filename, default in self.EXPECTED.values():
+            self.assertEqual(self.contents(filename), default)
+
+    def test_is_idempotent_and_leaves_existing_content_alone(self):
+        serve.ensure_manual_files()
+        self.manual.joinpath("audit_history.json").write_text(
+            json.dumps({"entries": [{"id": "audit_kept"}]}), encoding="utf-8")
+        self.assertEqual(serve.ensure_manual_files(), [])
+        self.assertEqual(
+            self.contents("audit_history.json"),
+            {"entries": [{"id": "audit_kept"}]},
+        )
+
+    def test_recreates_only_the_file_that_went_missing(self):
+        serve.ensure_manual_files()
+        self.manual.joinpath("owner_tags.json").unlink()
+        created = serve.ensure_manual_files()
+        self.assertEqual([path.name for path in created], ["owner_tags.json"])
+
+    def test_the_seeded_files_satisfy_the_reads_the_save_paths_do(self):
+        serve.ensure_manual_files()
+        # What each save function pulls out of its file before writing.
+        self.assertEqual(self.contents("owner_tags.json")["tagsById"], {})
+        self.assertEqual(self.contents("transaction_remarks.json")["remarksById"], {})
+        self.assertEqual(
+            self.contents("transaction_overrides.json")["overridesById"], {})
+        self.assertEqual(self.contents("risk_reviews.json")["recognizedSignals"], [])
+        self.assertEqual(self.contents("account_reviews.json")["reviewedIds"], [])
+        self.assertEqual(self.contents("audit_history.json")["entries"], [])
+
+
+class RequestLogTests(unittest.TestCase):
+    """The launcher redirects this server's stderr into a log file.
+
+    An open tab polls two endpoints every five seconds, which was roughly
+    17,000 access lines a day per tab and buried everything worth reading.
+    """
+
+    @classmethod
+    def setUpClass(cls):
+        cls.directory = Path(tempfile.mkdtemp(prefix="serve-log-"))
+        directory = str(cls.directory)
+
+        # Deliberately no log_message override: this is the real logging path.
+        class LoggingHandler(serve.FinanceHandler):
+            def __init__(self, request, client_address, server):
+                super(serve.FinanceHandler, self).__init__(
+                    request, client_address, server, directory=directory
+                )
+
+        cls.server = ThreadingHTTPServer(("127.0.0.1", 0), LoggingHandler)
+        cls.server.auto_stop = False
+        cls.server.dashboard_lifecycle = None
+        cls.port = cls.server.server_address[1]
+        cls.thread = threading.Thread(target=cls.server.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.server.shutdown()
+        cls.thread.join(timeout=5)
+        cls.server.server_close()
+        shutil.rmtree(cls.directory, ignore_errors=True)
+
+    def request(self, method, path, body=None):
+        """Send one request and return (status, captured stderr).
+
+        log_request runs inside send_response, before the response reaches the
+        client, so the log line is already written when this returns.
+        """
+        captured = io.StringIO()
+        real_stderr = sys.stderr
+        sys.stderr = captured
+        try:
+            connection = http.client.HTTPConnection(
+                "127.0.0.1", self.port, timeout=5)
+            try:
+                headers = {
+                    "Host": "127.0.0.1:%d" % self.port,
+                    "Origin": "http://127.0.0.1:%d" % self.port,
+                }
+                if body is not None:
+                    headers["Content-Type"] = "application/json"
+                connection.request(method, path, body=body, headers=headers)
+                response = connection.getresponse()
+                response.read()
+                return response.status, captured.getvalue()
+            finally:
+                connection.close()
+        finally:
+            sys.stderr = real_stderr
+
+    def heartbeat_body(self):
+        return json.dumps({"clientId": "3ecadfb6-1d6b-4f7a-8b5c-2a4373ec2e13"})
+
+    def test_successful_poll_endpoints_are_not_logged(self):
+        for path in ("/api/client-heartbeat", "/api/client-disconnect"):
+            with self.subTest(path=path):
+                status, logged = self.request("POST", path, self.heartbeat_body())
+                self.assertEqual(status, 200)
+                self.assertEqual(logged, "")
+
+    def test_a_failing_poll_request_is_still_logged(self):
+        # Only the quiet 200 is dropped; a rejected heartbeat is a fault.
+        status, logged = self.request(
+            "POST", "/api/client-heartbeat", json.dumps({"clientId": "nope"}))
+        self.assertEqual(status, 400)
+        self.assertIn("/api/client-heartbeat", logged)
+        self.assertIn("400", logged)
+
+    def test_other_endpoints_are_logged_as_before(self):
+        status, logged = self.request("GET", "/api/status")
+        self.assertEqual(status, 200)
+        self.assertIn("/api/status", logged)
+        self.assertIn("200", logged)
+
+    def test_a_heartbeat_with_a_query_string_is_still_quiet(self):
+        status, logged = self.request(
+            "POST", "/api/client-heartbeat?tab=2", self.heartbeat_body())
+        self.assertEqual(status, 200)
+        self.assertEqual(logged, "")
+
+
 class DashboardLifecycleTests(unittest.TestCase):
     def test_disconnect_makes_launcher_server_eligible_to_stop(self):
         lifecycle = serve.DashboardLifecycle(
@@ -1001,6 +1390,17 @@ class DashboardLifecycleTests(unittest.TestCase):
         self.assertEqual(lifecycle.touch(client_id), 1)
         self.assertEqual(lifecycle.disconnect(client_id), 0)
         self.assertTrue(lifecycle._should_shutdown())
+
+    def test_the_empty_grace_outlasts_a_page_reload(self):
+        # A reload leaves the server with no clients between the old tab's
+        # unload and the new page's first heartbeat. Three seconds of grace
+        # could stop the server the user was reloading.
+        lifecycle = serve.DashboardLifecycle(object())
+        self.assertEqual(lifecycle.empty_grace, 15)
+        client_id = "3ecadfb6-1d6b-4f7a-8b5c-2a4373ec2e13"
+        lifecycle.touch(client_id)
+        lifecycle.disconnect(client_id)
+        self.assertFalse(lifecycle._should_shutdown())
 
 
 if __name__ == "__main__":

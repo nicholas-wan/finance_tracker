@@ -1,4 +1,4 @@
-// Month-by-month diverging chart. Above the axis, income and spending sit side
+// Month-by-month diverging chart. Above the axis, income and outflows sit side
 // by side; below it, money moved into investments. The legend doubles as a
 // filter - click a series to drop it and rescale what is left.
 window.Charts = (function () {
@@ -11,7 +11,10 @@ window.Charts = (function () {
   // validated steps instead of reusing the light hexes.
   var SERIES = [
     { key: "income", label: "Income", color: "var(--series-income)", side: "up" },
-    { key: "spent", label: "Spending", color: "var(--series-spent)", side: "up" },
+    // "Outflows", not "Spending": the series counts every non-wealth withdrawal
+    // from the account, so it includes card-bill payments and transfers to your
+    // own accounts - movements of money rather than spending.
+    { key: "spent", label: "Outflows", color: "var(--series-spent)", side: "up" },
     { key: "invested", label: "Invested", color: "var(--series-invested)", side: "down" }
   ];
 
@@ -104,7 +107,7 @@ window.Charts = (function () {
     s.setAttribute("role", "img");
     s.style.display = "block";
     s.setAttribute("aria-label",
-      "Monthly chart with income and spending above the axis and investments below");
+      "Monthly chart with income and outflows above the axis and investments below");
 
     var step = niceStep(Math.max(displayMaxUp, maxDown) || 1);
     for (var v = step; v <= displayMaxUp + 0.01; v += step) {
@@ -200,7 +203,7 @@ window.Charts = (function () {
       var title = document.createElementNS(NS, "title");
       title.textContent = MONTH_NAMES[parseInt(r.month.slice(5), 10) - 1] + " " + r.month.slice(0, 4) +
         "\nIncome " + money0(r.income) +
-        "\nSpending " + money0(r.spent) +
+        "\nOutflows " + money0(r.spent) +
         "\nInvested " + money0(r.invested);
       hit.appendChild(title);
       col.appendChild(hit);
@@ -256,7 +259,8 @@ window.Charts = (function () {
     var note = document.createElement("p");
     note.className = "note";
     note.textContent = "Above the line, what came in against what went out. " +
-      "Below it, what moved into investments." +
+      "Outflows include card-bill payments and transfers to your own accounts; " +
+      "investments are shown below the axis." +
       (hasCappedOutlier ? " ↑ marks an outlier capped to keep typical months readable." : "");
     container.appendChild(note);
   }

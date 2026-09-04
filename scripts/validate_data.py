@@ -168,8 +168,10 @@ def main():
     cards = load(os.path.join(DATA_DIR, "card_transactions.json"))
     account = load(os.path.join(DATA_DIR, "account_transactions.json"))
     output = load(os.path.join(DATA_DIR, "transactions.json"))
-    legacy = load(os.path.join(MANUAL_DIR, "legacy_transactions.json"))
-    owner_data = load(os.path.join(MANUAL_DIR, "owner_tags.json"))
+    legacy = load_optional(
+        os.path.join(MANUAL_DIR, "legacy_transactions.json"), {"transactions": []})
+    owner_data = load_optional(
+        os.path.join(MANUAL_DIR, "owner_tags.json"), {"tags": {}, "tagsById": {}})
     override_data = load_optional(
         os.path.join(MANUAL_DIR, "transaction_overrides.json"), {"overridesById": {}})
     remark_data = load_optional(

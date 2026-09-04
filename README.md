@@ -22,9 +22,12 @@ opening a PowerShell window, starts one editable server, and opens the dashboard
 Right-click the shortcut and choose **Show more options → Pin to taskbar**.
 
 Launcher-started servers track open dashboard tabs. Closing the last tab normally
-stops the server within a few seconds; after a browser crash, the heartbeat timeout
-stops it within about two minutes. Multiple dashboard tabs are supported. Running
-`python scripts/serve.py` manually remains persistent until `Ctrl+C`.
+stops the server within about fifteen seconds; the grace period is long enough that
+reloading the page on a busy machine does not stop the server behind it. After a
+browser crash, the heartbeat timeout stops it within about two minutes. Multiple
+dashboard tabs are supported. Running `python scripts/serve.py` manually remains
+persistent until `Ctrl+C`; the launcher reuses a healthy manually started server and
+only opens the dashboard against it, rather than replacing it.
 
 For a view-only dashboard:
 
@@ -117,7 +120,9 @@ generated-data rebuilds are atomic and roll back if validation fails.
   none: `parse_one.py` refuses to run without `statementHolderName` (the page
   header would otherwise stay in every description), while `build_data.py`
   publishes only the account labels and trusted names the dashboard reads.
-- Owner-policy preview: `python scripts/assign_unassigned.py` (add `--apply` to save)
+- Owner-policy preview: `python scripts/assign_unassigned.py` (add `--apply` to save); it
+  refuses to run while the dashboard server is up (`--force` overrides) and
+  records one audit entry for the whole batch
 - Suspicious-check thresholds: documented constants at the top of
   `scripts/risk_checks.py` (card) and in `analyzeAccountTransactions` in
   `app/js/transaction-grouping.js` (bank)
@@ -144,6 +149,45 @@ Compress-Archive -Path statements, manual -DestinationPath "$env:USERPROFILE\Doc
 ```
 
 To restore, extract both folders into the repository and rerun the import pipeline.
+
+Every save also copies the `manual/` files it is about to change into
+`manual/backups/` under one per-save timestamp, keeping the newest 30 copies of each
+file. To undo a save, copy that timestamp's files back over the live ones and rerun
+`python scripts/build_data.py`. The server creates the manual files it maintains
+(owners, remarks, overrides, reviews, history) empty on startup if they are absent,
+so a fresh clone runs without hand-seeding them.
+
+## Review status
+
+An adversarial review in September 2026 was worked through in three rounds. Done:
+
+- Private identity (statement-holder name, own-account numbers, trusted
+  counterparties) moved into git-ignored `manual/identity.json`; git history was
+  rewritten and republished so no commit ever held them.
+- The write API accepts only the dashboard's own origin and port, or the
+  browser's `Sec-Fetch-Site` attestation, with a JSON content type, so a page on
+  another localhost port cannot post edits.
+- "Unassigned" clears the stable-ID tag everywhere, so merchant rules apply again.
+- Trusted counterparties match by exact name; `*` opts a long stem into
+  word-boundary prefix matching.
+- Card and account classifiers anchor short tokens at word edges; the card
+  parser keeps wrapped description tails and only recognises card section headers
+  between rows.
+- Saves keep rotating timestamped backups in `manual/backups/`; the server seeds
+  its own empty manual files on a fresh clone; bulk assignment writes one audit
+  entry and refuses to run beside a live server; the launcher reuses a hand-started
+  server; bank reviews save in batches; the dashboard patches saved rows in place
+  instead of refetching; heartbeats are not logged.
+
+Still open, in rough priority:
+
+- Whole-word classifier collisions such as GIANT LEAP or COFFEE TABLE need
+  negative patterns; none occur in the current data.
+- No card-testing check (several small charges from never-seen merchants on one
+  day) and no cross-day velocity check for a new merchant.
+- A pre-commit hook that greps staged diffs for names and account numbers.
+- The Python owner-rule merchant key and the dashboard's display merchant key
+  remain two normalisers.
 
 ## Limitations
 

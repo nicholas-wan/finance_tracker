@@ -5,29 +5,44 @@ Policy requested for the existing review queue:
   - every other unassigned transaction -> Nic
 
 Run without ``--apply`` for a preview. The applied change is atomic, removes
-stable tags whose source transactions no longer exist, keeps a timestamped
-backup, rebuilds the dashboard, and runs structural validation.
+stable tags whose source transactions no longer exist, records one audit entry
+covering the whole batch, keeps a timestamped backup of both manual files,
+rebuilds the dashboard, and runs structural validation.
+
+The script refuses to run while the dashboard server is up: serve.py holds a
+write lock this process knows nothing about, so a bulk write here and a save
+from the dashboard could clobber each other.
 """
 
 import argparse
 import json
-import os
 import shutil
-import tempfile
+import sys
+import urllib.error
+import urllib.request
 from datetime import datetime
 from pathlib import Path
 
 from serve import (
+    AUDIT_PATH,
     BUILD_SCRIPT,
     OWNER_PATH,
     TRANSACTIONS_PATH,
     VALIDATE_SCRIPT,
+    append_audit_entry,
     atomic_write_bytes,
+    atomic_write_json,
+    make_audit_entry,
     run_script,
 )
 
 
 SHARED_TERMS = ("DELIVEROO", "GRAB")
+DEFAULT_PORT = 3402
+STATUS_TIMEOUT = 1.0
+SERVER_RUNNING_MESSAGE = (
+    "The dashboard server is running; stop it first or tag from the dashboard."
+)
 
 
 def load(path):
@@ -47,26 +62,65 @@ def plan_assignments(rows):
     return assignments
 
 
-def atomic_write_json(path, payload):
-    descriptor, temporary = tempfile.mkstemp(
-        prefix=path.name + ".", suffix=".tmp", dir=str(path.parent)
-    )
+def server_is_running(port=DEFAULT_PORT, timeout=STATUS_TIMEOUT):
+    """True when something answers /api/status on the loopback port.
+
+    Any HTTP answer counts, including an error status: a server that replies at
+    all owns the manual/ files, whatever it thinks of the request.
+    """
+    url = "http://127.0.0.1:%d/api/status" % port
     try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, indent=1)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+        with urllib.request.urlopen(url, timeout=timeout):
+            return True
+    except urllib.error.HTTPError:
+        return True
+    except Exception:
+        return False
 
 
-def main():
+def build_audit_entry(rows, assignments, stale_ids):
+    """One entry for the whole batch, in the shape /api/audit-history renders."""
+    changes = []
+    if assignments:
+        owners = sorted(set(assignments.values()))
+        changes.append({
+            "field": "Owner",
+            "before": "Untagged",
+            "after": ", ".join(owners),
+        })
+    if stale_ids:
+        changes.append({
+            "field": "Pruned stale tags",
+            "before": str(len(stale_ids)),
+            "after": "0",
+        })
+    if not changes:
+        return None
+    by_id = {row.get("id"): row for row in rows}
+    tx_ids = sorted(assignments)
+    # A batch has no single subject row, so the entry hangs off the first
+    # transaction it touched and carries every id it changed.
+    current = by_id.get(tx_ids[0], {}) if tx_ids else {}
+    return make_audit_entry(
+        current,
+        "Bulk-assigned owners for %d transactions" % len(assignments),
+        changes,
+        transaction_ids=tx_ids,
+    )
+
+
+def main(argv=None):
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT,
+                        help="port the dashboard server would be listening on")
+    parser.add_argument("--force", action="store_true",
+                        help="run even when the dashboard server answers")
+    args = parser.parse_args(argv)
+
+    if not args.force and server_is_running(args.port):
+        print(SERVER_RUNNING_MESSAGE, file=sys.stderr)
+        raise SystemExit(1)
 
     dashboard = load(TRANSACTIONS_PATH)
     rows = dashboard.get("transactions", [])
@@ -89,18 +143,28 @@ def main():
         print("Nothing to change.")
         return
 
-    original = OWNER_PATH.read_bytes()
+    paths = (OWNER_PATH, AUDIT_PATH)
+    originals = {path: path.read_bytes() for path in paths}
     for tx_id in stale_ids:
         tags_by_id.pop(tx_id, None)
     for tx_id, owner in assignments.items():
         tags_by_id[tx_id] = owner
     owner_data["tagsById"] = dict(sorted(tags_by_id.items()))
-    backup = Path(
-        str(OWNER_PATH) + ".pre_bulk_" + datetime.now().strftime("%Y%m%d_%H%M%S") + ".bak"
-    )
-    shutil.copy2(OWNER_PATH, backup)
-    atomic_write_json(OWNER_PATH, owner_data)
+    audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
+    append_audit_entry(audit_data, build_audit_entry(rows, assignments, stale_ids))
+    payloads = {OWNER_PATH: owner_data, AUDIT_PATH: audit_data}
+
+    # One timestamp for both backups: a mixed-generation pair cannot be restored
+    # by hand into a state the repo was ever actually in.
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    backups = {
+        path: Path("%s.pre_bulk_%s.bak" % (path, stamp)) for path in paths
+    }
     try:
+        for path in paths:
+            shutil.copy2(path, backups[path])
+        for path in paths:
+            atomic_write_json(path, payloads[path])
         run_script(BUILD_SCRIPT)
         run_script(VALIDATE_SCRIPT)
         refreshed = load(TRANSACTIONS_PATH)
@@ -113,7 +177,10 @@ def main():
                 "%d transaction(s) remained unassigned after rebuild" % len(remaining)
             )
     except Exception:
-        atomic_write_bytes(OWNER_PATH, original)
+        # Roll back the audit trail too: an entry describing owner tags that
+        # were just reverted is worse than no entry at all.
+        for path in paths:
+            atomic_write_bytes(path, originals[path])
         run_script(BUILD_SCRIPT)
         raise
 
@@ -121,7 +188,8 @@ def main():
         "Applied %d stable owner tag(s), pruned %d stale tag(s), and validated "
         "the rebuilt dashboard." % (len(assignments), len(stale_ids))
     )
-    print("Pre-bulk backup:", backup)
+    for path in paths:
+        print("Pre-bulk backup:", backups[path])
 
 
 if __name__ == "__main__":

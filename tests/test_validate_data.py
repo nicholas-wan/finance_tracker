@@ -259,8 +259,10 @@ def write_tree(root, data):
     write(os.path.join(manual_dir, "legacy_transactions.json"), data["legacy"])
     write(os.path.join(manual_dir, "owner_tags.json"),
           data.get("owner_tags", {"tags": {}, "tagsById": {}}))
-    write(os.path.join(manual_dir, "transaction_overrides.json"), {"overridesById": {}})
-    write(os.path.join(manual_dir, "transaction_remarks.json"), {"remarksById": {}})
+    write(os.path.join(manual_dir, "transaction_overrides.json"),
+          data.get("overrides", {"overridesById": {}}))
+    write(os.path.join(manual_dir, "transaction_remarks.json"),
+          data.get("remarks", {"remarksById": {}}))
     write(os.path.join(manual_dir, "risk_reviews.json"), {"recognizedSignals": []})
     write(os.path.join(manual_dir, "audit_history.json"), {"entries": []})
     write(os.path.join(manual_dir, "account_reviews.json"), {"reviewedIds": []})
@@ -278,13 +280,19 @@ def write_tree(root, data):
     return data_dir, manual_dir
 
 
-def run(mutate=None):
-    """Build the clean tree, apply one edit, and validate it. Returns (failed, text)."""
+def run(mutate=None, omit=()):
+    """Build the clean tree, apply one edit, and validate it. Returns (failed, text).
+
+    `omit` names manual files to delete after the tree is written, which is how
+    a fresh clone looks: manual/ is Git-ignored, so none of it exists yet.
+    """
     data = dataset()
     if mutate:
         mutate(data)
     with tempfile.TemporaryDirectory() as tmp:
         data_dir, manual_dir = write_tree(tmp, data)
+        for filename in omit:
+            os.remove(os.path.join(manual_dir, filename))
         stdout = io.StringIO()
         with patch.object(validate_data, "DATA_DIR", data_dir), \
                 patch.object(validate_data, "MANUAL_DIR", manual_dir), \
@@ -628,6 +636,62 @@ class MalformedKeyTests(unittest.TestCase):
         failed, output = run(mutate)
         self.assertTrue(failed)
         self.assertIn("has invalid date", output)
+
+
+class FreshCloneTests(unittest.TestCase):
+    """manual/ is Git-ignored, so a clone starts with none of those files.
+
+    Every hand-maintained input is optional on disk and reads as empty when it
+    is absent. owner_tags.json and legacy_transactions.json were the last two
+    still loaded unconditionally, which aborted the whole run with a
+    FileNotFoundError traceback instead of validating what was there.
+    """
+
+    @staticmethod
+    def without_legacy(data):
+        """Drop the legacy row: with no file there is no legacy source."""
+        data["legacy"] = {"transactions": []}
+        data["output"]["transactions"] = [
+            row for row in data["output"]["transactions"]
+            if row["provenance"]["sourceType"] != "legacy-manual"
+        ]
+        data["output"]["months"] = sorted(
+            {row["month"] for row in data["output"]["transactions"]})
+        remaining = len(data["output"]["transactions"])
+        integrity = data["output"]["quality"]["integrity"]
+        integrity["sourceTransactions"] = remaining
+        integrity["outputTransactions"] = remaining
+
+    def test_a_tree_without_owner_tags_or_legacy_files_validates(self):
+        failed, output = run(
+            self.without_legacy,
+            omit=("owner_tags.json", "legacy_transactions.json"),
+        )
+        self.assertFalse(failed, output)
+        self.assertNotIn("INTEGRITY ERRORS", output)
+
+    def test_a_missing_owner_tags_file_still_checks_the_rest(self):
+        # Absent is empty, not "skip the checks": a dangling remark is still
+        # an error when owner_tags.json is not there.
+        def mutate(data):
+            self.without_legacy(data)
+            data["remarks"] = {"remarksById": {"tx_gone000000000001": "note"}}
+
+        failed, output = run(mutate, omit=("owner_tags.json",))
+        self.assertTrue(failed)
+        self.assertIn("no longer matches a transaction", output)
+
+    def test_a_tree_with_no_manual_files_at_all_validates(self):
+        failed, output = run(self.without_legacy, omit=(
+            "owner_tags.json",
+            "legacy_transactions.json",
+            "transaction_overrides.json",
+            "transaction_remarks.json",
+            "risk_reviews.json",
+            "audit_history.json",
+            "account_reviews.json",
+        ))
+        self.assertFalse(failed, output)
 
 
 class ManualInputTests(unittest.TestCase):

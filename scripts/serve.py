@@ -16,6 +16,7 @@ import threading
 import time
 import uuid
 from datetime import datetime
+from http import HTTPStatus
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
@@ -62,10 +63,21 @@ ALLOWED_CATEGORIES = {
     "Travel",
     "Work",
 }
+# The account page's "Review all N" control reviews a whole filtered list in
+# one request. The cap matches the owner batch and keeps a request inside the
+# 4KB body limit do_POST enforces.
+MAX_ACCOUNT_REVIEW_BATCH = 100
 WRITE_LOCK = threading.Lock()
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 REPLACE_ATTEMPTS = 5
 REPLACE_RETRY_DELAY = 0.05
+# Backups live in a subfolder of the file they copy, so manual/owner_tags.json
+# is backed up into manual/backups/. Deriving the folder from the file keeps
+# the two together when the paths are repointed at a test tree.
+BACKUP_DIR_NAME = "backups"
+# How many generations of each file to keep. Roughly a working day of saves;
+# past that the disk cost stops buying anything a restore would want.
+BACKUP_GENERATIONS = 30
 
 
 def load_json(path):
@@ -102,12 +114,98 @@ def atomic_write_json(path, payload):
     atomic_write_bytes(path, content)
 
 
-def snapshot_backups(paths):
-    # Every .bak is taken before any live file changes. Interleaving backup and
-    # write per file left mixed-generation backups when a save died midway, so
-    # "copy the .bak files back" could reconstruct a state that never existed.
+def manual_file_defaults():
+    """Every manual file this server writes, with its empty payload.
+
+    Only the files the server itself creates and maintains are listed. The
+    hand-authored ones - identity.json, salary.json, settlements.json,
+    game_sales.json, owner_rules.json, legacy_transactions.json - are user
+    content: the parsers and the builder already treat their absence as
+    "nothing recorded yet", or deliberately refuse to run without them.
+    Seeding an empty stand-in would only make a missing file look answered.
+
+    Resolved on each call so tests that repoint the path constants at a
+    temporary tree get that tree.
+    """
+    return {
+        OWNER_PATH: {"tags": {}, "tagsById": {}},
+        RISK_REVIEW_PATH: {"recognizedSignals": []},
+        ACCOUNT_REVIEW_PATH: {"reviewedIds": []},
+        REMARK_PATH: {"remarksById": {}},
+        OVERRIDE_PATH: {"overridesById": {}},
+        AUDIT_PATH: {"entries": []},
+    }
+
+
+def ensure_manual_files():
+    """Create any missing manual file the server writes. Returns what it made.
+
+    manual/ is Git-ignored, so a fresh clone has none of these. Every save
+    reads the file it is about to update before touching it, and the review
+    and history endpoints read theirs on GET, so an absent file surfaced as a
+    500 with a traceback rather than as an empty dashboard. Idempotent: an
+    existing file is never rewritten, whatever it holds.
+    """
+    created = []
+    for path, default in manual_file_defaults().items():
+        if path.exists():
+            continue
+        path.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(path, default)
+        created.append(path)
+    return created
+
+
+def backup_dir(path):
+    return path.parent / BACKUP_DIR_NAME
+
+
+def backup_generations(path):
+    """Every kept backup of `path`, oldest first.
+
+    The timestamp is fixed-width, so name order is time order.
+    """
+    directory = backup_dir(path)
+    if not directory.is_dir():
+        return []
+    return sorted(directory.glob(path.name + ".*.bak"))
+
+
+def prune_backups(path, keep=BACKUP_GENERATIONS):
+    """Drop all but the newest `keep` generations of one file."""
+    generations = backup_generations(path)
+    for stale in generations[:max(len(generations) - keep, 0)]:
+        try:
+            stale.unlink()
+        except OSError:
+            # Pruning is housekeeping. A locked or already-deleted old copy
+            # must not fail the save whose backup we just took.
+            pass
+
+
+def snapshot_backups(paths, keep=BACKUP_GENERATIONS):
+    """Copy every file to manual/backups/<name>.<timestamp>.bak.
+
+    Every backup is taken before any live file changes. Interleaving backup and
+    write per file left mixed-generation backups when a save died midway, so
+    restoring them could reconstruct a state that never existed. One timestamp
+    is shared by the whole save for the same reason: the files that belong to
+    one generation are identifiable by name alone.
+
+    Backups rotate rather than overwrite. A single <file>.bak meant the second
+    save after a bad one destroyed the only copy of the good state.
+    """
+    stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+    created = []
     for path in paths:
-        shutil.copy2(path, path.with_suffix(path.suffix + ".bak"))
+        directory = backup_dir(path)
+        directory.mkdir(parents=True, exist_ok=True)
+        destination = directory / ("%s.%s.bak" % (path.name, stamp))
+        shutil.copy2(path, destination)
+        created.append(destination)
+    for path in paths:
+        prune_backups(path, keep)
+    return created
 
 
 def restore_originals(paths, originals):
@@ -231,17 +329,35 @@ def validate_risk_review_request(payload, transactions):
 
 
 def validate_account_review_request(payload, transactions):
+    """Resolve a posted bank-review decision to rows in the current statements.
+
+    ``id`` reviews one row; ``ids`` reviews a batch under a single validation
+    run and a single audit entry, which is what the account page's "Review all
+    N" control posts. Both forms return a list so the save path never has to
+    branch on shape.
+    """
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object.")
-    tx_id = payload.get("id")
     reviewed = payload.get("reviewed")
-    if not isinstance(tx_id, str) or not tx_id.startswith("tx_"):
+    if "ids" in payload:
+        ids = payload.get("ids")
+        if (not isinstance(ids, list) or not ids
+                or len(ids) > MAX_ACCOUNT_REVIEW_BATCH):
+            raise ValueError(
+                "Between 1 and %d account transaction IDs are required."
+                % MAX_ACCOUNT_REVIEW_BATCH)
+    else:
+        ids = [payload.get("id")]
+    if any(not isinstance(tx_id, str) or not tx_id.startswith("tx_")
+           for tx_id in ids):
         raise ValueError("A valid account transaction ID is required.")
-    if tx_id not in transactions:
-        raise ValueError("That account transaction is not present in the current statements.")
     if reviewed not in (True, False):
         raise ValueError("Reviewed must be true or false.")
-    return tx_id, reviewed
+    # Deduplicated, so a repeated ID cannot double-count in the audit row list.
+    ids = sorted(set(ids))
+    if any(tx_id not in transactions for tx_id in ids):
+        raise ValueError("That account transaction is not present in the current statements.")
+    return ids, reviewed
 
 
 def validate_remark_request(payload, transactions):
@@ -398,7 +514,8 @@ def save_owner(tx_ids, owner):
                 raise RuntimeError(
                     "Save failed (%s) AND these manual files could not be "
                     "restored, so they may still hold the rejected edit: %s. "
-                    "Copy their .bak files back before saving again."
+                    "Copy their newest copies in manual/backups/ back "
+                    "before saving again."
                     % (save_error, ", ".join(failed_restores))
                 )
             try:
@@ -521,7 +638,8 @@ def save_risk_review(ids, recognized, key=None):
                 raise RuntimeError(
                     "Save failed (%s) AND these manual files could not be "
                     "restored, so they may still hold the rejected edit: %s. "
-                    "Copy their .bak files back before saving again."
+                    "Copy their newest copies in manual/backups/ back "
+                    "before saving again."
                     % (save_error, ", ".join(failed_restores))
                 )
             try:
@@ -597,7 +715,8 @@ def save_remark(tx_id, remark):
                 raise RuntimeError(
                     "Save failed (%s) AND these manual files could not be "
                     "restored, so they may still hold the rejected edit: %s. "
-                    "Copy their .bak files back before saving again."
+                    "Copy their newest copies in manual/backups/ back "
+                    "before saving again."
                     % (save_error, ", ".join(failed_restores))
                 )
             try:
@@ -748,7 +867,8 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                 raise RuntimeError(
                     "Save failed (%s) AND these manual files could not be "
                     "restored, so they may still hold the rejected edit: %s. "
-                    "Copy their .bak files back before saving again."
+                    "Copy their newest copies in manual/backups/ back "
+                    "before saving again."
                     % (save_error, ", ".join(failed_restores))
                 )
             try:
@@ -770,40 +890,59 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         }
 
 
-def save_account_review(tx_id, reviewed):
+def save_account_review(tx_ids, reviewed):
+    """Mark one bank row or a batch reviewed, under one validation run.
+
+    ``tx_ids`` is a single ID string or a list of them; "Review all N" posts
+    the whole filtered list, which used to arrive as N requests, each running
+    the validator and writing its own audit entry.
+    """
+    if isinstance(tx_ids, str) or tx_ids is None:
+        tx_ids = [tx_ids]
     with WRITE_LOCK:
         account_data = load_json(ACCOUNT_TRANSACTIONS_PATH)
         transactions = {
             row.get("id"): row for row in account_data.get("transactions", [])
         }
-        validate_account_review_request(
-            {"id": tx_id, "reviewed": reviewed}, transactions)
-        current = transactions[tx_id]
+        tx_ids, reviewed = validate_account_review_request(
+            {"ids": tx_ids, "reviewed": reviewed}, transactions)
+        current = transactions[tx_ids[0]]
         paths = (ACCOUNT_REVIEW_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
         review_data = json.loads(originals[ACCOUNT_REVIEW_PATH].decode("utf-8"))
         reviewed_ids = set(review_data.get("reviewedIds", []))
-        before = tx_id in reviewed_ids
-        if reviewed:
-            reviewed_ids.add(tx_id)
-        else:
-            reviewed_ids.discard(tx_id)
+        # A batch spans rows that may not agree, so the audit records the set
+        # it moved from rather than one row's state.
+        previous = [
+            label for label, present in (
+                ("Reviewed", any(tx_id in reviewed_ids for tx_id in tx_ids)),
+                ("Needs review", any(tx_id not in reviewed_ids for tx_id in tx_ids)),
+            ) if present
+        ]
+        for tx_id in tx_ids:
+            if reviewed:
+                reviewed_ids.add(tx_id)
+            else:
+                reviewed_ids.discard(tx_id)
         review_data["reviewedIds"] = sorted(reviewed_ids)
+        after = "Reviewed" if reviewed else "Needs review"
         changes = []
-        if before != reviewed:
+        if previous != [after]:
             changes.append({
                 "field": "Bank review",
-                "before": "Reviewed" if before else "Needs review",
-                "after": "Reviewed" if reviewed else "Needs review",
+                "before": ", ".join(previous),
+                "after": after,
             })
         audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
+        if len(tx_ids) == 1:
+            action = ("Reviewed bank transaction" if reviewed
+                      else "Reopened bank transaction")
+        else:
+            action = ("Reviewed %d bank transactions" if reviewed
+                      else "Reopened %d bank transactions") % len(tx_ids)
         append_audit_entry(
             audit_data,
-            make_audit_entry(
-                current,
-                "Reviewed bank transaction" if reviewed else "Reopened bank transaction",
-                changes,
-            ),
+            make_audit_entry(current, action, changes, transaction_ids=tx_ids),
         )
         payloads = {ACCOUNT_REVIEW_PATH: review_data, AUDIT_PATH: audit_data}
         try:
@@ -819,13 +958,17 @@ def save_account_review(tx_id, reviewed):
                 raise RuntimeError(
                     "Save failed (%s) AND these manual files could not be "
                     "restored, so they may still hold the rejected edit: %s. "
-                    "Copy their .bak files back before saving again."
+                    "Copy their newest copies in manual/backups/ back "
+                    "before saving again."
                     % (save_error, ", ".join(failed_restores))
                 )
             raise
         return {
             "ok": True,
-            "id": tx_id,
+            # "id" stays for single-row callers; "ids" carries the whole batch
+            # so the page can repaint every row it just reviewed.
+            "id": tx_ids[0],
+            "ids": tx_ids,
             "reviewed": reviewed,
             "validation": validation_output.splitlines()[0]
             if validation_output else "Validation completed.",
@@ -964,6 +1107,8 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "transactionDetails": True,
                 "auditHistory": True,
                 "accountReviews": True,
+                # How many bank rows one /api/account-review may carry.
+                "accountReviewBatch": MAX_ACCOUNT_REVIEW_BATCH,
                 "owners": ["Nic", "Shared", "Yx", "Untagged"],
             })
             return
@@ -1065,9 +1210,15 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object.")
                 result = save_account_review(
-                    payload.get("id"), payload.get("reviewed"))
+                    payload["ids"] if "ids" in payload else payload.get("id"),
+                    payload.get("reviewed"))
             else:
-                transaction_data = load_json(TRANSACTIONS_PATH)
+                # Read under the write lock: on Windows a concurrent rebuild's
+                # os.replace onto this file raises PermissionError, which would
+                # surface as a 500 on a request that is merely fast-rejecting.
+                # The save functions re-read under the lock themselves.
+                with WRITE_LOCK:
+                    transaction_data = load_json(TRANSACTIONS_PATH)
                 transactions = {
                     row.get("id"): row for row in transaction_data.get("transactions", [])
                 }
@@ -1092,6 +1243,20 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             return
         self.send_json(200, result)
 
+    # Endpoints the open dashboard polls on a timer rather than a user acting.
+    # At one request every five seconds per tab, their access lines were about
+    # 17,000 a day per tab in the log the launcher redirects stderr to, which
+    # buried every line worth reading. Only a plain 200 is skipped: anything
+    # else is a fault worth seeing.
+    QUIET_ENDPOINTS = {"/api/client-heartbeat", "/api/client-disconnect"}
+
+    def log_request(self, code="-", size="-"):
+        status = code.value if isinstance(code, HTTPStatus) else code
+        endpoint = getattr(self, "path", "").split("?", 1)[0]
+        if status == 200 and endpoint in self.QUIET_ENDPOINTS:
+            return
+        super().log_request(code, size)
+
     def end_headers(self):
         # This is a local development dashboard whose HTML, CSS, JavaScript and
         # generated data change together. Caching any one of them can leave the
@@ -1114,7 +1279,11 @@ class FinanceHandler(SimpleHTTPRequestHandler):
 class DashboardLifecycle:
     """Stop a launcher-owned server after its last browser tab disappears."""
 
-    def __init__(self, server, stale_after=120, empty_grace=3, startup_grace=120):
+    # The grace period has to outlast a page reload: between the old tab's
+    # unload and the new page's first heartbeat the server looks abandoned,
+    # and on a busy machine three seconds was not enough - a hard reload could
+    # stop the server the user was reloading.
+    def __init__(self, server, stale_after=120, empty_grace=15, startup_grace=120):
         self.server = server
         self.stale_after = stale_after
         self.empty_grace = empty_grace
@@ -1176,6 +1345,10 @@ def main():
     parser.add_argument("--auto-stop", action="store_true",
                         help="stop after the last dashboard tab closes")
     args = parser.parse_args()
+    # A fresh clone has no manual/ at all; seed the files this server writes
+    # before any request can read one that is not there.
+    for created in ensure_manual_files():
+        print("Created empty %s" % created.relative_to(REPO_ROOT))
     server = ThreadingHTTPServer(("127.0.0.1", args.port), FinanceHandler)
     server.auto_stop = args.auto_stop
     lifecycle = DashboardLifecycle(server) if args.auto_stop else None

@@ -97,6 +97,15 @@
     return label || transaction.description || "Unknown merchant";
   }
 
+  // The label the ledger would show for a statement description, for callers
+  // that hold the raw text rather than a transaction row (the Overview habit
+  // insight). A row you have named yourself still wins in merchantLabel; this
+  // entry point only ever sees statement text, so it derives the name the same
+  // way an unnamed row would.
+  function merchantDisplayName(description) {
+    return merchantLabel({ description: description });
+  }
+
   function accountSourceOrder(transaction) {
     var provenance = transaction.provenance || {};
     function pad(value, width) {
@@ -813,6 +822,7 @@
     groupCountLabel: groupCountLabel,
     groupPurchases: groupPurchases,
     groupAccountTransactions: groupAccountTransactions,
+    merchantDisplayName: merchantDisplayName,
     merchantKey: merchantKey,
     monthLabel: monthLabel,
     settlementPosition: settlementPosition,

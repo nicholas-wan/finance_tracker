@@ -996,3 +996,200 @@ test("the page can reset the toggle without firing its callback", function () {
   listeners.click();
   assert.deepEqual(states, [true, true], "the next click turns grouping back on");
 });
+
+// ---------- Shared merchant naming ----------
+
+test("merchantDisplayName names a description the way the ledger names a row",
+  function () {
+    var rows = [
+      transaction({ description: "Grab* GPC-71541451439149cSINGAPORE" }),
+      transaction({ description: "GRAB RIDES-EC PETALING JAYA" })
+    ];
+    assert.equal(grouping.merchantDisplayName(rows[0].description), "Grab");
+    assert.equal(grouping.groupPurchases(rows)[0].label, "Grab");
+  });
+
+test("merchantDisplayName drops statement references but keeps the merchant",
+  function () {
+    var description = "HARBOUR DELI 8827361902 SINGAPORE";
+    assert.equal(
+      grouping.merchantDisplayName(description),
+      grouping.groupPurchases([transaction({ description: description })])[0].label
+    );
+    assert.match(grouping.merchantDisplayName(description), /HARBOUR DELI/);
+  });
+
+// ---------- Insights, loaded the way the browser loads them ----------
+//
+// app/js/insights.js is a browser-global module: it assigns window.Insights and
+// reads window.FinanceGrouping when a finding is built. Evaluating that exact
+// file in a context holding those two globals tests what the page runs, with no
+// restructuring of the module itself.
+
+var fs = require("node:fs");
+var path = require("node:path");
+var vm = require("node:vm");
+
+function loadInsights() {
+  var source = fs.readFileSync(
+    path.join(__dirname, "..", "app", "js", "insights.js"), "utf8");
+  var context = { window: { FinanceGrouping: grouping } };
+  context.globalThis = context;
+  vm.createContext(context);
+  vm.runInContext(source, context, { filename: "insights.js" });
+  return context.window.Insights;
+}
+
+function accountRow(month, direction, flow, amount) {
+  return {
+    id: [month, direction, flow, amount].join("-"),
+    month: month,
+    date: month + "-15",
+    direction: direction,
+    flow: flow,
+    amount: amount
+  };
+}
+
+// Six statement months of card rows, so the account-level section clears its
+// own six-month threshold and the month-vs-baseline section has a history.
+function cardDataset(extraRows) {
+  var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+  var rows = months.map(function (month, index) {
+    return transaction({
+      id: "card-" + month,
+      description: "CORNER STORE " + index,
+      category: "Groceries",
+      month: month,
+      date: month + "-08",
+      amount: 40
+    });
+  });
+  return {
+    months: months,
+    transactions: rows.concat(extraRows || []),
+    salarySteps: [],
+    settlements: {},
+    // A stale rollup that build_data.py never emits: the findings below must
+    // come from the account rows, so these must make no difference at all.
+    accountMonths: [],
+    accounts: {}
+  };
+}
+
+function accountDataset(months) {
+  var rows = [];
+  months.forEach(function (month, index) {
+    // Interest halves across the span; salary and card bills stay flat.
+    rows.push(accountRow(month, "deposit", "Interest",
+      index === 0 ? 100 : (index === months.length - 1 ? 50 : 70)));
+    rows.push(accountRow(month, "deposit", "Salary", 1000));
+    rows.push(accountRow(month, "withdrawal", "Credit card bill", 300));
+    // Noise the totals must ignore.
+    rows.push(accountRow(month, "withdrawal", "Transfer", 900));
+    rows.push(accountRow(month, "deposit", "Transfer", 25));
+  });
+  return { months: months.slice(), transactions: rows };
+}
+
+function findInsight(items, pattern) {
+  return items.filter(function (item) { return pattern.test(item.title); })[0];
+}
+
+test("interest and card-spending findings derive from the account rows",
+  function () {
+    var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+    var items = loadInsights().build(
+      cardDataset(), "2026-06", accountDataset(months));
+    var interest = findInsight(items, /^Interest earned is/);
+    assert.ok(interest, "the interest trend must render from account deposits");
+    assert.equal(interest.title, "Interest earned is down 50%");
+    var cards = findInsight(items, /^Card spending is/);
+    assert.ok(cards, "the card-spending share must render from account rows");
+    // 6 x S$300 of card bills against 6 x S$1,000 of salary credited.
+    assert.equal(cards.title, "Card spending is 30% of income");
+  });
+
+test("account-level findings keep their six-month threshold", function () {
+  var months = ["2026-03", "2026-04", "2026-05", "2026-06"];
+  var items = loadInsights().build(
+    cardDataset(), "2026-06", accountDataset(months));
+  assert.equal(findInsight(items, /^Interest earned is/), undefined);
+  assert.equal(findInsight(items, /^Card spending is/), undefined);
+});
+
+test("account months after the selected month never enter a finding", function () {
+  var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+  var account = accountDataset(months.concat(["2026-07", "2026-08"]));
+  var items = loadInsights().build(cardDataset(), "2026-06", account);
+  var cards = findInsight(items, /^Card spending is/);
+  assert.ok(cards);
+  assert.match(cards.detail, /over the last 6 months/);
+});
+
+test("a habit is keyed and named exactly as the ledger groups it", function () {
+  var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+  var grabRows = [];
+  months.forEach(function (month, index) {
+    ["Grab* GPC-71541451439149cSINGAPORE", "GRAB RIDES-EC PETALING JAYA"]
+      .forEach(function (description, slot) {
+        grabRows.push(transaction({
+          id: "grab-" + month + "-" + slot,
+          description: description,
+          category: "Transport",
+          month: month,
+          date: month + "-1" + (slot + index % 2),
+          amount: 12
+        }));
+      });
+  });
+  var items = loadInsights().build(
+    cardDataset(grabRows), "2026-06", { months: [], transactions: [] });
+  var habit = findInsight(items, /^Grab:/);
+  assert.ok(habit, "12 charges over 6 months is a habit");
+  assert.equal(habit.filterLabel, "Grab");
+  assert.equal(habit.ids.length, 12, "the drill-down carries every counted row");
+  // The ledger's own grouping is the reference: one merchant, same label.
+  var groups = grouping.groupPurchases(grabRows);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, habit.filterLabel);
+  assert.equal(groups[0].ids.length, habit.ids.length);
+});
+
+test("a name you set outranks statement text in a habit and a largest charge",
+  function () {
+    var months = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
+    var rows = [];
+    months.forEach(function (month, index) {
+      [0, 1].forEach(function (slot) {
+        rows.push(transaction({
+          id: "ride-" + month + "-" + slot,
+          description: "Grab* GPC-" + index + slot + "SINGAPORE",
+          displayName: "Rides",
+          category: "Transport",
+          month: month,
+          date: month + "-1" + slot,
+          amount: 12
+        }));
+      });
+    });
+    rows.push(transaction({
+      id: "big-2026-06",
+      description: "SOME AIRLINE 998877 SINGAPORE",
+      displayName: "Flight home",
+      category: "Travel",
+      month: "2026-06",
+      date: "2026-06-20",
+      amount: 400
+    }));
+    var items = loadInsights().build(
+      cardDataset(rows), "2026-06", { months: [], transactions: [] });
+    var habit = findInsight(items, /^Rides:/);
+    assert.ok(habit, "the habit is titled with the name you set");
+    var largest = findInsight(items, /^Largest charge:/);
+    assert.ok(largest);
+    assert.equal(largest.filterLabel, "Flight home");
+    assert.match(largest.title, /at Flight home$/);
+    assert.equal(largest.ids.length, 1);
+    assert.equal(largest.ids[0], "big-2026-06");
+  });

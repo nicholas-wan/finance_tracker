@@ -16,6 +16,8 @@
     "Retirement (SRS)", "Fixed deposit", "Payment", "Rebates", "Other"
   ];
   var LEDGER_CAP = 400;
+  // Ids per /api/account-review request until /api/status says otherwise.
+  var ACCOUNT_REVIEW_BATCH_LIMIT = 100;
 
   var data = null;
   var account = { transactions: [], months: [] };
@@ -25,6 +27,7 @@
   var groupToggle = null;
   var editor = {
     available: false,
+    accountReviewBatchLimit: ACCOUNT_REVIEW_BATCH_LIMIT,
     toastTimer: null,
     toastHideTimer: null,
     drawerTransactionId: null,
@@ -240,6 +243,92 @@
   function normalizeRemark(value) {
     return value.trim().replace(/\s+/g, " ");
   }
+
+  // ---------- Applying a save without reloading the data file ----------
+  //
+  // Every write endpoint returns what it changed, so a save patches the rows it
+  // names and repaints the panels those fields feed. Refetching the generated
+  // data file (megabytes) and re-rendering every tab to move one owner tag made
+  // tagging a list of rows feel like a page load.
+  //
+  // The refetch stays as the single fallback: a response that does not carry the
+  // expected fields, or names rows this page does not hold, is treated as a
+  // reason to reload rather than to guess.
+  function refetchAfterSave() {
+    return loadJson("data/transactions.json?updated=" + Date.now())
+      .then(function (fresh) {
+        data = fresh;
+        applyIdentity();
+        renderAll();
+      });
+  }
+  // Owner, category, display name, remark and review decisions reach the quality
+  // panel, the ledger and its summary, the settlement, the insights and the two
+  // overview totals - and nothing else on the page.
+  function renderSavedRowEffects(rebuilt) {
+    if (rebuilt) {
+      // Only a whole-row save can change a category, which may retire one from
+      // the filter, and moving a row into or out of Payment/Rebates changes the
+      // headline card figures too.
+      populateTransactionCategoryFilter();
+      renderKpis();
+    }
+    renderDataQuality();
+    renderLedger();
+    renderSplit();
+    renderInsights();
+    renderKeyMetrics();
+    renderCategories();
+  }
+  function reopenDrawerFor(id) {
+    if (editor.drawerTransactionId !== id) return;
+    var updated = data.transactions.find(function (row) { return row.id === id; });
+    if (updated) openTransactionDrawer(updated);
+  }
+  function applySavedRows(payload) {
+    if (!payload || typeof payload !== "object") return false;
+    var rows = [];
+    if (Array.isArray(payload.transactions)) rows = rows.concat(payload.transactions);
+    if (payload.transaction) rows.push(payload.transaction);
+    rows = rows.filter(function (row) { return row && row.id; });
+    var risk = payload.risk && payload.risk.key ? payload.risk : null;
+    if (!rows.length && !risk) return false;
+
+    var byId = {};
+    data.transactions.forEach(function (row) { byId[row.id] = row; });
+    var matched = 0;
+    var rebuilt = false;
+    rows.forEach(function (fields) {
+      var row = byId[fields.id];
+      if (!row) return;
+      matched += 1;
+      // A rebuilt row replaces the held one key for key, so a display name or
+      // remark you cleared disappears instead of lingering. A partial response
+      // (owner, remark) patches only the fields it names. Either way the row
+      // object itself is kept, so open closures still point at live data.
+      if (fields.month !== undefined && fields.amount !== undefined) {
+        rebuilt = true;
+        Object.keys(row).forEach(function (key) {
+          if (!Object.prototype.hasOwnProperty.call(fields, key)) delete row[key];
+        });
+      }
+      Object.keys(fields).forEach(function (key) { row[key] = fields[key]; });
+    });
+    if (risk) {
+      // A review decision is recorded against the signal, not the row, so every
+      // row carrying that key follows it. `primary` is that row's own place in
+      // the group and must survive, or the review queue loses its listed row.
+      data.transactions.forEach(function (row) {
+        if (!row.risk || row.risk.key !== risk.key) return;
+        row.risk.recognized = risk.recognized === true;
+        matched += 1;
+      });
+    }
+    if (!matched) return false;
+    if (payload.quality) data.quality = payload.quality;
+    renderSavedRowEffects(rebuilt);
+    return true;
+  }
   function saveRemark(t, remark, input) {
     input.disabled = true;
     fetch("api/remark", {
@@ -253,12 +342,9 @@
         if (!response.ok) throw new Error(payload.error || "Remark save failed.");
         return payload;
       });
+    }).then(function (payload) {
+      if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      return loadJson("data/transactions.json?updated=" + Date.now());
-    }).then(function (fresh) {
-      data = fresh;
-      applyIdentity();
-      renderAll();
       setTab("transactions");
       showToast(remark ? "Remark saved." : "Remark removed.", "success");
     }).catch(function (error) {
@@ -330,12 +416,9 @@
         if (!response.ok) throw new Error(payload.error || "Owner save failed.");
         return payload;
       });
+    }).then(function (payload) {
+      if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      return loadJson("data/transactions.json?updated=" + Date.now());
-    }).then(function (fresh) {
-      data = fresh;
-      applyIdentity();
-      renderAll();
       setTab("transactions");
       // Tagging runs down a list, so the page must not jump back to the top
       // between rows the way a plain re-render would leave it.
@@ -422,15 +505,11 @@
         if (!response.ok) throw new Error(payload.error || "Review save failed.");
         return payload;
       });
+    }).then(function (payload) {
+      if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      return loadJson("data/transactions.json?updated=" + Date.now());
-    }).then(function (fresh) {
-      data = fresh;
-      applyIdentity();
-      var updated = data.transactions.find(function (row) { return row.id === t.id; });
-      renderAll();
       setTab("transactions");
-      if (updated && editor.drawerTransactionId === t.id) openTransactionDrawer(updated);
+      reopenDrawerFor(t.id);
       showToast(
         recognized
           ? "Transaction marked as recognized."
@@ -500,26 +579,46 @@
       showToast(error.message, "error");
     });
   }
+  // One request per chunk rather than one per row: the endpoint accepts a list,
+  // and a merchant with dozens of flagged rows used to mean dozens of round
+  // trips, each rewriting and revalidating the same file. The server advertises
+  // its own cap in /api/status; the default matches the documented limit for a
+  // server that has not been restarted yet.
   function saveAccountReviewBatch(ids, button) {
     var total = ids.length;
     if (!total) return;
     button.disabled = true;
+    var limit = Math.max(1, Math.floor(Number(editor.accountReviewBatchLimit) ||
+      ACCOUNT_REVIEW_BATCH_LIMIT));
+    var chunks = [];
+    for (var start = 0; start < total; start += limit) {
+      chunks.push(ids.slice(start, start + limit));
+    }
     var saved = 0;
     var chain = Promise.resolve();
-    ids.forEach(function (id) {
+    chunks.forEach(function (chunk) {
       chain = chain.then(function () {
-        button.textContent = "Reviewing " + (saved + 1) + "/" + total + "...";
+        button.textContent = "Reviewing " +
+          Math.min(saved + chunk.length, total) + "/" + total + "...";
         return fetch("api/account-review", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: id, reviewed: true })
+          body: JSON.stringify({ ids: chunk, reviewed: true })
         }).then(function (response) {
           return response.json().catch(function () {
             return { error: "The local server returned an unreadable response." };
           }).then(function (payload) {
             if (!response.ok) throw new Error(payload.error || "Bank review save failed.");
-            accountReviewedIds[id] = true;
-            saved += 1;
+            // The response names the ids it actually recorded; trust that over
+            // the ids we asked about, so a partially accepted chunk is counted
+            // and shown as what it was.
+            var applied = Array.isArray(payload.ids) && payload.ids.length
+              ? payload.ids : chunk;
+            applied.forEach(function (id) {
+              if (payload.reviewed === false) delete accountReviewedIds[id];
+              else accountReviewedIds[id] = true;
+            });
+            saved += applied.length;
           });
         });
       });
@@ -530,8 +629,9 @@
       showToast(saved + " bank transaction" + (saved === 1 ? "" : "s") +
         " marked as reviewed.", "success");
     }).catch(function (error) {
-      // Each save is atomic on the server, so a mid-batch failure leaves the
-      // earlier decisions safely recorded; the re-render shows what is left.
+      // Each request is atomic on the server, so a failure part way through
+      // leaves the earlier chunks safely recorded; the re-render shows what is
+      // left.
       refreshAccountAnalysis();
       renderLedger();
       showToast(saved + " of " + total + " saved, then: " + error.message, "error");
@@ -599,14 +699,10 @@
         if (!response.ok) throw new Error(payload.error || "Transaction save failed.");
         return payload;
       });
+    }).then(function (payload) {
+      if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      return loadJson("data/transactions.json?updated=" + Date.now());
-    }).then(function (fresh) {
-      data = fresh;
-      applyIdentity();
-      var updated = data.transactions.find(function (row) { return row.id === t.id; });
-      renderAll();
-      if (updated) openTransactionDrawer(updated);
+      reopenDrawerFor(t.id);
       showToast("Transaction details saved and validated.", "success");
     }).catch(function (error) {
       status.textContent = error.message;
@@ -991,7 +1087,6 @@
     accountFor(month).forEach(function (t) {
       if (t.direction === "deposit" && t.flow === "Salary") total += t.amount;
     });
-    if (total === 0 && data.accounts && data.accounts[month]) total = data.accounts[month].income || 0;
     return total;
   }
   function investedFor(month) {
@@ -1465,6 +1560,9 @@
     }
   }
 
+  // "spent" is every non-wealth withdrawal, card-bill payments and transfers to
+  // your own accounts included, so the chart plots it as "Outflows" rather than
+  // spending. The KPI tiles keep their own, narrower card-spending figure.
   function allocationFor(month) {
     var moneyIn = 0, invested = 0, spent = 0;
     accountFor(month).forEach(function (t) {
@@ -3495,6 +3593,11 @@
     })
     .then(function (loaded) {
       editor.available = loaded[0].editable === true;
+      // A server that advertises its own batch cap decides how many ids one
+      // bank-review request may carry; an older one keeps the documented default.
+      var batchLimit = Math.floor(Number(loaded[0].accountReviewBatch));
+      editor.accountReviewBatchLimit = batchLimit > 0
+        ? batchLimit : ACCOUNT_REVIEW_BATCH_LIMIT;
       accountReviewedIds = {};
       (loaded[1].reviewedIds || []).forEach(function (txId) {
         accountReviewedIds[txId] = true;

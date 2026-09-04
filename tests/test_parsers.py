@@ -610,5 +610,75 @@ class AccountParserTests(ParserTestCase):
         self.assertEqual(parse_one.classify("PAYNOW-FAST SOMEONE ELSE"), "Transfer")
 
 
+class WriteOutputTempFileTests(ParserTestCase):
+    """The published file is swapped in from a per-process temp file.
+
+    A fixed OUT_PATH + ".tmp" let two concurrent runs interleave writes into one
+    name; whatever the outcome, no temp file may survive the call.
+    """
+
+    def leftovers(self, directory):
+        return [name for name in os.listdir(directory) if name.endswith(".tmp")]
+
+    def test_successful_write_leaves_no_temp_file(self):
+        for module in (parse_cc, parse_one):
+            with self.subTest(module=module.__name__):
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_dir = os.path.join(tmp, "app", "data")
+                    out_path = os.path.join(out_dir, "out.json")
+                    with patch.object(module, "OUT_PATH", out_path):
+                        self.assertTrue(module.write_output({"rows": [1, 2]}, True))
+                    with open(out_path, encoding="utf-8") as handle:
+                        self.assertEqual(json.load(handle), {"rows": [1, 2]})
+                    self.assertEqual(self.leftovers(out_dir), [])
+
+    def test_failed_replace_leaves_no_temp_file_and_no_output(self):
+        for module in (parse_cc, parse_one):
+            with self.subTest(module=module.__name__):
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_dir = os.path.join(tmp, "app", "data")
+                    out_path = os.path.join(out_dir, "out.json")
+                    with patch.object(module, "OUT_PATH", out_path), \
+                            patch.object(module.os, "replace",
+                                         side_effect=PermissionError("locked")), \
+                            patch.object(module.time, "sleep"):
+                        with self.assertRaises(PermissionError):
+                            module.write_output({"rows": [1]}, True)
+                    self.assertFalse(os.path.exists(out_path))
+                    self.assertEqual(self.leftovers(out_dir), [])
+
+    def test_temp_file_name_is_unique_per_call(self):
+        # Two runs writing at once must not share one temp name.
+        for module in (parse_cc, parse_one):
+            with self.subTest(module=module.__name__):
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_dir = os.path.join(tmp, "app", "data")
+                    out_path = os.path.join(out_dir, "out.json")
+                    seen = []
+                    real_replace = os.replace
+
+                    def capture(src, dst, _seen=seen):
+                        _seen.append(os.path.basename(src))
+                        return real_replace(src, dst)
+
+                    with patch.object(module, "OUT_PATH", out_path), \
+                            patch.object(module.os, "replace", side_effect=capture):
+                        module.write_output({"rows": [1]}, True)
+                        module.write_output({"rows": [2]}, True)
+                    self.assertEqual(len(set(seen)), 2)
+                    for name in seen:
+                        self.assertTrue(name.startswith("out.json."))
+                        self.assertTrue(name.endswith(".tmp"))
+
+    def test_failed_run_still_writes_nothing(self):
+        for module in (parse_cc, parse_one):
+            with self.subTest(module=module.__name__):
+                with tempfile.TemporaryDirectory() as tmp:
+                    out_path = os.path.join(tmp, "app", "data", "out.json")
+                    with patch.object(module, "OUT_PATH", out_path):
+                        self.assertFalse(module.write_output({"rows": [1]}, False))
+                    self.assertFalse(os.path.exists(os.path.dirname(out_path)))
+
+
 if __name__ == "__main__":
     unittest.main()
