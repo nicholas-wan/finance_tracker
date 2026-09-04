@@ -142,5 +142,215 @@ class IdentityEmbeddingTests(unittest.TestCase):
             {"tx_one": {"category": "Groceries"}}, "tx_one"))
 
 
+class FoodpandaOrderTests(unittest.TestCase):
+    def order(self, **changes):
+        value = {
+            "orderId": "abcd-2635-efgh",
+            "date": "2026-08-29",
+            "time": "13:09",
+            "fulfillment": "delivery",
+            "merchant": "pandamart (Example)",
+            "amount": 42.50,
+            "category": "Groceries",
+        }
+        value.update(changes)
+        return value
+
+    def card(self, **changes):
+        value = {
+            "id": "tx_foodpanda000000001",
+            "date": "2026-08-29",
+            "description": "fp*Food Panda Singapore",
+            "amount": 42.50,
+            "credit": False,
+        }
+        value.update(changes)
+        return value
+
+    def test_exact_date_and_amount_links_order_to_statement(self):
+        orders, by_transaction = build_data.prepare_foodpanda_orders(
+            {"orders": [self.order()]}, [self.card()])
+        self.assertEqual(orders[0]["statementTransactionId"],
+                         "tx_foodpanda000000001")
+        self.assertEqual(by_transaction["tx_foodpanda000000001"]["category"],
+                         "Groceries")
+
+    def test_amount_mismatch_is_visible_but_not_forced(self):
+        orders, by_transaction = build_data.prepare_foodpanda_orders(
+            {"orders": [self.order()]}, [self.card(amount=42.49)])
+        self.assertNotIn("statementTransactionId", orders[0])
+        self.assertEqual(by_transaction, {})
+
+    def test_ambiguous_duplicate_key_is_not_partially_matched(self):
+        second = self.order(orderId="wxyz-2635-1234")
+        orders, by_transaction = build_data.prepare_foodpanda_orders(
+            {"orders": [self.order(), second]}, [self.card()])
+        self.assertTrue(all("statementTransactionId" not in order for order in orders))
+        self.assertEqual(by_transaction, {})
+
+    def test_category_is_derived_and_cannot_disagree_with_merchant(self):
+        with self.assertRaisesRegex(SystemExit, "category disagrees"):
+            build_data.prepare_foodpanda_orders(
+                {"orders": [self.order(category="Food & dining")]}, [])
+
+
+class ShopeeOrderTests(unittest.TestCase):
+    def source(self, orders):
+        return {
+            "statementFrom": "2026-02-01",
+            "statementThrough": "2026-09-30",
+            "orders": orders,
+        }
+
+    def order(self, order_id="242058592217954", amount=18.90):
+        return {"orderId": order_id, "merchant": "Example Store",
+                "status": "completed", "amount": amount,
+                "items": ["Example item"], "historyIndex": 0}
+
+    def card(self, tx_id="tx_shopee000000000001", amount=18.90, date="2026-08-24"):
+        return {"id": tx_id, "date": date, "description": "SHOPEE SG MP SINGAPORE",
+                "amount": amount, "credit": False}
+
+    def test_unique_amount_links_to_statement(self):
+        orders, matches = build_data.prepare_shopee_orders(
+            self.source([self.order()]), [self.card()])
+        self.assertEqual(orders[0]["statementTransactionId"],
+                         "tx_shopee000000000001")
+        self.assertEqual(matches["tx_shopee000000000001"]["merchant"],
+                         "Example Store")
+        self.assertEqual(matches["tx_shopee000000000001"]["items"],
+                         ["Example item"])
+
+    def test_amount_collision_is_not_forced(self):
+        rows = [self.card(), self.card("tx_shopee000000000002", date="2026-04-10")]
+        orders, matches = build_data.prepare_shopee_orders(
+            self.source([self.order()]), rows)
+        self.assertNotIn("statementTransactionId", orders[0])
+        self.assertEqual(matches, {})
+
+
+class GrabReceiptTests(unittest.TestCase):
+    def test_known_grab_locations_use_home_labels(self):
+        self.assertEqual(
+            build_data.grab_location_label(
+                "Lobby near 123 Example Road",
+                {"123 Example Road": "Home"}),
+            "Home",
+        )
+        self.assertEqual(
+            build_data.grab_location_label(
+                "Near 456 Sample Street", {"456 Sample Street": "Yx's Home"}),
+            "Yx's Home",
+        )
+
+    def receipt(self, **changes):
+        value = {
+            "receiptId": "A-12345678",
+            "date": "2026-08-08",
+            "time": "13:09",
+            "service": "GrabCar",
+            "category": "Transport",
+            "amount": 22.10,
+            "currency": "SGD",
+            "profile": "personal",
+            "corporate": False,
+            "eligibleForPersonalFinance": True,
+            "merchant": "GrabCar",
+            "items": [],
+            "pickup": "Home address",
+            "dropoff": "Destination address",
+            "paymentMethod": "GrabPay Wallet",
+        }
+        value.update(changes)
+        return value
+
+    def card(self, tx_id, amount, description="Grab* GPC-EXAMPLE SINGAPORE"):
+        return {
+            "id": tx_id,
+            "date": "2026-08-08",
+            "description": description,
+            "amount": amount,
+            "credit": False,
+        }
+
+    def test_web_history_adds_missing_booking_and_excludes_business(self):
+        source, stats = build_data.merge_grab_web_history(
+            {"receipts": []},
+            {
+                "fields": ["amount", "bookingCode", "currency", "dateTime",
+                           "dropoff", "fleetType", "pickup", "profile"],
+                "records": [[12.4, "A-WEB-1", "SGD", "16 Jul 2026, 01:07PM",
+                             "Office", "Standard | Car or taxi", "Hotel", "Business"]],
+            },
+        )
+        self.assertEqual(stats, {"records": 1, "added": 1, "enriched": 0})
+        receipt = source["receipts"][0]
+        self.assertEqual(receipt["pickup"], "Hotel")
+        self.assertEqual(receipt["profile"], "business")
+        self.assertTrue(receipt["corporate"])
+        self.assertFalse(receipt["eligibleForPersonalFinance"])
+
+    def test_web_history_enriches_email_without_replacing_receipt_total(self):
+        email = self.receipt(amount=18.0, pickup="", dropoff="")
+        source, stats = build_data.merge_grab_web_history(
+            {"receipts": [email]},
+            {
+                "fields": ["amount", "bookingCode", "currency", "dateTime",
+                           "dropoff", "fleetType", "pickup", "profile"],
+                "records": [[25.6, "A-12345678", "SGD", "08 Aug 2026, 01:09PM",
+                             "Home", "GrabFood", "Restaurant", "Personal"]],
+            },
+        )
+        receipt = source["receipts"][0]
+        self.assertEqual(stats, {"records": 1, "added": 0, "enriched": 1})
+        self.assertEqual(receipt["amount"], 18.0)
+        self.assertEqual(receipt["webHistoryAmount"], 25.6)
+        self.assertTrue(receipt["webHistoryAmountDiffers"])
+        self.assertEqual(receipt["pickup"], "Restaurant")
+
+    def test_one_receipt_can_reconcile_to_split_wallet_funding(self):
+        rows = [self.card("tx_grab_12", 12), self.card("tx_grab_10", 10)]
+        receipts, matches = build_data.prepare_grab_receipts(
+            {"receipts": [self.receipt()]}, rows)
+        self.assertEqual(
+            set(receipts[0]["statementTransactionIds"]),
+            {"tx_grab_12", "tx_grab_10"},
+        )
+        self.assertEqual(set(matches), {"tx_grab_12", "tx_grab_10"})
+
+    def test_exact_receipt_id_survives_unrelated_same_day_charge(self):
+        rows = [
+            self.card("tx_direct", 22.10, "Grab* A-12345678 Singapore"),
+            self.card("tx_unrelated", 2.71, "Grab* A-87654321 Singapore"),
+        ]
+        receipts, matches = build_data.prepare_grab_receipts(
+            {"receipts": [self.receipt(paymentMethod="Visa 7389")]}, rows)
+        self.assertEqual(receipts[0]["statementTransactionIds"], ["tx_direct"])
+        self.assertEqual(set(matches), {"tx_direct"})
+
+    def test_unique_direct_card_amount_matches_before_wallet_grouping(self):
+        rows = [
+            self.card("tx_direct", 22.10, "Grab* DIRECT SINGAPORE"),
+            self.card("tx_unrelated", 2.71, "Grab* OTHER SINGAPORE"),
+        ]
+        receipts, matches = build_data.prepare_grab_receipts(
+            {"receipts": [self.receipt(paymentMethod="7389")]}, rows)
+        self.assertEqual(receipts[0]["statementTransactionIds"], ["tx_direct"])
+        self.assertEqual(set(matches), {"tx_direct"})
+
+    def test_unknown_profile_is_not_guessed_and_flags_must_agree(self):
+        unknown = self.receipt(
+            profile="unknown", eligibleForPersonalFinance=False)
+        receipts, matches = build_data.prepare_grab_receipts(
+            {"receipts": [unknown]}, [self.card("tx_grab_22", 22)])
+        self.assertNotIn("statementTransactionIds", receipts[0])
+        self.assertEqual(matches, {})
+        with self.assertRaisesRegex(SystemExit, "eligibility disagrees"):
+            build_data.prepare_grab_receipts(
+                {"receipts": [self.receipt(eligibleForPersonalFinance=False)]},
+                [],
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

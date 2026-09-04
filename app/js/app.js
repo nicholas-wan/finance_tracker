@@ -9,7 +9,7 @@
   var MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
   var OWNER_ORDER = ["Nic", "Shared", "Yx", "Untagged"];
   var CATEGORY_ORDER = [
-    "Food & dining", "Transport", "Shopping", "Groceries", "Games",
+    "Food & dining", "Transport", "Wallet funding", "Shopping", "Groceries", "Games",
     "Subscriptions", "Insurance", "Healthcare", "Home & furnishings",
     "Entertainment", "Sports & fitness", "Personal care", "Pet care",
     "Travel", "Bills & utilities", "Work", "Fees & charges", "Investment",
@@ -43,6 +43,9 @@
     splitYear: null,
     gameYear: null,
     game: "All",
+    foodpandaOnly: false,
+    shopeeOnly: false,
+    grabOnly: false,
     range: "6",
     series: { income: true, spent: true, invested: true },
     search: "",
@@ -124,7 +127,65 @@
     return "cat-" + category.toLowerCase().replace(/[^a-z]+/g, "-").replace(/^-|-$/g, "");
   }
   function transactionName(t) {
-    return t.displayName || t.description;
+    return t.displayName || (t.foodpanda && t.foodpanda.merchant) ||
+      (t.shopee && t.shopee.merchant) || grabTransactionName(t) || t.description;
+  }
+  function grabReceiptName(receipt) {
+    if (!receipt) return "";
+    if ((receipt.category === "Food & dining" || receipt.category === "Groceries") &&
+        receipt.merchant && receipt.merchant !== "Grab") return receipt.merchant;
+    if (receipt.pickup && receipt.dropoff) {
+      return (receipt.pickupLabel || receipt.pickup) + " → " +
+        (receipt.dropoffLabel || receipt.dropoff);
+    }
+    if (receipt.merchant && receipt.merchant !== "Grab") return receipt.merchant;
+    return receipt.service || "Grab";
+  }
+  function grabTransactionName(t) {
+    if (!t.grab || !Array.isArray(t.grab.receipts)) return "";
+    return t.grab.receipts.map(grabReceiptName).filter(Boolean).join(" · ");
+  }
+  var MERCHANT_LOGOS = [
+    { name: "Grab", src: "assets/merchant-logos/grab.ico", pattern: /(^|\s)GRAB(?:\*|\s|-|$)/ },
+    { name: "Foodpanda", src: "assets/merchant-logos/foodpanda.png", pattern: /FOOD\s?PANDA|FP\*FOOD/ },
+    { name: "Shopee", src: "assets/merchant-logos/shopee.png", pattern: /(^|\s)SHOPEE(?:PAY)?(?:\s|\*|-|$)/ },
+    { name: "FairPrice", src: "assets/merchant-logos/fairprice.png", pattern: /(?:NTUC\s+)?FAIRPRICE|NTUC\s+FP(?:\s|-|$)/ },
+    { name: "Netflix", src: "assets/merchant-logos/netflix.png", pattern: /(^|\s)NETFLIX(?:\s|\*|\.|$)/ },
+    { name: "Spotify", src: "assets/merchant-logos/spotify.png", pattern: /(^|\s)SPOTIFY(?:\s|\*|\.|$)/ },
+    { name: "ActiveSG", src: "assets/merchant-logos/activesg.ico", pattern: /MYACTIVESG|(^|\s)ACTIVESG(?:\s|$)/ },
+    { name: "HoYoverse", src: "assets/merchant-logos/hoyoverse.ico", pattern: /HOYOVERSE|COGNOSPHERE/ },
+    { name: "Apple", src: "assets/merchant-logos/apple.ico", pattern: /APPLE\.COM\/BILL/ },
+    { name: "Prudential", src: "assets/merchant-logos/prudential.ico", pattern: /(^|\s)PRUDENTIAL(?:\s|$)/ },
+    { name: "giga!", src: "assets/merchant-logos/giga.ico", pattern: /(^|\s)GIGA(?:!|\s|$)/ },
+    { name: "McDonald's", src: "assets/merchant-logos/mcdonalds.svg", pattern: /MCDONALD/ },
+    { name: "Starbucks", src: "assets/merchant-logos/starbucks.png", pattern: /STARBUCKS/ },
+    { name: "Deliveroo", src: "assets/merchant-logos/deliveroo.png", pattern: /DELIVEROO/ },
+    { name: "Trip.com", src: "assets/merchant-logos/trip.png", pattern: /TRIP\.COM/ },
+    { name: "ShopBack", src: "assets/merchant-logos/shopback.ico", pattern: /SHOPBACK/ },
+    { name: "The Coffee Bean", src: "assets/merchant-logos/coffeebean.png", pattern: /COFFEE\s+BEAN/ },
+    { name: "Singapore public transport", src: "assets/merchant-logos/singapore-transit.svg", pattern: /BUS[\/\s-]*MRT/ }
+  ];
+  function merchantLogo(value) {
+    var t = value && typeof value === "object" ? value : null;
+    if (t && t.grab) return MERCHANT_LOGOS[0];
+    if (t && t.foodpanda) return MERCHANT_LOGOS[1];
+    if (t && t.shopee) return MERCHANT_LOGOS[2];
+    var text = String(t
+      ? [t.description, t.displayName, transactionName(t)].filter(Boolean).join(" ")
+      : value || "").toUpperCase();
+    return MERCHANT_LOGOS.find(function (logo) { return logo.pattern.test(text); }) || null;
+  }
+  function addMerchantLogo(container, value) {
+    var logo = merchantLogo(value);
+    if (!logo) return;
+    var image = el("img", "merchant-logo");
+    image.src = logo.src;
+    image.alt = "";
+    image.setAttribute("aria-hidden", "true");
+    image.loading = "lazy";
+    image.decoding = "async";
+    container.classList.add("has-merchant-logo");
+    container.insertBefore(image, container.firstChild);
   }
   // Known accounts and trusted counterparties live in the generated data file,
   // not in the source, so they have to be pushed into the grouping module every
@@ -155,6 +216,7 @@
       "Insurance": "var(--cat-insurance)",
       "Healthcare": "var(--cat-healthcare)",
       "Travel": "var(--cat-travel)",
+      "Wallet funding": "var(--text-3)",
       "Work": "var(--cat-work)"
     }[category] || "var(--accent)";
   }
@@ -277,6 +339,7 @@
     renderLedger();
     renderSplit();
     renderInsights();
+    renderSpendingSummary();
     renderKeyMetrics();
     renderCategories();
   }
@@ -746,6 +809,21 @@
     summary.appendChild(amount);
     var summaryTags = el("div", "drawer-summary-tags");
     summaryTags.appendChild(el("span", "cat-pill " + catClass(t.category), t.category));
+    if (t.foodpanda) {
+      summaryTags.appendChild(el("span", "source-badge foodpanda-source", "Foodpanda"));
+    }
+    if (t.shopee) {
+      summaryTags.appendChild(el("span", "source-badge shopee-source", "Shopee"));
+    }
+    if (t.grab) {
+      summaryTags.appendChild(el("span", "source-badge grab-source", "Grab"));
+      if (t.grab.status === "unreconciled") {
+        summaryTags.appendChild(el("span", "source-badge unreconciled-source", "Unreconciled funding"));
+      }
+      if (t.grab.corporate) {
+        summaryTags.appendChild(el("span", "source-badge corporate-source", "Corporate · excluded"));
+      }
+    }
     summaryTags.appendChild(el("span", "owner-tag drawer-owner",
       t.owner === "Untagged" ? "Unassigned" : t.owner));
     if (t.provenance && t.provenance.verified) {
@@ -753,6 +831,101 @@
     }
     summary.appendChild(summaryTags);
     body.appendChild(summary);
+
+    if (t.foodpanda) {
+      var orderEvidence = el("section", "drawer-section foodpanda-evidence");
+      orderEvidence.appendChild(el("h3", "", "Foodpanda order"));
+      var orderMeta = el("div", "drawer-meta");
+      orderMeta.appendChild(drawerMetaRow("Merchant", t.foodpanda.merchant));
+      orderMeta.appendChild(drawerMetaRow("Order number", t.foodpanda.orderId, true));
+      orderMeta.appendChild(drawerMetaRow(
+        "Ordered", dateLabel(t.foodpanda.date) + " at " + t.foodpanda.time));
+      orderMeta.appendChild(drawerMetaRow(
+        "Fulfilment", t.foodpanda.fulfillment === "pickup" ? "Pickup" : "Delivery"));
+      orderMeta.appendChild(drawerMetaRow("Order total", fmt(t.foodpanda.amount)));
+      orderEvidence.appendChild(orderMeta);
+      body.appendChild(orderEvidence);
+    }
+    if (t.shopee) {
+      var shopeeEvidence = el("section", "drawer-section shopee-evidence");
+      shopeeEvidence.appendChild(el("h3", "", "Shopee order"));
+      var shopeeMeta = el("div", "drawer-meta");
+      shopeeMeta.appendChild(drawerMetaRow("Seller", t.shopee.merchant));
+      shopeeMeta.appendChild(drawerMetaRow("Order number", t.shopee.orderId, true));
+      shopeeMeta.appendChild(drawerMetaRow("Status",
+        t.shopee.status.replace(/-/g, " ").replace(/^./, function (c) { return c.toUpperCase(); })));
+      shopeeMeta.appendChild(drawerMetaRow("Order total", fmt(t.shopee.amount)));
+      shopeeEvidence.appendChild(shopeeMeta);
+      if (Array.isArray(t.shopee.items) && t.shopee.items.length) {
+        shopeeEvidence.appendChild(el("h4", "drawer-subheading", "Items"));
+        var itemList = el("ul", "drawer-item-list");
+        t.shopee.items.forEach(function (item) {
+          itemList.appendChild(el("li", "", item));
+        });
+        shopeeEvidence.appendChild(itemList);
+      }
+      body.appendChild(shopeeEvidence);
+    }
+    if (t.grab && Array.isArray(t.grab.receipts)) {
+      t.grab.receipts.forEach(function (receipt, index) {
+        var grabEvidence = el("section", "drawer-section grab-evidence");
+        grabEvidence.appendChild(el("h3", "",
+          t.grab.receipts.length > 1 ? "Grab receipt " + (index + 1) : "Grab receipt"));
+        var grabMeta = el("div", "drawer-meta");
+        grabMeta.appendChild(drawerMetaRow("Service", receipt.service));
+        if (receipt.merchant && receipt.merchant !== "Grab") {
+          grabMeta.appendChild(drawerMetaRow("Merchant", receipt.merchant));
+        }
+        grabMeta.appendChild(drawerMetaRow("Receipt", receipt.receiptId, true));
+        grabMeta.appendChild(drawerMetaRow("Receipt total",
+          (receipt.currency === "MYR" ? "RM " : "S$") +
+          receipt.amount.toLocaleString("en-SG", { minimumFractionDigits: 2, maximumFractionDigits: 2 })));
+        grabMeta.appendChild(drawerMetaRow("Profile",
+          receipt.profile.replace(/^./, function (c) { return c.toUpperCase(); }) +
+          (receipt.corporate ? " · excluded from personal finance" : "")));
+        if (receipt.paymentMethod) {
+          grabMeta.appendChild(drawerMetaRow("Paid by", receipt.paymentMethod));
+        }
+        if (Array.isArray(receipt.evidenceSources) && receipt.evidenceSources.length) {
+          grabMeta.appendChild(drawerMetaRow("Source", receipt.evidenceSources.join(" + ")));
+        }
+        if (receipt.webHistoryAmountDiffers) {
+          grabMeta.appendChild(drawerMetaRow("Grab history total",
+            (receipt.currency === "MYR" ? "RM " : "S$") +
+            receipt.webHistoryAmount.toLocaleString("en-SG", {
+              minimumFractionDigits: 2, maximumFractionDigits: 2
+            }) + " · differs from email receipt"));
+        }
+        if (receipt.category !== "Food & dining" && receipt.category !== "Groceries" &&
+            receipt.pickup && receipt.dropoff) {
+          grabMeta.appendChild(drawerMetaRow("Route",
+            (receipt.pickupLabel || receipt.pickup) + " → " +
+            (receipt.dropoffLabel || receipt.dropoff)));
+        }
+        grabEvidence.appendChild(grabMeta);
+        if (receipt.category !== "Food & dining" && receipt.category !== "Groceries" &&
+            Array.isArray(receipt.items) && receipt.items.length) {
+          grabEvidence.appendChild(el("h4", "drawer-subheading", "Items"));
+          var grabItems = el("ul", "drawer-item-list");
+          receipt.items.forEach(function (item) { grabItems.appendChild(el("li", "", item)); });
+          grabEvidence.appendChild(grabItems);
+        }
+        body.appendChild(grabEvidence);
+      });
+    }
+    if (t.grab && t.grab.status === "unreconciled") {
+      var grabUnreconciled = el("section", "drawer-section grab-unreconciled-evidence");
+      grabUnreconciled.appendChild(el("h3", "", "Grab statement charge"));
+      var grabUnreconciledMeta = el("div", "drawer-meta");
+      grabUnreconciledMeta.appendChild(drawerMetaRow("Status", "Wallet funding · unreconciled"));
+      grabUnreconciledMeta.appendChild(drawerMetaRow("Receipt", "No receipt safely linked"));
+      grabUnreconciledMeta.appendChild(drawerMetaRow(
+        "Treatment", t.categorySource === "manual-override"
+          ? "Included in card outflow; using your saved category override"
+          : "Included in card outflow; not attributed to food or transport"));
+      grabUnreconciled.appendChild(grabUnreconciledMeta);
+      body.appendChild(grabUnreconciled);
+    }
 
     if (t.risk) {
       var riskEditor = buildRiskEditor(t);
@@ -789,6 +962,14 @@
       (t.ruleCategories || []).length > 1
         ? "Rules suggest " + t.ruleCategories.join(" or ") +
           ". Saving confirms the selected category."
+        : t.categorySource === "foodpanda-order"
+        ? "Confirmed from the matched Foodpanda merchant."
+        : t.categorySource === "grab-receipt"
+        ? "Confirmed from the matched personal Grab receipt."
+        : t.categorySource === "grab-corporate"
+        ? "Excluded because the matched Grab receipt uses a corporate profile."
+        : t.categorySource === "grab-unreconciled"
+        ? "No receipt could be safely linked; kept as unallocated Grab wallet funding."
         : t.category === t.ruleCategory
         ? "Currently assigned by the merchant rule."
         : "Manual override. Select " + t.ruleCategory + " to restore the merchant rule."
@@ -1225,6 +1406,18 @@
     );
     document.getElementById("owner-pills").classList.toggle("hidden", bank);
     document.getElementById("show-excluded-label").classList.toggle("hidden", bank);
+    var foodpandaFilter = document.getElementById("foodpanda-filter");
+    foodpandaFilter.classList.toggle("hidden", bank);
+    foodpandaFilter.classList.toggle("active", state.foodpandaOnly);
+    setPressed(foodpandaFilter, state.foodpandaOnly);
+    var shopeeFilter = document.getElementById("shopee-filter");
+    shopeeFilter.classList.toggle("hidden", bank);
+    shopeeFilter.classList.toggle("active", state.shopeeOnly);
+    setPressed(shopeeFilter, state.shopeeOnly);
+    var grabFilter = document.getElementById("grab-filter");
+    grabFilter.classList.toggle("hidden", bank);
+    grabFilter.classList.toggle("active", state.grabOnly);
+    setPressed(grabFilter, state.grabOnly);
     document.getElementById("bank-review-controls").classList.toggle("hidden", !bank);
     document.getElementById("card-rules").classList.toggle("hidden", bank);
     document.getElementById("bank-rules").classList.toggle("hidden", !bank);
@@ -1285,6 +1478,9 @@
     state.owner = options.owner || "All";
     state.category = options.category || "All";
     state.search = options.search || "";
+    state.foodpandaOnly = !!options.foodpandaOnly;
+    state.shopeeOnly = !!options.shopeeOnly;
+    state.grabOnly = !!options.grabOnly;
     state.reviewMode = options.reviewMode || null;
     state.showExcluded = false;
     // Bank-only filters reset with everything else; a drill-down that landed
@@ -1840,6 +2036,15 @@
       "Spending and income stayed close to their recent patterns.",
       "bulb"
     ));
+  }
+
+  function renderSpendingSummary() {
+    var wrap = document.getElementById("spending-summary");
+    var panel = wrap.closest(".spending-summary-panel");
+    var summary = window.Insights.summarize(data, state.month);
+    wrap.textContent = summary.text;
+    panel.classList.remove("warn", "good", "info");
+    panel.classList.add(summary.kind || "info");
   }
 
   // ---------- Income ----------
@@ -2549,6 +2754,11 @@
     var q = state.search.trim().toLowerCase();
     if (state.idFilter && !state.idFilter[t.id]) return false;
     if (!ignorePeriod && !inPeriod(t)) return false;
+    if (state.transactionSource === "card") {
+      if (state.foodpandaOnly && !t.foodpanda) return false;
+      if (state.shopeeOnly && !t.shopee) return false;
+      if (state.grabOnly && !t.grab) return false;
+    }
     if (!state.showExcluded && EXCLUDED[t.category]) return false;
     if (state.owner !== "All" && t.owner !== state.owner) return false;
     if (state.category !== "All" && t.category !== state.category) return false;
@@ -3086,6 +3296,7 @@
       if (group.riskCount) {
         description.appendChild(el("span", "risk-badge risk-medium", "Check"));
       }
+      addMerchantLogo(description, group.label);
       tr.appendChild(description);
       var category = el("td", "col-cat");
       category.appendChild(el("span", "cat-pill " + catClass(group.category), group.category));
@@ -3124,7 +3335,9 @@
     }
     appendLedgerNet(foot, rows);
     document.getElementById("ledger-hint").textContent = periodLabel() +
-      " · grouped by merchant";
+      " · grouped by merchant" + (state.foodpandaOnly ? " · Foodpanda" : "") +
+      (state.shopeeOnly ? " · Shopee" : "") +
+      (state.grabOnly ? " · Grab" : "");
   }
 
   function syncSuspiciousFilterButton() {
@@ -3186,14 +3399,51 @@
       var d = t.date ? t.date.slice(8, 10) + " " + MONTH_NAMES[parseInt(t.date.slice(5, 7), 10) - 1] : "—";
       if (showYear && t.date) d += " " + t.date.slice(2, 4);
       tr.appendChild(el("td", "col-date", d));
-      var tdDesc = el("td", "", transactionName(t));
-      tdDesc.title = t.displayName
-        ? transactionName(t) + " · Statement: " + t.description
-        : t.description;
+      var shopeeItems = t.shopee && Array.isArray(t.shopee.items)
+        ? t.shopee.items.filter(Boolean) : [];
+      var grabReceipts = t.grab && Array.isArray(t.grab.receipts) ? t.grab.receipts : [];
+      var grabName = grabTransactionName(t);
+      var tdDesc = document.createElement("td");
+      if (grabReceipts.length && !t.displayName) {
+        tdDesc.className = "purchase-description";
+        tdDesc.appendChild(el("span", "purchase-description-primary", grabName));
+        var grabSecondaryNames = [];
+        grabReceipts.forEach(function (receipt) {
+          var name = receipt.service;
+          if (name && grabSecondaryNames.indexOf(name) === -1) grabSecondaryNames.push(name);
+        });
+        var grabMeta = el("small", "purchase-description-secondary",
+          (grabSecondaryNames.join(" · ") || "Grab") + " · Receipt matched");
+        if (t.grab.corporate) {
+          grabMeta.appendChild(el("span", "source-badge corporate-source", "Corporate · excluded"));
+        }
+        tdDesc.appendChild(grabMeta);
+      } else if (t.grab && t.grab.status === "unreconciled" && !t.displayName) {
+        tdDesc.className = "purchase-description";
+        tdDesc.appendChild(el("span", "purchase-description-primary", transactionName(t)));
+        tdDesc.appendChild(el("small", "purchase-description-secondary",
+          "Wallet funding · unreconciled"));
+      } else if (shopeeItems.length && !t.displayName) {
+        tdDesc.className = "purchase-description";
+        tdDesc.appendChild(el("span", "purchase-description-primary", shopeeItems.join(" · ")));
+        var shopMeta = el("small", "purchase-description-secondary", t.shopee.merchant);
+        tdDesc.appendChild(shopMeta);
+      } else {
+        tdDesc.appendChild(document.createTextNode(transactionName(t)));
+      }
+      tdDesc.title = grabReceipts.length
+        ? grabName + " · Grab receipt · Statement: " + t.description
+        : shopeeItems.length
+        ? shopeeItems.join(" · ") + " · Seller: " + t.shopee.merchant +
+          " · Statement: " + t.description
+        : (t.displayName || t.foodpanda || t.shopee || t.grab)
+          ? transactionName(t) + " · Statement: " + t.description
+          : t.description;
       if (t.risk && !t.risk.recognized) {
         tdDesc.appendChild(el("span", "risk-badge risk-" + t.risk.severity,
           t.risk.severity === "high" ? "Check now" : "Check"));
       }
+      addMerchantLogo(tdDesc, t);
       tr.appendChild(tdDesc);
       var tdCat = el("td", "col-cat");
       tdCat.appendChild(el("span", "cat-pill " + catClass(t.category), t.category));
@@ -3261,6 +3511,9 @@
     }
     appendLedgerNet(foot, rows);
     document.getElementById("ledger-hint").textContent = periodLabel() +
+      (state.foodpandaOnly ? " · Foodpanda" : "") +
+      (state.shopeeOnly ? " · Shopee" : "") +
+      (state.grabOnly ? " · Grab" : "") +
       (state.reviewMode === "lady-unconfirmed" ? " · Lady card needs confirmation" : "") +
       (state.reviewMode === "category-overlap" ? " · category rules overlap" : "") +
       (state.reviewMode === "delivery-rides" ? " · Grab + Foodpanda" : "");
@@ -3280,6 +3533,7 @@
     renderStacked();
     renderKeyMetrics();
     renderInsights();
+    renderSpendingSummary();
     renderCategories();
     renderOutflows();
     // An edit can retire a category or introduce a new one, so the filter
@@ -3303,6 +3557,7 @@
     renderStacked();
     renderKeyMetrics();
     renderInsights();
+    renderSpendingSummary();
     renderCategories();
     renderOutflows();
     renderLedger();
@@ -3501,6 +3756,36 @@
       // insight's rows; drop the id filter rather than silently intersect.
       setIdFilter(null);
       state.ledgerLimit = LEDGER_CAP;
+      renderLedger();
+    });
+    document.getElementById("foodpanda-filter").addEventListener("click", function () {
+      state.foodpandaOnly = !state.foodpandaOnly;
+      if (state.foodpandaOnly) {
+        state.shopeeOnly = false;
+        state.grabOnly = false;
+      }
+      state.ledgerLimit = LEDGER_CAP;
+      syncTransactionSourceControls();
+      renderLedger();
+    });
+    document.getElementById("shopee-filter").addEventListener("click", function () {
+      state.shopeeOnly = !state.shopeeOnly;
+      if (state.shopeeOnly) {
+        state.foodpandaOnly = false;
+        state.grabOnly = false;
+      }
+      state.ledgerLimit = LEDGER_CAP;
+      syncTransactionSourceControls();
+      renderLedger();
+    });
+    document.getElementById("grab-filter").addEventListener("click", function () {
+      state.grabOnly = !state.grabOnly;
+      if (state.grabOnly) {
+        state.foodpandaOnly = false;
+        state.shopeeOnly = false;
+      }
+      state.ledgerLimit = LEDGER_CAP;
+      syncTransactionSourceControls();
       renderLedger();
     });
     document.getElementById("show-excluded").addEventListener("change", function (e) {

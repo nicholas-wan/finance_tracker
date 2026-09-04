@@ -69,6 +69,9 @@ review-status filters.
 - Card summaries show net cost after refunds, category and owner breakdowns, and
   6M/12M comparisons. **Group purchases** combines normalized merchants without
   merging the source rows.
+- Recognized recurring brands show a compact locally bundled icon beside the
+  transaction. Unmatched merchants stay text-only, and the browser never contacts
+  a merchant or third-party logo service to render the ledger.
 - Bank summaries show opening and closing balances, reconciliation, money movement,
   non-transfer spending, and 6M/12M spending averages. Bank rows can be grouped by
   counterparty; transfers and internal movements can be hidden.
@@ -92,6 +95,23 @@ review-status filters.
   choosing **Unassigned** there clears the tag exactly like the chip does,
   handing the row back to the `manual/owner_rules.json` fallbacks.
 - **History** shows recorded manual changes.
+- **Foodpanda only** filters Transactions to exact order/statement matches.
+  Those rows show the actual merchant with a Foodpanda logo; opening one shows
+  its order number, fulfilment type, timestamp, and total. Mismatches stay in
+  the imported data instead of being forced onto an unrelated card charge.
+- **Shopee only** uses the same Transactions-page pattern: matched charges show
+  the item and seller with a Shopee logo, and the drawer shows the order number,
+  status, total, and every item name captured from the purchase card. Since
+  Shopee hid order dates behind a slider check, only amount groups with equal
+  order/statement cardinality inside the statement-era history are linked.
+- **Grab only** shows every Grab statement charge. Safely matched food rows lead
+  with the stall name, while rides use friendly saved location names where
+  configured. Food item lines and delivery addresses stay out of the interface;
+  unmatched charges remain visible as `Wallet funding · unreconciled` rather
+  than being guessed as food or transport. The drawer keeps the receipt,
+  profile, payment, evidence source, and transport route where available.
+  Business/Corporate matches are categorized as `Payment`; receipts with no
+  profile remain ineligible for matching.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
 renames or extraction line shifts do not detach decisions (replacing a CSV source
@@ -116,8 +136,35 @@ generated-data rebuilds are atomic and roll back if validation fails.
 - Game seller rules: `GAME_RULES` in `scripts/build_data.py`
 - Salary history: `manual/salary.json`
 - Game-account sales: `manual/game_sales.json`
+- Foodpanda order history: `manual/foodpanda_orders.json`. It is Git-ignored;
+  matched pandamart orders classify the corresponding generic card charge as
+  `Groceries`, while a saved transaction override remains authoritative.
+- Shopee purchase history: `manual/shopee_orders.json` (also Git-ignored). The
+  import retains older history and item names even when no statement link can
+  be made safely.
+- Grab Gmail capture: `manual/grab_receipt_search_raw.json` plus any later mail
+  in `manual/grab_receipt_search_supplemental.json`, parsed with `python
+  scripts/import_grab_receipts.py` into `manual/grab_receipts.json`. These files
+  are Git-ignored. Exact receipt references and unique direct-card amount pairs
+  match first. Remaining wallet activity reconciles only when the complete
+  same-day receipt and card-charge groups agree within S$1.50; mixed categories
+  or profiles are never guessed.
+- Grab web history: while signed in, open the Grab Help Centre article **Retrieve
+  detailed Grab transaction history** (`/passenger/en-my/360038782911-How-to-find-my-Grab-transaction-history`).
+  The form can preview and print a PDF for up to 300 transactions from the last
+  six months, filtered by date, Personal/Business receipt type, and
+  Transport/Food/Mart/Express. Split the range into smaller downloads if it
+  reaches 300 rows. Saved rows live in Git-ignored
+  `manual/grab_web_history.json`; the build merges them by booking code, keeps
+  richer Gmail item/payment details, and excludes Business-profile bookings
+  from personal finance. This is useful for filling receipt gaps, but it is
+  service history rather than a GrabPay wallet
+  ledger: it does not show wallet top-ups, transfers, refunds, or running
+  balances, so it cannot by itself allocate every card funding charge.
 - Statement-holder name, own-account labels, fixed-deposit accounts, and trusted
-  counterparties: `manual/identity.json`. It is Git-ignored, so a fresh clone has
+  counterparties: `manual/identity.json`. Optional `grabLocationAliases` entries
+  map private address fragments to friendly route names such as `Home` without
+  placing the addresses in tracked code. It is Git-ignored, so a fresh clone has
   none: `parse_one.py` refuses to run without `statementHolderName` (the page
   header would otherwise stay in every description), while `build_data.py`
   publishes only the account labels and trusted names the dashboard reads.

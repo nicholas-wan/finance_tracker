@@ -1230,3 +1230,22 @@ test("a name you set outranks statement text in a habit and a largest charge",
     assert.equal(largest.ids.length, 1);
     assert.equal(largest.ids[0], "big-2026-06");
   });
+
+test("spending summary states the change, driver and largest purchase", function () {
+  var data = cardDataset([
+    transaction({
+      id: "shopping-2026-06",
+      description: "SHOPEE SINGAPORE",
+      category: "Shopping",
+      month: "2026-06",
+      date: "2026-06-20",
+      amount: 180,
+      shopee: { items: ["Standing desk"], merchant: "Office Shop" }
+    })
+  ]);
+  var summary = loadInsights().summarize(data, "2026-06");
+  assert.equal(summary.kind, "warn");
+  assert.match(summary.text, /higher than your recent typical month/);
+  assert.match(summary.text, /Shopping was the main driver/);
+  assert.match(summary.text, /largest charge was S\$180\.00 for Standing desk/);
+});

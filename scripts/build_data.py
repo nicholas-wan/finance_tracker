@@ -30,6 +30,12 @@ CARDS_PATH = os.path.join(DATA_DIR, "card_transactions.json")
 ACCOUNT_PATH = os.path.join(DATA_DIR, "account_transactions.json")
 OUT_PATH = os.path.join(DATA_DIR, "transactions.json")
 
+FOODPANDA_CATEGORIES = ("Food & dining", "Groceries")
+FOODPANDA_FULFILMENT = ("delivery", "pickup")
+SHOPEE_STATUSES = ("to-receive", "completed", "rated")
+GRAB_CATEGORIES = ("Food & dining", "Groceries", "Transport")
+GRAB_PROFILES = ("personal", "business", "corporate", "unknown")
+
 
 def next_month_key(month):
     year, number = [int(part) for part in month.split("-")]
@@ -241,6 +247,526 @@ def has_category_override(overrides, transaction_id):
     return isinstance(override, dict) and bool(override.get("category"))
 
 
+def is_foodpanda_description(description):
+    value = padded(description)
+    return "FOODPANDA" in value or "FOOD PANDA" in value or "FP*FOOD" in value
+
+
+def prepare_foodpanda_orders(order_data, card_rows):
+    """Validate browser-extracted orders and link only unambiguous card rows.
+
+    Foodpanda's displayed total can differ from the amount charged to the card
+    (wallet credit, vouchers, or another payment method). A link is therefore
+    made only when the transaction date and amount agree exactly and the number
+    of orders equals the number of statement rows for that key. Anything else
+    remains visible as an unmatched order instead of being guessed.
+    """
+    raw_orders = order_data.get("orders", []) if isinstance(order_data, dict) else []
+    if not isinstance(raw_orders, list):
+        raise SystemExit("manual/foodpanda_orders.json orders must be a list")
+
+    orders = []
+    seen = set()
+    for index, raw in enumerate(raw_orders, 1):
+        label = "Foodpanda order %d" % index
+        if not isinstance(raw, dict):
+            raise SystemExit("%s must be an object" % label)
+        order_id = raw.get("orderId")
+        if not isinstance(order_id, str) or not re.match(
+                r"^[a-z0-9]{4}-[0-9]{4}-[a-z0-9]{4}$", order_id, re.I):
+            raise SystemExit("%s has invalid orderId" % label)
+        if order_id in seen:
+            raise SystemExit("Foodpanda orderId %s is duplicated" % order_id)
+        seen.add(order_id)
+        date_value = raw.get("date")
+        try:
+            datetime.strptime(date_value, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            raise SystemExit("%s has invalid date" % label)
+        time_value = raw.get("time")
+        try:
+            datetime.strptime(time_value, "%H:%M")
+        except (TypeError, ValueError):
+            raise SystemExit("%s has invalid time" % label)
+        merchant = raw.get("merchant")
+        if not isinstance(merchant, str) or not merchant.strip():
+            raise SystemExit("%s has no merchant" % label)
+        try:
+            amount = round(float(raw.get("amount")), 2)
+        except (TypeError, ValueError):
+            raise SystemExit("%s has invalid amount" % label)
+        if amount < 0:
+            raise SystemExit("%s has a negative amount" % label)
+        fulfilment = raw.get("fulfillment")
+        if fulfilment not in FOODPANDA_FULFILMENT:
+            raise SystemExit("%s has invalid fulfillment" % label)
+        derived_category = (
+            "Groceries" if re.match(r"^pandamart\b", merchant.strip(), re.I)
+            else "Food & dining"
+        )
+        supplied_category = raw.get("category", derived_category)
+        if supplied_category not in FOODPANDA_CATEGORIES or supplied_category != derived_category:
+            raise SystemExit("%s category disagrees with its merchant" % label)
+        orders.append({
+            "orderId": order_id.lower(),
+            "date": date_value,
+            "time": time_value,
+            "fulfillment": fulfilment,
+            "merchant": merchant.strip(),
+            "amount": amount,
+            "category": derived_category,
+        })
+
+    order_groups = {}
+    for order in orders:
+        key = (order["date"], int(round(order["amount"] * 100)))
+        order_groups.setdefault(key, []).append(order)
+    card_groups = {}
+    for row in card_rows:
+        if row.get("credit") or not is_foodpanda_description(row.get("description", "")):
+            continue
+        key = (row.get("date"), int(round(float(row.get("amount", 0)) * 100)))
+        card_groups.setdefault(key, []).append(row)
+
+    by_transaction = {}
+    for key, grouped_orders in order_groups.items():
+        grouped_rows = card_groups.get(key, [])
+        if len(grouped_orders) != len(grouped_rows):
+            continue
+        for order, row in zip(
+                sorted(grouped_orders, key=lambda item: item["orderId"]),
+                sorted(grouped_rows, key=lambda item: item["id"])):
+            order["statementTransactionId"] = row["id"]
+            by_transaction[row["id"]] = order
+
+    orders.sort(key=lambda item: (item["date"], item["time"], item["orderId"]), reverse=True)
+    return orders, by_transaction
+
+
+def is_shopee_description(description):
+    return "SHOPEE" in padded(description)
+
+
+def prepare_shopee_orders(order_data, card_rows):
+    """Validate Shopee orders and link only equal-cardinality amount groups."""
+    raw_orders = order_data.get("orders", []) if isinstance(order_data, dict) else []
+    if not isinstance(raw_orders, list):
+        raise SystemExit("manual/shopee_orders.json orders must be a list")
+    start = order_data.get("statementFrom")
+    through = order_data.get("statementThrough")
+    match_history_limit = order_data.get("statementOrderMaxHistoryIndex")
+    try:
+        datetime.strptime(start, "%Y-%m-%d")
+        datetime.strptime(through, "%Y-%m-%d")
+    except (TypeError, ValueError):
+        if raw_orders:
+            raise SystemExit("Shopee statement date window is invalid")
+        start = through = None
+    if (match_history_limit is not None
+            and (not isinstance(match_history_limit, int) or match_history_limit < 0)):
+        raise SystemExit("Shopee statement history cutoff is invalid")
+
+    orders = []
+    seen = set()
+    seen_history_indexes = set()
+    for index, raw in enumerate(raw_orders, 1):
+        label = "Shopee order %d" % index
+        if not isinstance(raw, dict):
+            raise SystemExit("%s must be an object" % label)
+        order_id = raw.get("orderId")
+        if not isinstance(order_id, str) or not re.fullmatch(r"\d{10,15}", order_id):
+            raise SystemExit("%s has invalid orderId" % label)
+        if order_id in seen:
+            raise SystemExit("Shopee orderId %s is duplicated" % order_id)
+        seen.add(order_id)
+        merchant = raw.get("merchant")
+        status = raw.get("status")
+        if not isinstance(merchant, str) or not merchant.strip():
+            raise SystemExit("%s has no merchant" % label)
+        if status not in SHOPEE_STATUSES:
+            raise SystemExit("%s has invalid status" % label)
+        try:
+            amount = round(float(raw.get("amount")), 2)
+        except (TypeError, ValueError):
+            raise SystemExit("%s has invalid amount" % label)
+        if amount < 0:
+            raise SystemExit("%s has invalid amount" % label)
+        items = raw.get("items", [])
+        if (not isinstance(items, list)
+                or any(not isinstance(item, str) or not item.strip() for item in items)):
+            raise SystemExit("%s has invalid items" % label)
+        history_index = raw.get("historyIndex", index - 1)
+        if not isinstance(history_index, int) or history_index < 0:
+            raise SystemExit("%s has invalid historyIndex" % label)
+        if history_index in seen_history_indexes:
+            raise SystemExit("Shopee historyIndex %s is duplicated" % history_index)
+        seen_history_indexes.add(history_index)
+        orders.append({
+            "orderId": order_id,
+            "merchant": merchant.strip(),
+            "status": status,
+            "amount": amount,
+            "items": [item.strip() for item in items],
+            "historyIndex": history_index,
+            "category": (
+                "Groceries" if merchant.strip().lower() == "shopee supermarket"
+                else "Shopping"
+            ),
+        })
+
+    order_groups = {}
+    for order in orders:
+        if (match_history_limit is not None
+                and order["historyIndex"] > match_history_limit):
+            continue
+        order_groups.setdefault(int(round(order["amount"] * 100)), []).append(order)
+    card_groups = {}
+    for row in card_rows:
+        row_date = row.get("date")
+        if (row.get("credit") or not is_shopee_description(row.get("description", ""))
+                or not row_date or not start or row_date < start or row_date > through):
+            continue
+        card_groups.setdefault(int(round(float(row.get("amount", 0)) * 100)), []).append(row)
+
+    by_transaction = {}
+    for cents, grouped_orders in order_groups.items():
+        grouped_rows = card_groups.get(cents, [])
+        if not grouped_orders or len(grouped_orders) != len(grouped_rows):
+            continue
+        for order, row in zip(
+                sorted(grouped_orders, key=lambda item: item["historyIndex"]),
+                sorted(grouped_rows, key=lambda item: (item["date"], item["id"]), reverse=True)):
+            order["statementTransactionId"] = row["id"]
+            order["date"] = row["date"]
+            by_transaction[row["id"]] = order
+    orders.sort(key=lambda item: item["historyIndex"])
+    return orders, by_transaction
+
+
+def is_grab_description(description):
+    value = str(description or "").strip().upper()
+    return (bool(re.match(r"^GRAB(?:\*|\s|-)", value))
+            and not value.startswith("SUBSCRIPTIONGRAB"))
+
+
+def grab_location_label(location, aliases=None):
+    """Return a private friendly name when a configured address fragment matches."""
+    original = str(location or "").strip()
+    normalized = " ".join(original.upper().split())
+    aliases = aliases or {}
+    if not isinstance(aliases, dict):
+        raise SystemExit("identity grabLocationAliases must be an object")
+    for address, label in aliases.items():
+        address = " ".join(str(address or "").upper().split())
+        if address and address in normalized and isinstance(label, str) and label.strip():
+            return label.strip()
+    return original
+
+
+def merge_grab_web_history(receipt_data, history_data):
+    """Merge Grab's six-month web history into richer Gmail receipt data.
+
+    Booking codes are stable across both sources. Gmail remains authoritative
+    for item lines, payment method, and receipt total; the web export supplies
+    explicit Personal/Business profile, route, service, and otherwise-missing
+    bookings. A conflicting web amount is retained separately for review.
+    """
+    raw_receipts = (
+        receipt_data.get("receipts", []) if isinstance(receipt_data, dict) else []
+    )
+    if not isinstance(raw_receipts, list):
+        raise SystemExit("manual/grab_receipts.json receipts must be a list")
+    merged = [dict(item) if isinstance(item, dict) else item for item in raw_receipts]
+    for item in merged:
+        if isinstance(item, dict):
+            item.setdefault("webHistoryAmount", None)
+            item.setdefault("webHistoryAmountDiffers", False)
+            item.setdefault("evidenceSources", ["Gmail receipt"])
+    by_id = {
+        item.get("receiptId"): item for item in merged
+        if isinstance(item, dict) and item.get("receiptId")
+    }
+
+    fields = history_data.get("fields", []) if isinstance(history_data, dict) else []
+    records = history_data.get("records", []) if isinstance(history_data, dict) else []
+    if not records:
+        return {"receipts": merged}, {"records": 0, "added": 0, "enriched": 0}
+    if not isinstance(fields, list) or not isinstance(records, list):
+        raise SystemExit("manual/grab_web_history.json has invalid fields or records")
+
+    added = enriched = 0
+    for index, values in enumerate(records, 1):
+        if not isinstance(values, list) or len(values) != len(fields):
+            raise SystemExit("Grab web history record %d has invalid columns" % index)
+        raw = dict(zip(fields, values))
+        booking_code = str(raw.get("bookingCode") or "").strip()
+        if not booking_code:
+            raise SystemExit("Grab web history record %d has no booking code" % index)
+        try:
+            occurred = datetime.strptime(raw.get("dateTime"), "%d %b %Y, %I:%M%p")
+            history_amount = round(float(raw.get("amount")), 2)
+        except (TypeError, ValueError):
+            raise SystemExit("Grab web history record %d has invalid date or amount" % index)
+        profile = str(raw.get("profile") or "").strip().lower()
+        if profile not in ("personal", "business"):
+            raise SystemExit("Grab web history record %d has invalid profile" % index)
+        service = str(raw.get("fleetType") or "Grab").strip()
+        service_key = service.lower()
+        if "food" in service_key:
+            category = "Food & dining"
+        elif "mart" in service_key:
+            category = "Groceries"
+        else:
+            category = "Transport"
+        pickup = str(raw.get("pickup") or "").strip()
+        dropoff = str(raw.get("dropoff") or "").strip()
+        merchant = pickup if category in ("Food & dining", "Groceries") else "Grab"
+        corporate = profile == "business"
+
+        existing = by_id.get(booking_code)
+        if existing is not None:
+            existing["profile"] = profile
+            existing["corporate"] = corporate
+            existing["eligibleForPersonalFinance"] = profile == "personal"
+            if not existing.get("time"):
+                existing["time"] = occurred.strftime("%H:%M")
+            if not existing.get("service") or existing.get("service") == "Grab":
+                existing["service"] = service
+            if not existing.get("pickup"):
+                existing["pickup"] = pickup
+            if not existing.get("dropoff"):
+                existing["dropoff"] = dropoff
+            if (not existing.get("merchant") or existing.get("merchant") == "Grab") and merchant != "Grab":
+                existing["merchant"] = merchant
+            existing["webHistoryAmount"] = history_amount
+            existing["webHistoryAmountDiffers"] = (
+                abs(round(float(existing.get("amount")), 2) - history_amount) > 0.01
+            )
+            existing["evidenceSources"] = ["Gmail receipt", "Grab web history"]
+            enriched += 1
+            continue
+
+        synthesized = {
+            "receiptId": booking_code,
+            "date": occurred.strftime("%Y-%m-%d"),
+            "time": occurred.strftime("%H:%M"),
+            "service": service,
+            "category": category,
+            "amount": history_amount,
+            "currency": str(raw.get("currency") or "").strip().upper(),
+            "profile": profile,
+            "corporate": corporate,
+            "eligibleForPersonalFinance": profile == "personal",
+            "merchant": merchant,
+            "items": [],
+            "pickup": pickup,
+            "dropoff": dropoff,
+            "paymentMethod": "",
+            "webHistoryAmount": history_amount,
+            "webHistoryAmountDiffers": False,
+            "evidenceSources": ["Grab web history"],
+        }
+        merged.append(synthesized)
+        by_id[booking_code] = synthesized
+        added += 1
+
+    return {"receipts": merged}, {
+        "records": len(records), "added": added, "enriched": enriched,
+    }
+
+
+def prepare_grab_receipts(receipt_data, card_rows, location_aliases=None):
+    """Validate Grab receipts and match only strongly supported statement charges.
+
+    Exact receipt references and unique direct-card charges are matched first.
+    Remaining GrabPay wallet funding is commonly rounded or split across card
+    rows, so a receipt amount is not expected to equal one statement row. Those
+    rows link only when the full same-day receipt and card groups reconcile
+    within S$1.50 and agree on category and corporate status. Unknown profiles
+    never match. Corporate receipts may link for auditability but are categorized
+    as Payment so they stay out of personal spending totals.
+    """
+    raw_receipts = (
+        receipt_data.get("receipts", []) if isinstance(receipt_data, dict) else []
+    )
+    if not isinstance(raw_receipts, list):
+        raise SystemExit("manual/grab_receipts.json receipts must be a list")
+    receipts = []
+    seen = set()
+    for index, raw in enumerate(raw_receipts, 1):
+        label = "Grab receipt %d" % index
+        if not isinstance(raw, dict):
+            raise SystemExit("%s must be an object" % label)
+        receipt_id = raw.get("receiptId")
+        if not isinstance(receipt_id, str) or not receipt_id.strip():
+            raise SystemExit("%s has invalid receiptId" % label)
+        if receipt_id in seen:
+            raise SystemExit("Grab receiptId %s is duplicated" % receipt_id)
+        seen.add(receipt_id)
+        date_value = raw.get("date")
+        try:
+            datetime.strptime(date_value, "%Y-%m-%d")
+        except (TypeError, ValueError):
+            raise SystemExit("%s has invalid date" % label)
+        time_value = raw.get("time", "")
+        if time_value:
+            try:
+                datetime.strptime(time_value, "%H:%M")
+            except (TypeError, ValueError):
+                raise SystemExit("%s has invalid time" % label)
+        try:
+            amount = round(float(raw.get("amount")), 2)
+        except (TypeError, ValueError):
+            raise SystemExit("%s has invalid amount" % label)
+        if amount < 0:
+            raise SystemExit("%s has negative amount" % label)
+        category = raw.get("category")
+        profile = str(raw.get("profile", "unknown")).lower()
+        if category not in GRAB_CATEGORIES:
+            raise SystemExit("%s has invalid category" % label)
+        if profile not in GRAB_PROFILES:
+            raise SystemExit("%s has invalid profile" % label)
+        corporate = profile in ("business", "corporate")
+        if bool(raw.get("corporate")) != corporate:
+            raise SystemExit("%s corporate flag disagrees with profile" % label)
+        eligible = profile == "personal"
+        if bool(raw.get("eligibleForPersonalFinance")) != eligible:
+            raise SystemExit(
+                "%s personal-finance eligibility disagrees with profile" % label
+            )
+        items = raw.get("items", [])
+        if (not isinstance(items, list)
+                or any(not isinstance(item, str) or not item.strip() for item in items)):
+            raise SystemExit("%s has invalid items" % label)
+        pickup = str(raw.get("pickup") or "").strip()
+        dropoff = str(raw.get("dropoff") or "").strip()
+        receipt = {
+            "receiptId": receipt_id.strip(),
+            "date": date_value,
+            "time": time_value,
+            "service": str(raw.get("service") or "Grab").strip(),
+            "category": category,
+            "amount": amount,
+            "currency": str(raw.get("currency") or "").upper(),
+            "profile": profile,
+            "corporate": corporate,
+            "eligibleForPersonalFinance": eligible,
+            "merchant": str(raw.get("merchant") or "Grab").strip(),
+            "items": [item.strip() for item in items],
+            "pickup": pickup,
+            "dropoff": dropoff,
+            "pickupLabel": grab_location_label(pickup, location_aliases),
+            "dropoffLabel": grab_location_label(dropoff, location_aliases),
+            "paymentMethod": str(raw.get("paymentMethod") or "").strip(),
+            "webHistoryAmount": raw.get("webHistoryAmount"),
+            "webHistoryAmountDiffers": bool(raw.get("webHistoryAmountDiffers")),
+            "evidenceSources": list(raw.get("evidenceSources", [])),
+        }
+        receipts.append(receipt)
+
+    by_transaction = {}
+    matched_receipt_ids = set()
+    matched_row_ids = set()
+
+    def link(grouped_receipts, grouped_rows):
+        for receipt in grouped_receipts:
+            receipt.setdefault("statementTransactionIds", [])
+            for row in grouped_rows:
+                if row["id"] not in receipt["statementTransactionIds"]:
+                    receipt["statementTransactionIds"].append(row["id"])
+                by_transaction.setdefault(row["id"], []).append(receipt)
+
+    eligible_receipts = [
+        receipt for receipt in receipts
+        if receipt["profile"] != "unknown" and receipt["currency"] == "SGD"
+    ]
+    eligible_rows = [
+        row for row in card_rows
+        if not row.get("credit") and is_grab_description(row.get("description"))
+    ]
+
+    def attach_one(receipt, row):
+        link([receipt], [row])
+        matched_receipt_ids.add(receipt["receiptId"])
+        matched_row_ids.add(row["id"])
+
+    # An exact receipt reference is stronger evidence than the daily totals and
+    # must survive an unrelated Grab charge on the same date.
+    for receipt in eligible_receipts:
+        receipt_id = receipt["receiptId"].upper()
+        candidates = [
+            row for row in eligible_rows
+            if row["id"] not in matched_row_ids
+            and row.get("date") == receipt["date"]
+            and receipt_id in str(row.get("description") or "").upper()
+            and abs(float(row.get("amount", 0)) - receipt["amount"]) <= 0.01
+        ]
+        if len(candidates) == 1:
+            attach_one(receipt, candidates[0])
+
+    def direct_card_payment(receipt):
+        method = receipt["paymentMethod"].strip().upper()
+        return bool(method) and not any(value in method for value in (
+            "GRABPAY", "PAYLATER", "EVERYONE PAYS",
+        ))
+
+    # Older direct-card receipts may omit their ID from the statement. Link only
+    # a unique same-date, exact-amount pair; competing candidates remain open.
+    proposals = {}
+    for receipt in eligible_receipts:
+        if (receipt["receiptId"] in matched_receipt_ids
+                or not direct_card_payment(receipt)):
+            continue
+        candidates = [
+            row for row in eligible_rows
+            if row["id"] not in matched_row_ids
+            and row.get("date") == receipt["date"]
+            and abs(float(row.get("amount", 0)) - receipt["amount"]) <= 0.01
+        ]
+        if len(candidates) == 1:
+            proposals.setdefault(candidates[0]["id"], []).append(
+                (receipt, candidates[0]))
+    for pairs in proposals.values():
+        if len(pairs) == 1:
+            attach_one(*pairs[0])
+
+    receipt_groups = {}
+    for receipt in eligible_receipts:
+        if receipt["receiptId"] not in matched_receipt_ids:
+            receipt_groups.setdefault(receipt["date"], []).append(receipt)
+    card_groups = {}
+    for row in eligible_rows:
+        if row["id"] not in matched_row_ids:
+            card_groups.setdefault(row.get("date"), []).append(row)
+
+    for date_value, grouped_receipts in receipt_groups.items():
+        grouped_rows = card_groups.get(date_value, [])
+        if not grouped_rows:
+            continue
+        if len({receipt["category"] for receipt in grouped_receipts}) != 1:
+            continue
+        if len({receipt["corporate"] for receipt in grouped_receipts}) != 1:
+            continue
+        receipt_total = sum(receipt["amount"] for receipt in grouped_receipts)
+        card_total = sum(float(row.get("amount", 0)) for row in grouped_rows)
+        if abs(receipt_total - card_total) > 1.50:
+            continue
+        if len(grouped_receipts) == len(grouped_rows):
+            for receipt, row in zip(
+                    sorted(grouped_receipts, key=lambda item: (item["amount"], item["receiptId"])),
+                    sorted(grouped_rows, key=lambda item: (float(item.get("amount", 0)), item["id"]))):
+                link([receipt], [row])
+        elif len(grouped_receipts) == 1:
+            link(grouped_receipts, grouped_rows)
+        elif len(grouped_rows) == 1:
+            link(grouped_receipts, grouped_rows)
+
+    receipts.sort(
+        key=lambda item: (item["date"], item["time"], item["receiptId"]), reverse=True
+    )
+    return receipts, by_transaction
+
+
 def game_of(description):
     d = padded(description)
     for name, patterns in GAME_RULES:
@@ -348,6 +874,20 @@ def main():
         raise SystemExit("No card_transactions.json - run scripts/parse_cc.py first")
 
     rows = list(cards.get("transactions", []))
+    identity_file = manual("identity.json", {})
+    foodpanda_orders, foodpanda_by_transaction = prepare_foodpanda_orders(
+        manual("foodpanda_orders.json", {"orders": []}), rows
+    )
+    shopee_orders, shopee_by_transaction = prepare_shopee_orders(
+        manual("shopee_orders.json", {"orders": []}), rows
+    )
+    grab_source, grab_history_stats = merge_grab_web_history(
+        manual("grab_receipts.json", {"receipts": []}),
+        manual("grab_web_history.json", {"fields": [], "records": []}),
+    )
+    grab_receipts, grab_by_transaction = prepare_grab_receipts(
+        grab_source, rows, identity_file.get("grabLocationAliases") or {}
+    )
     covered = set(cards.get("months", []))
 
     legacy = list(manual("legacy_transactions.json", {}).get("transactions", []))
@@ -388,7 +928,31 @@ def main():
         rule_categories = category_matches(r["description"])
         rule_category = rule_categories[0] if rule_categories else "Other"
         override = transaction_overrides.get(r["id"], {})
-        category = override.get("category", rule_category)
+        foodpanda_order = foodpanda_by_transaction.get(r["id"])
+        shopee_order = shopee_by_transaction.get(r["id"])
+        grab_matches = grab_by_transaction.get(r["id"], [])
+        grab_statement = is_grab_description(r["description"])
+        grab_unreconciled = grab_statement and not grab_matches
+        grab_corporate = bool(grab_matches and grab_matches[0]["corporate"])
+        grab_category = grab_matches[0]["category"] if grab_matches else None
+        inferred_category = (
+            "Payment" if grab_corporate
+            else foodpanda_order["category"] if foodpanda_order
+            else shopee_order["category"] if shopee_order
+            else grab_category if grab_matches
+            else "Wallet funding" if grab_unreconciled
+            else rule_category
+        )
+        category = override.get("category", inferred_category)
+        category_source = (
+            "manual-override" if override.get("category")
+            else "grab-corporate" if grab_corporate
+            else "foodpanda-order" if foodpanda_order
+            else "shopee-order" if shopee_order
+            else "grab-receipt" if grab_matches
+            else "grab-unreconciled" if grab_unreconciled
+            else "merchant-rule"
+        )
         if category == "Payment":
             tx_type = "payment"
         elif r.get("credit"):
@@ -441,12 +1005,45 @@ def main():
             "owner": owner or "Untagged",
             "ownerSource": owner_source,
             "category": category,
+            "categorySource": category_source,
             "ruleCategory": rule_category,
             "ruleCategories": rule_categories,
             "provenance": r["provenance"],
         }
         if r.get("foreign"):
             record["foreign"] = r["foreign"]
+        if foodpanda_order:
+            record["foodpanda"] = {
+                key: foodpanda_order[key]
+                for key in ("orderId", "date", "time", "fulfillment", "merchant", "amount")
+            }
+        if shopee_order:
+            record["shopee"] = {
+                key: shopee_order[key]
+                for key in (
+                    "orderId", "merchant", "status", "amount", "items", "historyIndex"
+                )
+            }
+        if grab_statement:
+            record["grab"] = {
+                "status": "receipt-matched" if grab_matches else "unreconciled",
+                "kind": "receipt" if grab_matches else "wallet-funding",
+                "corporate": grab_corporate,
+                "receipts": [
+                    {
+                        key: receipt[key]
+                        for key in (
+                            "receiptId", "date", "time", "service", "category",
+                            "amount", "currency", "profile", "corporate", "merchant",
+                            "items", "pickup", "dropoff", "paymentMethod",
+                            "pickupLabel", "dropoffLabel",
+                            "webHistoryAmount", "webHistoryAmountDiffers",
+                            "evidenceSources",
+                        )
+                    }
+                    for receipt in grab_matches
+                ],
+            }
         display_name = override.get("displayName")
         if display_name:
             record["displayName"] = display_name
@@ -477,7 +1074,6 @@ def main():
     # Only the two fields the dashboard actually reads are published. The
     # holder's name and the fixed-deposit account numbers stay in manual/,
     # because nothing in app/ needs them and app/data/ is easy to copy around.
-    identity_file = manual("identity.json", {})
     identity = {
         "knownAccounts": identity_file.get("knownAccounts") or {},
         "trustedCounterparties": identity_file.get("trustedCounterparties") or [],
@@ -632,6 +1228,51 @@ def main():
             "merchantRule": tagged_rule,
             "unassigned": len(untagged_rows),
         },
+        "foodpanda": {
+            "orders": len(foodpanda_orders),
+            "matched": len(foodpanda_by_transaction),
+            "unmatched": len(foodpanda_orders) - len(foodpanda_by_transaction),
+            "groceries": sum(
+                1 for order in foodpanda_orders if order["category"] == "Groceries"
+            ),
+        },
+        "shopee": {
+            "orders": len(shopee_orders),
+            "matched": len(shopee_by_transaction),
+            "unmatched": len(shopee_orders) - len(shopee_by_transaction),
+            "groceries": sum(
+                1 for order in shopee_orders if order["category"] == "Groceries"
+            ),
+        },
+        "grab": {
+            "receipts": len(grab_receipts),
+            "webHistoryRecords": grab_history_stats["records"],
+            "webHistoryAdded": grab_history_stats["added"],
+            "webHistoryEnriched": grab_history_stats["enriched"],
+            "personal": sum(1 for receipt in grab_receipts if receipt["profile"] == "personal"),
+            "corporate": sum(1 for receipt in grab_receipts if receipt["corporate"]),
+            "unknownProfile": sum(
+                1 for receipt in grab_receipts if receipt["profile"] == "unknown"
+            ),
+            "matched": sum(
+                1 for receipt in grab_receipts if receipt.get("statementTransactionIds")
+            ),
+            "matchedTransactions": len(grab_by_transaction),
+            "statementTransactions": sum(
+                1 for row in rows
+                if not row.get("credit") and is_grab_description(row.get("description"))
+            ),
+            "unreconciledTransactions": sum(
+                1 for row in rows
+                if (not row.get("credit")
+                    and is_grab_description(row.get("description"))
+                    and row["id"] not in grab_by_transaction)
+            ),
+            "corporateExcluded": sum(
+                1 for receipt in grab_receipts
+                if receipt["corporate"] and receipt.get("statementTransactionIds")
+            ),
+        },
     }
 
     os.makedirs(DATA_DIR, exist_ok=True)
@@ -657,6 +1298,9 @@ def main():
                 "identity": identity,
                 "freshness": freshness,
                 "quality": quality,
+                "foodpandaOrders": foodpanda_orders,
+                "shopeeOrders": shopee_orders,
+                "grabReceipts": grab_receipts,
                 "transactions": transactions,
             }, f, indent=1)
         for attempt in range(5):
@@ -686,6 +1330,18 @@ def main():
           % (len(salary.get("steps", [])), len(salary.get("years", [])), len(sales)))
     print("Remarks %d" % len(remarks_by_id))
     print("Transaction overrides %d" % len(transaction_overrides))
+    print("Foodpanda orders %d (%d matched to statement rows)"
+          % (len(foodpanda_orders), len(foodpanda_by_transaction)))
+    print("Shopee orders %d (%d matched to statement rows)"
+          % (len(shopee_orders), len(shopee_by_transaction)))
+    print("Grab receipts %d (%d matched receipts across %d statement rows; %d corporate excluded)"
+          % (
+              len(grab_receipts),
+              sum(1 for receipt in grab_receipts if receipt.get("statementTransactionIds")),
+              len(grab_by_transaction),
+              sum(1 for receipt in grab_receipts
+                  if receipt["corporate"] and receipt.get("statementTransactionIds")),
+          ))
     print("Transaction checks: %d to review, %d recognized"
           % (risk_summary["count"], risk_summary["recognized"]))
     if filled:

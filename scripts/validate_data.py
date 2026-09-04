@@ -15,7 +15,7 @@ from datetime import date, datetime
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from build_data import tag_key  # noqa: E402
+from build_data import is_grab_description, merge_grab_web_history, tag_key  # noqa: E402
 from risk_checks import signal_key  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -167,6 +167,253 @@ def validate_rows(name, rows, errors):
         errors.append("%s contains %d duplicate transaction ID(s)" % (name, duplicates))
 
 
+def validate_foodpanda(manual_data, output, final_by_id, errors):
+    source = manual_data.get("orders", []) if isinstance(manual_data, dict) else []
+    has_published_surface = (
+        "foodpandaOrders" in output
+        or "foodpanda" in output.get("quality", {})
+    )
+    # Generated fixtures and pre-feature datasets legitimately have neither
+    # source orders nor a Foodpanda surface. Once either exists, require the
+    # complete reciprocal structure below.
+    if not source and not has_published_surface:
+        return
+    published = output.get("foodpandaOrders", [])
+    if not isinstance(source, list) or not isinstance(published, list):
+        errors.append("Foodpanda source and published orders must be lists")
+        return
+    source_by_id = {
+        order.get("orderId"): order for order in source if isinstance(order, dict)
+    }
+    published_by_id = {
+        order.get("orderId"): order for order in published if isinstance(order, dict)
+    }
+    if len(source_by_id) != len(source):
+        errors.append("manual Foodpanda orders contain a missing or duplicate orderId")
+    if set(source_by_id) != set(published_by_id):
+        errors.append("published Foodpanda orders do not exactly match the manual import")
+    attached = {}
+    for tx_id, transaction in final_by_id.items():
+        detail = transaction.get("foodpanda")
+        if not isinstance(detail, dict):
+            continue
+        order_id = detail.get("orderId")
+        if order_id in attached:
+            errors.append("Foodpanda order %s is attached to more than one transaction" % order_id)
+        attached[order_id] = tx_id
+        if order_id not in published_by_id:
+            errors.append("transaction %s names unknown Foodpanda order %r" % (tx_id, order_id))
+    for order_id, order in published_by_id.items():
+        original = source_by_id.get(order_id)
+        if not original:
+            continue
+        for field in ("date", "time", "fulfillment", "merchant", "amount", "category"):
+            if order.get(field) != original.get(field):
+                errors.append("Foodpanda order %s changed %s during build" % (order_id, field))
+        tx_id = order.get("statementTransactionId")
+        if tx_id:
+            transaction = final_by_id.get(tx_id)
+            if not transaction:
+                errors.append("Foodpanda order %s names unknown transaction %s" % (order_id, tx_id))
+            elif attached.get(order_id) != tx_id:
+                errors.append("Foodpanda order %s link is not reciprocal" % order_id)
+            elif (transaction.get("date") != order.get("date") or
+                  transaction.get("amount") != order.get("amount")):
+                errors.append("Foodpanda order %s link disagrees on date or amount" % order_id)
+        elif order_id in attached:
+            errors.append("unmatched Foodpanda order %s is attached to a transaction" % order_id)
+
+    summary = output.get("quality", {}).get("foodpanda", {})
+    matched = sum(1 for order in published if order.get("statementTransactionId"))
+    groceries = sum(1 for order in published if order.get("category") == "Groceries")
+    expected = {
+        "orders": len(published),
+        "matched": matched,
+        "unmatched": len(published) - matched,
+        "groceries": groceries,
+    }
+    if summary != expected:
+        errors.append("Foodpanda quality summary disagrees with published orders")
+
+
+def validate_shopee(manual_data, output, final_by_id, errors):
+    source = manual_data.get("orders", []) if isinstance(manual_data, dict) else []
+    has_surface = "shopeeOrders" in output or "shopee" in output.get("quality", {})
+    if not source and not has_surface:
+        return
+    published = output.get("shopeeOrders", [])
+    if not isinstance(source, list) or not isinstance(published, list):
+        errors.append("Shopee source and published orders must be lists")
+        return
+    source_by_id = {o.get("orderId"): o for o in source if isinstance(o, dict)}
+    published_by_id = {o.get("orderId"): o for o in published if isinstance(o, dict)}
+    if len(source_by_id) != len(source) or set(source_by_id) != set(published_by_id):
+        errors.append("published Shopee orders do not exactly match the manual import")
+    attached = {}
+    for tx_id, transaction in final_by_id.items():
+        detail = transaction.get("shopee")
+        if not isinstance(detail, dict):
+            continue
+        order_id = detail.get("orderId")
+        if order_id in attached:
+            errors.append("Shopee order %s is attached to more than one transaction" % order_id)
+        attached[order_id] = tx_id
+        if order_id not in published_by_id:
+            errors.append("transaction %s names unknown Shopee order %r" % (tx_id, order_id))
+            continue
+        published_order = published_by_id[order_id]
+        for field in ("merchant", "status", "amount", "items", "historyIndex"):
+            if detail.get(field) != published_order.get(field):
+                errors.append(
+                    "transaction %s Shopee detail disagrees on %s" % (tx_id, field))
+    for order_id, order in published_by_id.items():
+        original = source_by_id.get(order_id)
+        if not original:
+            continue
+        for field in ("merchant", "status", "amount", "items", "historyIndex"):
+            if order.get(field) != original.get(field):
+                errors.append("Shopee order %s changed %s during build" % (order_id, field))
+        tx_id = order.get("statementTransactionId")
+        if tx_id:
+            transaction = final_by_id.get(tx_id)
+            if not transaction or attached.get(order_id) != tx_id:
+                errors.append("Shopee order %s link is not reciprocal" % order_id)
+            elif transaction.get("amount") != order.get("amount"):
+                errors.append("Shopee order %s link disagrees on amount" % order_id)
+        elif order_id in attached:
+            errors.append("unmatched Shopee order %s is attached to a transaction" % order_id)
+    summary = output.get("quality", {}).get("shopee", {})
+    matched = sum(1 for order in published if order.get("statementTransactionId"))
+    expected = {
+        "orders": len(published), "matched": matched,
+        "unmatched": len(published) - matched,
+        "groceries": sum(1 for order in published if order.get("category") == "Groceries"),
+    }
+    if summary != expected:
+        errors.append("Shopee quality summary disagrees with published orders")
+
+
+def validate_grab(manual_data, history_stats, output, final_by_id, errors):
+    source = manual_data.get("receipts", []) if isinstance(manual_data, dict) else []
+    has_surface = "grabReceipts" in output or "grab" in output.get("quality", {})
+    if not source and not has_surface:
+        return
+    published = output.get("grabReceipts", [])
+    if not isinstance(source, list) or not isinstance(published, list):
+        errors.append("Grab source and published receipts must be lists")
+        return
+    source_by_id = {r.get("receiptId"): r for r in source if isinstance(r, dict)}
+    published_by_id = {r.get("receiptId"): r for r in published if isinstance(r, dict)}
+    if len(source_by_id) != len(source) or set(source_by_id) != set(published_by_id):
+        errors.append("published Grab receipts do not exactly match the manual import")
+
+    detail_fields = (
+        "receiptId", "date", "time", "service", "category", "amount", "currency",
+        "profile", "corporate", "merchant", "items", "pickup", "dropoff",
+        "paymentMethod", "pickupLabel", "dropoffLabel", "webHistoryAmount",
+        "webHistoryAmountDiffers",
+        "evidenceSources",
+    )
+    attached = {}
+    for tx_id, transaction in final_by_id.items():
+        detail = transaction.get("grab")
+        if not isinstance(detail, dict):
+            if is_grab_description(transaction.get("description")):
+                errors.append("Grab statement transaction %s has no Grab status" % tx_id)
+            continue
+        receipts = detail.get("receipts", [])
+        status = detail.get("status")
+        if status == "unreconciled":
+            if receipts != [] or detail.get("kind") != "wallet-funding":
+                errors.append("unreconciled Grab transaction %s has receipt details" % tx_id)
+            if detail.get("corporate"):
+                errors.append("unreconciled Grab transaction %s is marked corporate" % tx_id)
+            if (transaction.get("categorySource") == "grab-unreconciled"
+                    and transaction.get("category") != "Wallet funding"):
+                errors.append("unreconciled Grab transaction %s has invalid category" % tx_id)
+            continue
+        if status != "receipt-matched" or detail.get("kind") != "receipt":
+            errors.append("transaction %s has invalid Grab status" % tx_id)
+        if not isinstance(receipts, list) or not receipts:
+            errors.append("transaction %s has invalid Grab receipt details" % tx_id)
+            continue
+        for receipt in receipts:
+            receipt_id = receipt.get("receiptId") if isinstance(receipt, dict) else None
+            if receipt_id not in published_by_id:
+                errors.append("transaction %s names unknown Grab receipt %r" % (tx_id, receipt_id))
+                continue
+            if tx_id in attached.setdefault(receipt_id, set()):
+                errors.append("transaction %s repeats Grab receipt %s" % (tx_id, receipt_id))
+            attached[receipt_id].add(tx_id)
+            published_receipt = published_by_id[receipt_id]
+            for field in detail_fields:
+                if receipt.get(field) != published_receipt.get(field):
+                    errors.append("transaction %s Grab detail disagrees on %s" % (tx_id, field))
+        category_source = transaction.get("categorySource")
+        if category_source == "grab-corporate":
+            if not detail.get("corporate") or transaction.get("category") != "Payment":
+                errors.append("corporate Grab transaction %s is not excluded" % tx_id)
+        elif category_source == "grab-receipt":
+            receipt_categories = {
+                receipt.get("category") for receipt in receipts
+                if isinstance(receipt, dict)
+            }
+            if (detail.get("corporate") or len(receipt_categories) != 1
+                    or transaction.get("category") not in receipt_categories):
+                errors.append("personal Grab transaction %s has invalid classification" % tx_id)
+
+    source_fields = tuple(
+        field for field in detail_fields
+        if field not in ("pickupLabel", "dropoffLabel")
+    ) + ("eligibleForPersonalFinance",)
+    for receipt_id, receipt in published_by_id.items():
+        original = source_by_id.get(receipt_id)
+        if not original:
+            continue
+        for field in source_fields:
+            if receipt.get(field) != original.get(field):
+                errors.append("Grab receipt %s changed %s during build" % (receipt_id, field))
+        expected_ids = set(receipt.get("statementTransactionIds", []))
+        if expected_ids != attached.get(receipt_id, set()):
+            errors.append("Grab receipt %s links are not reciprocal" % receipt_id)
+        if receipt.get("profile") == "unknown" and expected_ids:
+            errors.append("unknown-profile Grab receipt %s was matched" % receipt_id)
+
+    summary = output.get("quality", {}).get("grab", {})
+    expected = {
+        "receipts": len(published),
+        "webHistoryRecords": history_stats["records"],
+        "webHistoryAdded": history_stats["added"],
+        "webHistoryEnriched": history_stats["enriched"],
+        "personal": sum(1 for receipt in published if receipt.get("profile") == "personal"),
+        "corporate": sum(1 for receipt in published if receipt.get("corporate")),
+        "unknownProfile": sum(
+            1 for receipt in published if receipt.get("profile") == "unknown"
+        ),
+        "matched": sum(1 for receipt in published if receipt.get("statementTransactionIds")),
+        "matchedTransactions": sum(
+            1 for transaction in final_by_id.values()
+            if transaction.get("grab", {}).get("status") == "receipt-matched"
+        ),
+        "statementTransactions": sum(
+            1 for transaction in final_by_id.values()
+            if (transaction.get("type") != "refund"
+                and is_grab_description(transaction.get("description")))
+        ),
+        "unreconciledTransactions": sum(
+            1 for transaction in final_by_id.values()
+            if (transaction.get("type") != "refund"
+                and transaction.get("grab", {}).get("status") == "unreconciled")
+        ),
+        "corporateExcluded": sum(
+            1 for receipt in published
+            if receipt.get("corporate") and receipt.get("statementTransactionIds")
+        ),
+    }
+    if summary != expected:
+        errors.append("Grab quality summary disagrees with published receipts")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -205,6 +452,16 @@ def main():
     manual_identity = load_optional(
         os.path.join(MANUAL_DIR, "identity.json"),
         {"knownAccounts": {}, "trustedCounterparties": []})
+    foodpanda_data = load_optional(
+        os.path.join(MANUAL_DIR, "foodpanda_orders.json"), {"orders": []})
+    shopee_data = load_optional(
+        os.path.join(MANUAL_DIR, "shopee_orders.json"), {"orders": []})
+    grab_data = load_optional(
+        os.path.join(MANUAL_DIR, "grab_receipts.json"), {"receipts": []})
+    grab_web_data = load_optional(
+        os.path.join(MANUAL_DIR, "grab_web_history.json"),
+        {"fields": [], "records": []})
+    grab_data, grab_history_stats = merge_grab_web_history(grab_data, grab_web_data)
 
     errors = []
     warnings = []
@@ -305,6 +562,9 @@ def main():
                 )
 
     final_by_id = {row["id"]: row for row in output.get("transactions", []) if row.get("id")}
+    validate_foodpanda(foodpanda_data, output, final_by_id, errors)
+    validate_shopee(shopee_data, output, final_by_id, errors)
+    validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
     account_by_id = {
         row["id"]: row for row in account.get("transactions", []) if row.get("id")
     }
@@ -456,7 +716,27 @@ def main():
         category = row.get("category")
         rule_category = row.get("ruleCategory")
         override = overrides_by_id.get(tx_id, {})
-        if category != rule_category and "category" not in override:
+        foodpanda_category = (
+            row.get("categorySource") == "foodpanda-order"
+            and isinstance(row.get("foodpanda"), dict)
+            and category == "Groceries"
+            and re.match(r"^pandamart\b", row["foodpanda"].get("merchant", ""), re.I)
+        )
+        shopee_category = (
+            row.get("categorySource") == "shopee-order"
+            and isinstance(row.get("shopee"), dict)
+            and category == "Groceries"
+            and row["shopee"].get("merchant", "").lower() == "shopee supermarket"
+        )
+        grab_category = (
+            row.get("categorySource") in (
+                "grab-receipt", "grab-corporate", "grab-unreconciled"
+            )
+            and isinstance(row.get("grab"), dict)
+        )
+        if (category != rule_category and "category" not in override
+                and not foodpanda_category and not shopee_category
+                and not grab_category):
             errors.append(
                 "transaction %s is filed as %r but its rule says %r and nothing overrides it"
                 % (tx_id, category, rule_category)

@@ -59,7 +59,23 @@ window.Insights = (function () {
     counts[name] = (counts[name] || 0) + 1;
   }
   function transactionLabel(transaction) {
+    var shopeeItems = transaction.shopee && transaction.shopee.items;
+    var grabReceipt = transaction.grab && transaction.grab.receipts &&
+      transaction.grab.receipts[0];
+    var grabLabel = grabReceipt && (
+      ((grabReceipt.category === "Food & dining" || grabReceipt.category === "Groceries") &&
+        grabReceipt.merchant && grabReceipt.merchant !== "Grab"
+        ? grabReceipt.merchant
+        : null) ||
+      (grabReceipt.pickup && grabReceipt.dropoff
+        ? (grabReceipt.pickupLabel || grabReceipt.pickup) + " → " +
+          (grabReceipt.dropoffLabel || grabReceipt.dropoff)
+        : null) ||
+      grabReceipt.merchant || grabReceipt.service
+    );
     return transaction.displayName ||
+      (Array.isArray(shopeeItems) && shopeeItems.length ? shopeeItems[0] : null) ||
+      grabLabel ||
       window.FinanceGrouping.merchantDisplayName(transaction.description);
   }
 
@@ -95,6 +111,82 @@ window.Insights = (function () {
     return sum(data.transactions.filter(function (t) {
       return t.month === month && t.category === category && !EXCLUDED[t.category];
     }), signed);
+  }
+
+  function summarize(data, currentMonth) {
+    var months = data.months || [];
+    var idx = months.indexOf(currentMonth);
+    if (idx < 0) {
+      return { kind: "info", text: "Choose a statement month to compare spending." };
+    }
+
+    var current = monthlySpend(data, currentMonth);
+    var baselineMonths = months.slice(Math.max(0, idx - 6), idx);
+    if (!baselineMonths.length) {
+      return {
+        kind: "info",
+        text: "You spent " + money(current) + " in " + label(currentMonth) +
+          ". More statement history is needed before changes can be compared reliably."
+      };
+    }
+
+    var typical = median(baselineMonths.map(function (month) {
+      return monthlySpend(data, month);
+    }));
+    if (typical <= 0) {
+      return {
+        kind: "info",
+        text: "You spent " + money(current) + " in " + label(currentMonth) +
+          ". The recent baseline is too small for a meaningful percentage comparison."
+      };
+    }
+
+    var difference = current - typical;
+    var change = (difference / typical) * 100;
+    var direction = Math.abs(change) < 5 ? "steady" : change > 0 ? "higher" : "lower";
+    var text = direction === "steady"
+      ? "Spending held broadly steady at " + money(current) + " in " + label(currentMonth) +
+        ", versus a recent typical month of " + money(typical) + "."
+      : "Spending was " + money(current) + " in " + label(currentMonth) + ", " +
+        Math.abs(change).toFixed(0) + "% " + direction +
+        " than your recent typical month of " + money(typical) + ".";
+
+    var categories = {};
+    spendable(data.transactions).forEach(function (transaction) {
+      if (transaction.month === currentMonth || baselineMonths.indexOf(transaction.month) !== -1) {
+        categories[transaction.category] = true;
+      }
+    });
+    var shifts = Object.keys(categories).map(function (category) {
+      var now = catMonth(data, currentMonth, category);
+      var normal = median(baselineMonths.map(function (month) {
+        return catMonth(data, month, category);
+      }));
+      return { category: category, delta: now - normal };
+    });
+    var matchingDirection = shifts.filter(function (shift) {
+      return difference >= 0 ? shift.delta > 0 : shift.delta < 0;
+    }).sort(function (left, right) {
+      return Math.abs(right.delta) - Math.abs(left.delta);
+    });
+    var driver = matchingDirection[0];
+    if (driver && Math.abs(driver.delta) >= 20) {
+      text += " " + driver.category + " was the main driver, " +
+        (driver.delta > 0 ? "up " : "down ") + money(driver.delta) +
+        " from its recent norm.";
+    }
+
+    var biggest = spendable(data.transactions.filter(function (transaction) {
+      return transaction.month === currentMonth && transaction.type === "debit";
+    })).sort(function (left, right) { return right.amount - left.amount; })[0];
+    if (biggest && biggest.amount >= Math.max(150, current * 0.15)) {
+      text += " The largest charge was " + money(biggest.amount) + " for " +
+        transactionLabel(biggest) + ".";
+    }
+    return {
+      kind: Math.abs(change) < 5 ? "info" : change > 0 ? "warn" : "good",
+      text: text
+    };
   }
 
   var WEALTH = { "Investment": 1, "Retirement (SRS)": 1, "Fixed deposit": 1 };
@@ -403,5 +495,5 @@ window.Insights = (function () {
 
   // merchantKey is no longer part of the public surface: the one normalizer
   // now lives in FinanceGrouping, and nothing outside this module used it.
-  return { build: build, money: money, monthLabel: label };
+  return { build: build, summarize: summarize, money: money, monthLabel: label };
 })();

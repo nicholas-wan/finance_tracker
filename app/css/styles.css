@@ -315,6 +315,31 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
   gap: 16px; align-items: stretch;
 }
 .overview-priority > .panel { min-width: 0; }
+.spending-summary-panel {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding-top: 16px; padding-bottom: 16px;
+  background: color-mix(in srgb, var(--accent-soft) 45%, var(--surface));
+}
+.spending-summary-icon {
+  display: flex; align-items: center; justify-content: center; flex: 0 0 32px;
+  width: 32px; height: 32px; border-radius: 9px;
+  background: var(--accent-soft); color: var(--accent);
+}
+.spending-summary-icon .icon { width: 17px; height: 17px; }
+.spending-summary-panel.warn .spending-summary-icon { background: var(--red-soft); color: var(--red); }
+.spending-summary-panel.good .spending-summary-icon { background: var(--green-soft); color: var(--green); }
+.spending-summary-copy { min-width: 0; }
+.spending-summary-heading { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
+.spending-summary-heading h2 { margin: 0; font-size: var(--fs-md); }
+.local-analysis-badge {
+  padding: 2px 7px; border: 1px solid var(--border); border-radius: 999px;
+  color: var(--text-3); background: var(--surface); font-size: var(--fs-micro);
+  font-weight: 600; letter-spacing: .01em;
+}
+#spending-summary {
+  max-width: 92ch; margin: 5px 0 0; color: var(--text-2);
+  font-size: var(--fs-body); line-height: 1.55;
+}
 #key-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
 #key-metrics .kpi { padding: 12px 12px; }
 #key-metrics .kpi .value { font-size: var(--fs-stat-sm); }
@@ -689,6 +714,13 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   padding: 4px 8px 8px; border-bottom: 1px solid var(--border);
 }
 .ledger td { padding: 8px 8px; border-bottom: 1px solid var(--border); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ledger td.has-merchant-logo { position: relative; padding-left: 34px; }
+.merchant-logo {
+  position: absolute; top: 50%; left: 8px; width: 19px; height: 19px;
+  transform: translateY(-50%); border-radius: 5px; object-fit: contain;
+  opacity: .9; transition: opacity var(--motion-fast) ease;
+}
+.ledger tr:hover .merchant-logo { opacity: 1; }
 .ledger tr:hover td { background: var(--surface-2); }
 .col-date { width: 78px; }
 .col-cat { width: 128px; }
@@ -698,6 +730,35 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .ledger td.col-date { color: var(--text-3); font-variant-numeric: tabular-nums; }
 .ledger td.col-amt { text-align: right; font-variant-numeric: tabular-nums; }
 .ledger td.col-amt.credit { color: var(--green); }
+.foodpanda-evidence { background: var(--accent-soft); }
+.source-badge {
+  display: inline-flex; align-items: center; margin-left: 7px; border-radius: 999px;
+  padding: 2px 6px; vertical-align: 1px; font-size: var(--fs-micro); font-weight: 650;
+}
+.foodpanda-source { color: var(--accent); background: var(--accent-soft); }
+.shopee-source { color: var(--cat-shopping); background: var(--surface-2); }
+.grab-source { color: var(--green); background: var(--green-soft); }
+.unreconciled-source { color: var(--cat-shopping); background: var(--surface-2); }
+.grab-evidence { background: color-mix(in srgb, var(--green-soft) 58%, var(--surface)); }
+.grab-unreconciled-evidence { background: var(--surface-2); }
+.corporate-source { color: var(--red); background: var(--red-soft); }
+.purchase-description { white-space: normal !important; }
+.purchase-description-primary {
+  display: -webkit-box; overflow: hidden; font-weight: 600; line-height: 1.3;
+  -webkit-box-orient: vertical; -webkit-line-clamp: 2;
+}
+.purchase-description-secondary {
+  display: block; margin-top: 3px; overflow: hidden; color: var(--text-3);
+  font-size: var(--fs-micro); font-weight: 400; line-height: 1.3;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.purchase-description-secondary .source-badge { margin-left: 6px; }
+.drawer-subheading {
+  margin: 1rem 0 .45rem; font-size: .78rem; color: var(--text-3);
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.drawer-item-list { margin: 0; padding-left: 1.15rem; color: var(--text); }
+.drawer-item-list li + li { margin-top: .45rem; }
 .grouped-purchase-row td { background: color-mix(in srgb, var(--surface) 88%, var(--surface-2)); }
 .grouped-purchase-row:hover td { background: var(--surface-2); }
 .grouped-count { color: var(--text-2); font-size: var(--fs-caption); }
@@ -829,6 +890,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .tx-row { cursor: pointer; }
 .ledger tbody > .tx-row:nth-child(-n+20) { animation: row-enter 180ms var(--motion-ease) both; }
 .tx-row td:nth-child(2) { position: relative; padding-left: 21px; }
+.ledger .tx-row td.has-merchant-logo:nth-child(2) { padding-left: 48px; }
+.tx-row td.has-merchant-logo:nth-child(2) .merchant-logo { left: 22px; }
 .tx-row td:nth-child(2)::before {
   content: "›"; position: absolute; left: 8px; top: 50%;
   color: var(--text-3); font-size: var(--fs-lg); line-height: 1;
@@ -1122,7 +1185,7 @@ body.drawer-open { overflow: hidden; }
 .cat-fees-charges     { background: #f1efe8; color: #444441; }
 .cat-pet-care         { background: #eaf3de; color: #27500a; }
 .cat-work             { background: #eef0f4; color: #3e4653; }
-.cat-other, .cat-payment, .cat-rebates { background: var(--surface-2); color: var(--text-2); }
+.cat-other, .cat-payment, .cat-rebates, .cat-wallet-funding { background: var(--surface-2); color: var(--text-2); }
 [data-theme="dark"] .cat-transport        { background: #26215c; color: #cecbf6; }
 [data-theme="dark"] .cat-food-dining      { background: #04342c; color: #9fe1cb; }
 [data-theme="dark"] .cat-groceries        { background: #173404; color: #c0dd97; }
