@@ -116,6 +116,19 @@
   // trusts nobody.
   var knownAccountNames = {};
   var trustedCounterparties = [];
+  var trustedRules = [];
+
+  // A trailing "*" opts an entry into prefix matching, but only once the stem
+  // is long enough to identify one party on its own. A short stem - a bare
+  // first name, a three-letter nickname - would otherwise trust every
+  // counterparty that happens to begin with it, so such an entry silently
+  // falls back to exact matching instead of widening the trust set.
+  var TRUSTED_PREFIX_MINIMUM = 8;
+
+  function normalizeTrustedName(value) {
+    return String(value === null || value === undefined ? "" : value)
+      .replace(/\s+/g, " ").trim();
+  }
 
   function configure(identity) {
     var config = identity || {};
@@ -124,10 +137,23 @@
     Object.keys(accounts).forEach(function (number) {
       knownAccountNames[String(number)] = String(accounts[number]);
     });
-    // An empty name would prefix-match every counterparty and silence the
-    // amount checks entirely, so it is dropped rather than trusted.
-    trustedCounterparties = (config.trustedCounterparties || [])
-      .map(String).filter(function (name) { return name.length > 0; });
+    // An empty name would match every counterparty and silence the amount
+    // checks entirely, so it is dropped rather than trusted.
+    trustedCounterparties = [];
+    trustedRules = [];
+    (config.trustedCounterparties || []).forEach(function (entry) {
+      var name = normalizeTrustedName(entry);
+      if (!name) return;
+      var stem = name;
+      var prefix = false;
+      if (stem.charAt(stem.length - 1) === "*") {
+        stem = normalizeTrustedName(stem.slice(0, -1));
+        if (!stem) return;
+        prefix = stem.length >= TRUSTED_PREFIX_MINIMUM;
+      }
+      trustedCounterparties.push(name);
+      trustedRules.push({ stem: stem.toLowerCase(), prefix: prefix });
+    });
   }
 
   function getIdentity() {
@@ -211,13 +237,22 @@
   // Confirmed-expected recipients, supplied by configure(): large or first
   // payments to them are routine, so the counterparty and amount checks stay
   // quiet. Data-quality checks (unclassified, derived amount, unreconciled
-  // source) and the accidental double-payment check still apply. Matched as a
-  // case-insensitive prefix of the normalized counterparty, because statements
-  // truncate a long name ("... Pte." and "... Pte L" are the same firm).
+  // source) and the accidental double-payment check still apply.
+  //
+  // An entry matches the normalized counterparty exactly, case-insensitively.
+  // A trailing "*" widens it to a prefix, but only at a word boundary and only
+  // for a stem of TRUSTED_PREFIX_MINIMUM characters or more, which covers the
+  // one case that needs it - a statement truncating a long firm name, where
+  // "... Pte." and "... Pte L" are the same payee - without letting a bare
+  // first name trust a stranger who merely shares it.
   function accountTrustedCounterparty(counterparty) {
-    var name = String(counterparty || "").toLowerCase();
-    return trustedCounterparties.some(function (trusted) {
-      return name.indexOf(trusted.toLowerCase()) === 0;
+    var name = normalizeTrustedName(counterparty).toLowerCase();
+    if (!name) return false;
+    return trustedRules.some(function (rule) {
+      if (name === rule.stem) return true;
+      return rule.prefix && name.length > rule.stem.length &&
+        name.indexOf(rule.stem) === 0 &&
+        name.charAt(rule.stem.length) === " ";
     });
   }
 

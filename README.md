@@ -84,7 +84,9 @@ review-status filters.
 - Opening any transaction shows its original statement description and provenance.
   Card transactions also support display-name, category, owner, and remark edits.
   A drawer save only writes an owner tag when the owner itself changed, so
-  editing a category no longer silently confirms the owner it was showing.
+  editing a category no longer silently confirms the owner it was showing, and
+  choosing **Unassigned** there clears the tag exactly like the chip does,
+  handing the row back to the `manual/owner_rules.json` fallbacks.
 - **History** shows recorded manual changes.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF

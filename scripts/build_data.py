@@ -57,7 +57,25 @@ def next_cycle_date(last_date, next_month):
     day = min(last.day, calendar.monthrange(year, month)[1])
     return "%04d-%02d-%02d" % (year, month, day)
 
-# First matching rule wins. Patterns are case-insensitive substrings.
+# First matching rule wins. categorize() matches these case-insensitively against
+# the description with its whitespace collapsed and one leading and one trailing
+# space added, so a pattern written with an explicit edge space is anchored to a
+# word edge - the same technique parse_one.FLOW_RULES uses.
+#
+# Short or generic tokens must use it. Bare substrings filed BLOOM1 SHOP under
+# bills ("M1 "), MALAIA CAFE under insurance ("AIA "), SEAFOOD and WATAMIFOODS
+# rows off a bare "FOOD", and matched any word merely containing SALON, HOTEL,
+# TOAST or BURGER. A trailing space as well (" GYM ", " M1 ", " GIGA ") is for
+# tokens that are also the prefix of an unrelated word - GYMBOREE, GIGABYTE -
+# which a leading space alone would not exclude.
+#
+# Multi-word or distinctive biller strings ("NTUC FAIRPRICE", "PAYMT THRU
+# E-BANK", "GRAB*", "STEAMGAMES") stay plain substrings: anchoring buys nothing
+# and would only lose glued forms. Where a real statement glues an anchored
+# token to punctuation instead of a space, the separator variant is listed next
+# to it ("-COFFEE" for WTR*COLUMBUS-COFFEE-CO, ".CAFE" for TBG-TP L.CAFE), and
+# descriptors that legitimately run into other text keep an unanchored variant
+# ("FOODPANDA", "FP*FOOD", "WATAMI", "MOS BURGER").
 CATEGORY_RULES = [
     ("Payment", ["PAYMT THRU E-BANK"]),
     ("Rebates", ["CASH REBATE", "ADDITIONAL REBATE", "DEDUCTED UNI$"]),
@@ -83,25 +101,26 @@ CATEGORY_RULES = [
                        "AMZNPRIMESG MEMBERSHI", "NAME-CHEAP.COM", "NORDPRODUCTS",
                        "PAYFORGE SERVICES"]),
     ("Transport", ["BUS/MRT", "BUS / MRT", "GRAB*", "WWW.TADA", "TADA.G", "GOJEK", "COMFORT",
-                   "CDG TAXI", "SMRT", "UBER *TRIP", "MO.PLA", "GRAB RIDES", "GRAB-EC",
-                   "CAUSEWAYLINK", "SP BUS AUNTY", "TADA "]),
-    ("Groceries", ["NTUC FAIRPRICE", "FAIRPRICE", "COLD STORAGE", "SHENG SIONG", "GIANT ",
+                   "CDG TAXI", " SMRT", "UBER *TRIP", "MO.PLA", "GRAB RIDES", "GRAB-EC",
+                   "CAUSEWAYLINK", "SP BUS AUNTY", " TADA "]),
+    ("Groceries", ["NTUC FAIRPRICE", "FAIRPRICE", "COLD STORAGE", "SHENG SIONG", " GIANT ",
                    "GIANT-", "NTUC FP-", "CHEERS HOLDINGS", "DON DON DONKI",
                    "PRIME SUPERMARKET", "BBQ WHOLESALE CENTRE", "CS FRESH", "JAYA GROCER",
                    "KAPITAN GROCERY", "7-ELEVEN", "7 ELEVEN", "ESSO-CHEERS", "LEE MART",
                    "NTUC FP ", "ACE DYNAMIC HOLDINGS"]),
     ("Food & dining", ["FOOD PANDA", "FP*FOOD", "FOODPANDA", "KOPITIAM", "WOK N RICE", "URBAN GRILL",
                        "WATAMI", "SWENSEN", "FUN TOAST", "POULET", "SUSHI", "LLAO LLAO", "LUCKIN",
-                       "DSTA DRINKS", "BOOST JUICE", "MCDONALD", "KFC", "STARBUCKS", "DELIVEROO",
-                       "SHOPBACK", "RESTAURANT", "CAFE", "BAKERY", "TOAST", "COFFEE", "FENG SHENG",
-                       "LIHO TEA", "YHS", "WARBURG VENDING", "OLD CHANG KEE", "KIMLY", "ENCIK TAN",
-                       "MOS BURGER", "BURGER", "SHOKUDO", "F AND B", "HAWKER", "FOOD",
+                       "DSTA DRINKS", "BOOST JUICE", "MCDONALD", " KFC", "STARBUCKS", "DELIVEROO",
+                       "SHOPBACK", "RESTAURANT", " CAFE", "-CAFE", ".CAFE", "BAKERY", " TOAST",
+                       " COFFEE", "-COFFEE", "FENG SHENG",
+                       "LIHO TEA", " YHS", "WARBURG VENDING", "OLD CHANG KEE", "KIMLY", "ENCIK TAN",
+                       "MOS BURGER", " BURGER", "SHOKUDO", " F AND B", "HAWKER", " FOOD", " SEAFOOD",
                        "OLD HABITS SG", "KAT CAT", "SYNTHESIS SINGAPORE", "WAA COW",
                        "YAKINIKU", "SUKI-YA", "KISEKI", "HAI DI LAO", "JELEBU DRY LAKSA",
                        "DOMINOS PIZZA", "MARUYA", "SAIZERIYA", "MONSTER CURRY", "BOEUF",
-                       "BULGOGI", "K TOWN", "XW PLUS WESTERN", "DA XI-", "JU SHIN JUNG",
+                       "BULGOGI", " K TOWN", "XW PLUS WESTERN", "DA XI-", "JU SHIN JUNG",
                        "PIZZAKAYA", "WOKHEY", "WOK HEY", "AJUMMAS", "GOURMET PARADISE",
-                       "HEAVENLYWANG", "KOUFU", "SUBWAY", "MALAYSIA BOLEH", "THE ALLEY",
+                       "HEAVENLYWANG", "KOUFU", " SUBWAY", "MALAYSIA BOLEH", "THE ALLEY",
                        "SHIN-SAPPORO RAMEN", "SUKIYA", "2 THUMBS UP HAINANESE", "4FINGERS",
                        "RASAPURA MASTERS", "TORI-Q", "SMOOY", "TIM HORTONS", "IJOOZ",
                        "XIN WANG", "AMAZING ROASTED DUCK", "LA TABLE D' EMMA", "ABURI-EN",
@@ -129,38 +148,42 @@ CATEGORY_RULES = [
     # substrings filed steamboat restaurants and MARRIOTT hotels under Games.
     ("Games", ["HOYOVERSE", "COGNOSPHERE", "G2G.COM", "ZEUSX", "STEAMGAMES", "PLAYSTATION", "NINTENDO",
                "RIOT GAMES", "RIOTGAMES", "RIOT*", "KURO GAMES", "GARENA", "CODASHOP", "UNIPIN", "SEA GAMER",
-               "ROBLOX", "EPIC GAMES", "XBOX", "BLIZZARD", "G2A", "MIHOYO", "XSOLLA",
+               "ROBLOX", "EPIC GAMES", "XBOX", "BLIZZARD", " G2A", "MIHOYO", "XSOLLA",
                "XD ENTERTAINMENT", "2C2P*MYCARD", "PAYPAL *SPUUKYAZ",
                # MEP* is the payment processor; bahjasuq is the game-top-up storefront.
                "BAHJASUQ",
                "PAYPAL *FIKRIFERDINAN61"]),
-    ("Shopping", ["SHOPEE", "LAZADA", "AMAZON", "QOO10", "TAOBAO", "NTE* ORDER", "ORDER 20",
-                  "UNIQLO", "IKEA", "JANNPAUL", "COURTS SINGAPORE", "CAPITALAND VOUCHER",
-                  "THE WALLET SHOP", "G2000", "TRIUMPH INT", "BURGA", "TAKASHIMAYA",
+    ("Shopping", ["SHOPEE", "LAZADA", "AMAZON", "QOO10", "TAOBAO", "NTE* ORDER", " ORDER 20",
+                  "UNIQLO", " IKEA", "JANNPAUL", "COURTS SINGAPORE", "CAPITALAND VOUCHER",
+                  "THE WALLET SHOP", " G2000", "TRIUMPH INT", " BURGA", "TAKASHIMAYA",
                   "DAISO JAPAN", "MOBILE FASHION", "SIMPLY TOYS", "VINTAGE SAPPHIRE",
-                  "MR DIY", "TELECOM EQUIPMENT PL-WIRE", "MOMENTS SINGAPORE"]),
-    ("Sports & fitness", ["MYACTIVESG", "ACTIVESG", "DECATHLON", "GYM", "FITNESS",
+                  " MR DIY", "TELECOM EQUIPMENT PL-WIRE", "MOMENTS SINGAPORE"]),
+    # " GYM " needs both edges: GYMBOREE is a children's brand, not a gym.
+    ("Sports & fitness", ["MYACTIVESG", "ACTIVESG", "DECATHLON", " GYM ", "FITNESS",
                           "SPORTS DIRECT", "HELLO SPORTS", "GALA SPORTS"]),
-    ("Personal care", ["KCUTS", "SALON", "BARBER", "GUARDIAN", "WATSONS", "WATSON'S",
+    ("Personal care", [" KCUTS", " SALON", " BARBER", " GUARDIAN", "WATSONS", "WATSON'S",
                        "VENUS BEAUTY", "HOCKHUA TONIC", "ZTP GINSENG"]),
-    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", "FWD ", "FWD SINGAPORE", "AIA ", "GREAT EASTERN",
+    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", " FWD SINGAPORE", " AIA ", "GREAT EASTERN",
                    "NTUC INCOME", "SINGLIFE", "HL ASSURANCE"]),
-    ("Bills & utilities", ["SINGTEL", "STARHUB", "M1 ", "AXS ", "AXS PTE", "SP SERVICES", "SP DIGITAL",
-                           "SIMBA", "CIRCLES", "GIGA", "OPEN.GOV.SG"]),
-    ("Travel", ["AIRLINE", "SINGAPOREAIR", "SCOOT", "JETSTAR", "AGODA", "BOOKING.COM", "AIRBNB",
-                "KLOOK", "KKDAY", "ROTTNEST EXPRESS", "TRIP.COM", "HOTEL",
+    # " GIGA " needs both edges so GIGABYTE and GIGASPORTS are not phone bills.
+    ("Bills & utilities", ["SINGTEL", "STARHUB", " M1 ", " AXS ", " AXS PTE", " SP SERVICES",
+                           " SP DIGITAL", " SIMBA", " CIRCLES", " GIGA ", "OPEN.GOV.SG"]),
+    ("Travel", ["AIRLINE", "SINGAPOREAIR", " SCOOT", "JETSTAR", "AGODA", "BOOKING.COM", "AIRBNB",
+                "KLOOK", "KKDAY", "ROTTNEST EXPRESS", "TRIP.COM", " HOTEL",
                 "USCUSTOMS ESTA", "IVISA SERVICES", "IMMIGRATION CANADA", "AUSTRALIANETA"]),
 ]
 
 # Within Games, which storefront or publisher the charge belongs to. Statements
 # name the biller, not the title, so this is the finest grain available.
+# game_of() anchors patterns the same way categorize() does, which is why the
+# three-letter " PSN" and " G2A" carry a leading space.
 GAME_RULES = [
     ("HoYoverse", ["HOYOVERSE", "COGNOSPHERE", "MIHOYO"]),
     ("Kuro Games", ["KURO GAMES"]),
     ("Steam", ["STEAMGAMES"]),
     ("G2G marketplace", ["G2G.COM"]),
     ("ZeusX marketplace", ["ZEUSX"]),
-    ("PlayStation", ["PLAYSTATION", "PSN"]),
+    ("PlayStation", ["PLAYSTATION", " PSN"]),
     ("Nintendo", ["NINTENDO"]),
     ("Xbox", ["XBOX"]),
     ("Epic Games", ["EPIC GAMES"]),
@@ -169,7 +192,7 @@ GAME_RULES = [
     ("Roblox", ["ROBLOX"]),
     # Billed as "MEP*bahjasuq"/"bahjasuq"; MEP* is the processor, bahjasuq the storefront.
     ("Chaos Zero Nightmare", ["BAHJASUQ"]),
-    ("Top-up sites", ["CODASHOP", "UNIPIN", "SEA GAMER", "G2A"]),
+    ("Top-up sites", ["CODASHOP", "UNIPIN", "SEA GAMER", " G2A"]),
 ]
 
 
@@ -184,8 +207,18 @@ def manual(name, default=None):
     return load(os.path.join(MANUAL_DIR, name), default)
 
 
+def padded(description):
+    """The description as the rule tables expect to see it.
+
+    Whitespace is collapsed and one space is added at each end, so a pattern
+    carrying an explicit edge space only matches at a word edge. Without this a
+    bare "GYM" matched GYMBOREE and a bare "M1 " matched BLOOM1 SHOP.
+    """
+    return " " + " ".join(description.split()).upper() + " "
+
+
 def categorize(description):
-    d = description.upper()
+    d = padded(description)
     for category, patterns in CATEGORY_RULES:
         for p in patterns:
             if p in d:
@@ -194,7 +227,7 @@ def categorize(description):
 
 
 def game_of(description):
-    d = description.upper()
+    d = padded(description)
     for name, patterns in GAME_RULES:
         for p in patterns:
             if p in d:

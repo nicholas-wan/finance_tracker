@@ -27,13 +27,19 @@ PERIOD_RE = re.compile(r"Period:\s*\d{1,2}\s+(\w{3})\s+(\d{4})", re.I)
 # one trailing space, so a pattern written with an edge space is anchored to a
 # word edge. Short tokens must use that: bare "FAST" classified THE BREAKFAST
 # CLUB as a transfer, bare "FWD"/"AIA"/"INCOME" turned unrelated PayNow rows
-# into insurance. Longer patterns keep plain substring semantics ("UOB CARD"
-# must still match "UOB CARDS").
+# into insurance. A space at both ends is for tokens that are also the prefix of
+# an unrelated word, which a leading space alone would not exclude: " SAXO "
+# (SAXOPHONE), " MOOMOO " (THE MOOMOO DAIRY), " NETS " (NETSUITE), " HDB "
+# (HDBANK), " IBKR " (IBKRAFT), " SYFE " (SYFELINE). Longer patterns keep plain
+# substring semantics ("UOB CARD" must still match "UOB CARDS", and the
+# statement prints it as "iBK-UOB Cards").
 FLOW_RULES = [
     # "PHILLIP SECURITIES" is the full brokerage name; the bare surname is left out
     # on purpose because PayNow transfers to a person called Phillip would collide.
-    ("Investment", ["INTERACTIVE BROKERS", "IBKR", "TIGER BROKERS", "MOOMOO", "SAXO", "ENDOWUS", "SYFE",
-                    "PHILLIP SECURITIES", "PHILLIP SEC"]),
+    # A misfiled Investment row is the worst case here: it is dropped from spending
+    # totals as if it were still your money, so every short token is anchored.
+    ("Investment", ["INTERACTIVE BROKERS", " IBKR ", "TIGER BROKERS", " MOOMOO ", " SAXO ",
+                    " ENDOWUS ", " SYFE ", "PHILLIP SECURITIES", "PHILLIP SEC"]),
     ("Retirement (SRS)", [" SRS", "-SRS"]),
     # The own fixed-deposit account numbers are private and are folded in at
     # runtime by flow_rules(); see manual/identity.json.
@@ -45,10 +51,13 @@ FLOW_RULES = [
     ("Tax", ["IRAS", "INCOME TAX", "TAXS", "INLAND REVENUE"]),
     ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST", "INTEREST CREDIT"]),
     ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", "GREAT EASTERN", " AIA ", "AVIVA", " INCOME "]),
-    ("Mortgage & home", ["HDB", "MORTGAGE", "HOME LOAN", "TOWN COUNCIL", "SP SERVICES", "SP DIGITAL"]),
+    # " HDB " keeps HDBANK, a Vietnamese bank, out of the mortgage bucket.
+    ("Mortgage & home", [" HDB ", "MORTGAGE", "HOME LOAN", "TOWN COUNCIL", "SP SERVICES",
+                         "SP DIGITAL"]),
     ("CPF", [" CPF"]),
     ("Transfer", ["PAYNOW", " FAST ", "-FAST", "GIRO", "TRANSFER", " IBG", "-IBG"]),
-    ("Cash & NETS", [" NETS", "-NETS", " ATM ", "-ATM", "CASH WITHDRAWAL"]),
+    # " NETS " keeps NETSUITE out; the statement always prints NETS as its own word.
+    ("Cash & NETS", [" NETS ", "-NETS ", " ATM ", "-ATM ", "CASH WITHDRAWAL"]),
 ]
 
 

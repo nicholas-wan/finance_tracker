@@ -652,7 +652,13 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         # fallbacks in manual/owner_rules.json.
         owner_changed = current.get("owner", "Untagged") != owner
         if owner_changed:
-            tags[tx_id] = owner
+            # "Untagged" in the drawer means exactly what the owner chip means:
+            # drop my stable-ID tag and let manual/owner_rules.json decide
+            # again. Writing the literal value pinned the row as unassigned.
+            if owner == "Untagged":
+                tags.pop(tx_id, None)
+            else:
+                tags[tx_id] = owner
         owner_data["tagsById"] = dict(sorted(tags.items()))
 
         remark_data = json.loads(originals[REMARK_PATH].decode("utf-8"))
@@ -690,7 +696,9 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             changes.append({
                 "field": "Owner source",
                 "before": current.get("ownerSource", "unassigned"),
-                "after": "confirmed manually",
+                # Dropping the tag confirms nothing; it hands the row back.
+                "after": "merchant fallback" if owner == "Untagged"
+                else "confirmed manually",
             })
         audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
         append_audit_entry(
@@ -714,9 +722,17 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                 (row for row in refreshed.get("transactions", []) if row.get("id") == tx_id),
                 None,
             )
+            # Clearing a tag hands the row back to the merchant fallbacks,
+            # which may legitimately name an owner; what must be gone is the
+            # stable-ID tag. Any other owner must land as that exact owner.
+            owner_applied = updated is not None and (
+                updated.get("ownerSource") != "exact-id"
+                if owner == "Untagged"
+                else updated.get("owner") == owner
+            )
             if (
                 not updated
-                or updated.get("owner") != owner
+                or not owner_applied
                 or updated.get("category") != category
                 or updated.get("displayName", "") != display_name
                 or updated.get("remark", "") != remark
@@ -828,26 +844,97 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    @staticmethod
-    def _hostname(value):
-        # Accepts "localhost", "127.0.0.1:3402", "[::1]:3402" and full origins.
-        try:
-            return (urlparse("//" + value.strip()).hostname or "").lower()
-        except ValueError:
-            return ""
+    def bound_port(self, port=None):
+        # The guards compare against the port we actually bound. Unit tests
+        # that build a bare handler pass it explicitly instead.
+        if port is not None:
+            return port
+        return self.server.server_address[1]
 
-    def local_request(self):
-        if self._hostname(self.headers.get("Host") or "") not in LOCAL_HOSTS:
+    @staticmethod
+    def _split_authority(value):
+        """Split a Host header into (hostname, port); port is None if absent.
+
+        Accepts "localhost", "127.0.0.1:3402" and the bracketed "[::1]:3402".
+        Returns ("", None) for anything unparseable, which no caller accepts.
+        """
+        try:
+            parsed = urlparse("//" + (value or "").strip())
+            return (parsed.hostname or "").lower(), parsed.port
+        except ValueError:
+            return "", None
+
+    @staticmethod
+    def local_origin(origin, port):
+        """Is this Origin exactly the dashboard's own origin?
+
+        Hostname alone is not enough. Every other dev server on this machine
+        (Jupyter, Vite, a scratch python -m http.server) also gets a
+        "http://localhost" origin, so the port has to match the one we bound.
+        "null" - sandboxed iframes, file:// pages, some redirects - is never us.
+        """
+        origin = (origin or "").strip()
+        if not origin or origin.lower() == "null":
+            return False
+        try:
+            parsed = urlparse(origin)
+            origin_port = parsed.port
+        except ValueError:
+            return False
+        if parsed.scheme != "http":
+            return False
+        if (parsed.hostname or "").lower() not in LOCAL_HOSTS:
+            return False
+        # An origin without a port means the scheme default, i.e. 80 for http.
+        return (origin_port if origin_port is not None else 80) == port
+
+    def local_request(self, port=None):
+        """Is this request addressed to the dashboard on its own port?"""
+        port = self.bound_port(port)
+        host_name, host_port = self._split_authority(self.headers.get("Host"))
+        if host_name not in LOCAL_HOSTS:
+            return False
+        # A Host without a port names port 80, so it is only ours if we bound
+        # 80. Otherwise "Host: localhost" is some other server's address.
+        if (host_port if host_port is not None else 80) != port:
             return False
         origin = self.headers.get("Origin")
-        if origin:
-            try:
-                origin_host = (urlparse(origin).hostname or "").lower()
-            except ValueError:
-                return False
-            if origin_host not in LOCAL_HOSTS:
-                return False
+        if origin is not None and not self.local_origin(origin, port):
+            # Per the Fetch spec a same-origin POST can still carry
+            # "Origin: null" under some referrer policies. Sec-Fetch-Site is a
+            # forbidden header - only the browser can set it - so its
+            # same-origin attestation is trusted over a nulled Origin.
+            return self.browser_same_origin()
         return True
+
+    def browser_same_origin(self):
+        site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        return site == "same-origin"
+
+    def same_origin_post(self, port=None):
+        """A write must prove it came from the dashboard page itself.
+
+        A local Host header is not proof: a page on another localhost port can
+        send a "simple request" POST that the browser delivers with no
+        preflight at all. Demanding either our exact Origin or a browser's
+        Sec-Fetch-Site attestation - together with the JSON content type
+        do_POST also requires - forces such a request into a CORS preflight,
+        which fails because this server answers no CORS headers.
+        """
+        # The browser's own attestation wins outright: it cannot be set by
+        # page script, and it survives a referrer policy that nulls Origin.
+        site = (self.headers.get("Sec-Fetch-Site") or "").strip().lower()
+        if site in {"same-origin", "none"}:
+            return True
+        origin = self.headers.get("Origin")
+        if origin is not None:
+            return self.local_origin(origin, self.bound_port(port))
+        return False
+
+    @staticmethod
+    def json_content_type(value):
+        # "application/json; charset=utf-8" is the same media type.
+        return (value or "").split(";", 1)[0].strip().lower() == "application/json"
 
     def list_directory(self, path):
         # Directory indexes expose the shape of the private data folder.
@@ -923,8 +1010,17 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         # The origin gate comes first, as in do_GET/do_HEAD: answering 404 vs
         # 403 before the check let a cross-origin page probe which endpoints
         # exist.
-        if not self.local_request():
+        if not self.local_request() or not self.same_origin_post():
             self.send_json(403, {"ok": False, "error": "Local requests only."})
+            return
+        # Checked before the endpoint is routed and before the body is read, so
+        # it is not a probe either. A non-JSON type is what a cross-origin
+        # "simple request" would have to use to skip the preflight.
+        if not self.json_content_type(self.headers.get("Content-Type")):
+            self.send_json(400, {
+                "ok": False,
+                "error": "Content-Type must be application/json.",
+            })
             return
         endpoint = self.path.split("?", 1)[0]
         if endpoint not in {
@@ -1002,7 +1098,11 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         # page running an incompatible mixture after a refresh.
         self.send_header("Cache-Control", "no-store, max-age=0")
         self.send_header("X-Content-Type-Options", "nosniff")
-        self.send_header("Referrer-Policy", "no-referrer")
+        # "same-origin" rather than "no-referrer": both keep the dashboard URL
+        # out of third-party requests, but under "no-referrer" the Fetch spec
+        # sends "Origin: null" on same-origin POSTs, which the write gate above
+        # would then have to special-case.
+        self.send_header("Referrer-Policy", "same-origin")
         # Framing is forbidden: an embedded dashboard sends no Origin header on
         # the iframe navigation, so a hostile page could clickjack review
         # buttons whose fetches are then genuinely same-origin.

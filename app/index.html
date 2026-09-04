@@ -291,7 +291,7 @@
             <li>Transfers, investments, SRS, fixed deposits, and card-bill payments are movements of money, not bank-account spending.</li>
             <li><strong>Flagged for review:</strong> unclassified flows; outgoing transfers ≥ S$500; other withdrawals ≥ S$1,000; a first sizeable payment (≥ S$500) to a new counterparty; identical same-day outgoing movements ≥ S$40 total; amounts derived from the running balance; unreconciled sources.</li>
             <li>Money in never needs review. Outgoing movements under S$50 stay quiet too — everyday food-sized spending — unless they repeat on the same day, since a possible double charge is worth a look at any size.</li>
-            <li>Trusted counterparties skip the amount and new-counterparty checks; data-quality checks still apply. Currently trusted: <span id="trusted-counterparties-list"></span>.</li>
+            <li>Trusted counterparties skip the amount and new-counterparty checks (data-quality checks still apply) and match by exact name, except that an entry ending in <code>*</code> also matches the longer forms of a name the statement truncates. Currently trusted: <span id="trusted-counterparties-list"></span>.</li>
             <li>mBK funds-transfer references are destination account numbers: known accounts show their name, unknown ones show the account number itself. <span id="known-accounts-count"></span></li>
             <li>6M/12M spending averages are means over prior complete statement months and exclude internal movements.</li>
           </ul>

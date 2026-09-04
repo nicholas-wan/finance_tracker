@@ -32,42 +32,65 @@ STATEMENT_DATE_RE = re.compile(r"Statement Date\s+(\d{1,2})\s+(%s)\s+(\d{4})" % 
 # The lookahead rejects wrapped description tails such as "PTE 12.00" or
 # "GST 5.00", which are not currency codes but match the shape.
 FX_RE = re.compile(r"^(?!PTE\b|LTD\b|GST\b)[A-Z]{3}\s+[\d,]+\.\d{2}$")
-CARD_RE = re.compile(r"^(UOB [A-Z' ]*CARD|LADY'S SOLITAIRE\s*CARD|[A-Z' ]+CARD)\s*$", re.I)
-# Every alternative is either a bare column header (anchored to end of line) or a
-# statement-furniture phrase that cannot begin a merchant name. The old version
-# used loose prefixes - "Trans", "Total ", "Date", "Amount", "SINGAPORE \d" - which
-# swallowed real rows such as "TRANSIT LINK PTE 25.00" and "TOTAL WINE MORE 25.00".
+# A card section header is one of the names UOB prints, alone on its line and in
+# the table's upper case. The old catch-all "[A-Z' ]+CARD" alternative made any
+# line of letters ending in CARD a section header, so a wrapped continuation line
+# such as "GIFT CARD" opened a phantom section: every later row was attributed to
+# it and the run failed closed with a confusing "unchecked section". Case matters
+# because the statement's prose and footers are full of mixed-case headings
+# ("UOB Credit Card", "One Credit Card", "Mondays with One Card") that are not
+# sections. Matching is still open-ended after "UOB " so a new card product is
+# read as its own section rather than folded silently into the previous one.
+CARD_RE = re.compile(
+    r"^(UOB [A-Z' ]*CARD|LADY'S SOLITAIRE\s*CARD)"
+    r"(?:\s*\(\s*CONTINUED\s*\))?\s*$")
+# Page furniture that can never be the tail of a wrapped merchant name, so it is
+# safe to drop even in the middle of an open row.
+MIDROW_FURNITURE = (
+    r"Page \d+ of \d+\s*$",
+    r"Ref\s*No\b",
+    r"\d{4}-\d{4}-\d{4}-\d{4}\b",
+    r"Contact Us\s*$",
+    r"Call \d",
+    r"Email \S+@",
+    r"SINGAPORE \d{6}\s*$",
+    r"United Overseas\b",
+    r"Please note\b",
+    r"Postage\b",
+    r"omissions\b",
+    r"claim against\b",
+)
+# Furniture that is only furniture when no row is open. Each of these can also be
+# the tail of a wrapped description, and the cardholder-name alternative is the
+# demonstrated case: "MR BEAN INTERNATIONAL PTE" is a merchant, not the name line,
+# and dropping it truncated the description while the section still reconciled.
+HEADER_ONLY_FURNITURE = (
+    r"PREVIOUS BALANCE\b",
+    r"SUB ?TOTAL\b",
+    r"NEW BALANCE\b",
+    r"GRAND TOTAL\b",
+    r"TOTAL\s+[\d,]+\.\d{2}",
+    r"TOTAL BALANCE FOR\b",
+    r"TOTAL AMOUNT DUE\b",
+    r"TOTAL CREDIT LIMIT\b",
+    r"Amount to Pay\b",
+    r"Minimum Payment\b",
+    r"Description of Transaction\b",
+    r"Statement (?:Date|Summary)\b",
+    r"Due Date\b",
+    r"(?:Post|Trans|Date|Amount|Description|Minimum|Statement)\s*$",
+    r"MR(?:\s+[A-Z]+){2,}\s*$",
+)
+# The full furniture catalogue. Every alternative is either a bare column header
+# (anchored to end of line) or a statement-furniture phrase that cannot begin a
+# merchant name. The old version used loose prefixes - "Trans", "Total ", "Date",
+# "Amount", "SINGAPORE \d" - which swallowed real rows such as "TRANSIT LINK PTE
+# 25.00" and "TOTAL WINE MORE 25.00".
 SKIP_RE = re.compile(
-    r"^(?:"
-    r"Page \d+ of \d+\s*$"
-    r"|Ref\s*No\b"
-    r"|PREVIOUS BALANCE\b"
-    r"|SUB ?TOTAL\b"
-    r"|NEW BALANCE\b"
-    r"|GRAND TOTAL\b"
-    r"|TOTAL\s+[\d,]+\.\d{2}"
-    r"|TOTAL BALANCE FOR\b"
-    r"|TOTAL AMOUNT DUE\b"
-    r"|TOTAL CREDIT LIMIT\b"
-    r"|Amount to Pay\b"
-    r"|Minimum Payment\b"
-    r"|Description of Transaction\b"
-    r"|Statement (?:Date|Summary)\b"
-    r"|Due Date\b"
-    r"|(?:Post|Trans|Date|Amount|Description|Minimum|Statement)\s*$"
-    r"|United Overseas\b"
-    r"|Please note\b"
-    r"|Postage\b"
-    r"|omissions\b"
-    r"|claim against\b"
-    r"|\d{4}-\d{4}-\d{4}-\d{4}\b"
-    r"|Contact Us\s*$"
-    r"|Call \d"
-    r"|Email \S+@"
-    r"|MR(?:\s+[A-Z]+){2,}\s*$"
-    r"|SINGAPORE \d{6}\s*$"
-    r")",
-    re.I)
+    r"^(?:" + "|".join(MIDROW_FURNITURE + HEADER_ONLY_FURNITURE) + r")", re.I)
+# What parse_pdf actually consults while a row is open. Anything outside it is
+# appended to the description instead of being dropped without a trace.
+MIDROW_SKIP_RE = re.compile(r"^(?:" + "|".join(MIDROW_FURNITURE) + r")", re.I)
 
 
 def statement_month(reader, path):
@@ -182,9 +205,11 @@ def parse_pdf(path):
         if not line:
             continue
 
-        header = CARD_RE.match(line)
+        # A section header never interrupts a row: while one is open the same
+        # text is a continuation line, not a new card.
+        header = CARD_RE.match(line) if pending is None else None
         if header and "PREVIOUS" not in line.upper():
-            card = re.sub(r"\s+", " ", header.group(1).upper().replace("(CONTINUED)", "")).strip()
+            card = re.sub(r"\s+", " ", header.group(1).upper()).strip()
             continue
 
         m = prev_re.match(line)
@@ -243,7 +268,12 @@ def parse_pdf(path):
                 pending["desc"] += " " + leading
             flush(float(amt.group(1).replace(",", "")), amt.group(2))
             pending = None
-        elif not SKIP_RE.match(line):
+        elif not MIDROW_SKIP_RE.match(line):
+            # Only the mid-row-safe furniture above is dropped here. Anything
+            # else is part of this row's description: a continuation line that
+            # merely resembles a heading used to vanish, and because the amount
+            # was still read from a later line the section reconciled anyway -
+            # the row simply lost the tail of its description in silence.
             pending["desc"] += " " + line
 
     if pending:

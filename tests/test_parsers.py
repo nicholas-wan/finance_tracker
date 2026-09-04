@@ -145,6 +145,67 @@ class CardParserTests(ParserTestCase):
         )
         self.assertEqual(checks["UOB ONE CARD"]["gap"], 0.0)
 
+    def test_wrapped_continuation_line_is_not_dropped_as_a_heading(self):
+        # "MR BEAN INTERNATIONAL PTE" matches the cardholder-name alternative
+        # (MR + two or more capitalised words). Dropping it mid-row truncated
+        # the description to "REDACTED SOME LONG PREFIX" while the amount, read
+        # from the following line, still reconciled - so nothing complained.
+        _, rows, checks, failures = self.parse_card(
+            "card_wrapped_name_continuation_redacted.txt")
+        self.assertEqual(failures, [])
+        self.assertEqual(
+            rows[0]["description"], "REDACTED SOME LONG PREFIX MR BEAN INTERNATIONAL PTE")
+        self.assertEqual(rows[0]["amount"], 25.0)
+        self.assertEqual(checks["UOB ONE CARD"]["gap"], 0.0)
+
+    def test_true_furniture_is_still_dropped_mid_row(self):
+        # The second row of the same fixture wraps over a reference tail, a page
+        # number, the bank's own name, its legal note and its postcode. None of
+        # those may reach the description.
+        _, rows, _, failures = self.parse_card(
+            "card_wrapped_name_continuation_redacted.txt")
+        self.assertEqual(failures, [])
+        self.assertEqual(rows[1]["description"], "REDACTED MERCHANT B")
+        self.assertEqual(rows[1]["amount"], 30.0)
+
+    def test_midrow_skip_is_the_safe_subset_of_the_furniture_catalogue(self):
+        for line in ("Page 1 of 4", "Ref No. : 11111111111111111111111",
+                     "1234-5678-9012-3456 100.00 25.00", "Contact Us",
+                     "Call 1800 222 2121", "Email card.centre@uobgroup.com",
+                     "SINGAPORE 048624", "United Overseas Bank Limited",
+                     "Please note that this is a computer generated statement",
+                     "Postage will be paid by licensee", "omissions or unauthorised",
+                     "claim against the Bank"):
+            self.assertIsNotNone(parse_cc.MIDROW_SKIP_RE.match(line), line)
+        # Headings that a wrapped merchant name can imitate stay in the full
+        # catalogue but must never be dropped while a row is open.
+        for line in ("MR BEAN INTERNATIONAL PTE", "MR TEO GARDEN SUPPLIES",
+                     "Trans", "Date", "Amount", "GRAND TOTAL"):
+            self.assertIsNone(parse_cc.MIDROW_SKIP_RE.match(line), line)
+            self.assertIsNotNone(parse_cc.SKIP_RE.match(line), line)
+
+    def test_wrapped_card_line_does_not_open_a_phantom_section(self):
+        # A continuation line of letters ending in CARD used to switch sections,
+        # so every later row was filed under a card the statement never had and
+        # the run died with an "unchecked section" message instead.
+        _, rows, checks, failures = self.parse_card("card_phantom_section_redacted.txt")
+        self.assertEqual(failures, [])
+        self.assertEqual({row["card"] for row in rows}, {"UOB ONE CARD"})
+        self.assertEqual(rows[0]["description"], "REDACTED DEPARTMENT STORE GIFT CARD")
+        self.assertEqual(sorted(checks), ["UOB ONE CARD"])
+        self.assertEqual(checks["UOB ONE CARD"]["gap"], 0.0)
+
+    def test_card_header_matches_only_real_section_names(self):
+        for line in ("UOB ONE CARD", "LADY'S SOLITAIRE CARD",
+                     "UOB ONE CARD (CONTINUED)", "LADY'S SOLITAIRE CARD(CONTINUED)",
+                     "UOB PRVI MILES CARD"):
+            self.assertIsNotNone(parse_cc.CARD_RE.match(line), line)
+        # Prose and footer headings that the old catch-all alternative accepted.
+        for line in ("GIFT CARD", "UOB Credit Card", "One Credit Card",
+                     "Mondays with One Card", "CARD",
+                     "finance charges and cash advance charges applicable to your card"):
+            self.assertIsNone(parse_cc.CARD_RE.match(line), line)
+
     def test_skip_patterns_are_anchored(self):
         for line in ("TRANSIT LINK PTE 25.00", "TOTAL WINE MORE 25.00",
                      "SINGAPORE 408600 25.00", "DATE NIGHT BISTRO 25.00",

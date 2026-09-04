@@ -232,6 +232,10 @@ class OwnerApiValidationTests(unittest.TestCase):
         )
 
 
+# Lets a test say "send no Origin at all" (None) apart from "send the default".
+_DEFAULT = object()
+
+
 def make_headers(**fields):
     headers = Message()
     for name, value in fields.items():
@@ -243,13 +247,20 @@ def make_headers(**fields):
 class LocalRequestGuardTests(unittest.TestCase):
     """The guard decides, per request, whether a caller is the local dashboard."""
 
-    def guard(self, **fields):
+    PORT = 3402
+
+    def guard(self, port=None, **fields):
         handler = serve.FinanceHandler.__new__(serve.FinanceHandler)
         handler.headers = make_headers(**fields)
-        return handler.local_request()
+        return handler.local_request(port=port or self.PORT)
 
-    def test_accepts_both_dashboard_host_forms(self):
-        for host in ("localhost:3402", "127.0.0.1:3402", "localhost", "127.0.0.1"):
+    def post_guard(self, port=None, **fields):
+        handler = serve.FinanceHandler.__new__(serve.FinanceHandler)
+        handler.headers = make_headers(**fields)
+        return handler.same_origin_post(port=port or self.PORT)
+
+    def test_accepts_every_dashboard_host_form(self):
+        for host in ("localhost:3402", "127.0.0.1:3402", "[::1]:3402"):
             with self.subTest(host=host):
                 self.assertTrue(self.guard(Host=host))
 
@@ -269,10 +280,77 @@ class LocalRequestGuardTests(unittest.TestCase):
     def test_rejects_missing_host(self):
         self.assertFalse(self.guard())
 
+    def test_rejects_host_on_another_port(self):
+        # Another dev server on this machine is still "localhost"; only the
+        # port tells the dashboard's own address apart from its neighbours.
+        for host in ("localhost:8888", "127.0.0.1:5173", "[::1]:80"):
+            with self.subTest(host=host):
+                self.assertFalse(self.guard(Host=host))
+
+    def test_portless_host_means_port_80(self):
+        self.assertFalse(self.guard(Host="localhost"))
+        self.assertTrue(self.guard(Host="localhost", port=80))
+
     def test_rejects_cross_site_origin(self):
         self.assertFalse(
             self.guard(Host="localhost:3402", Origin="https://evil.com")
         )
+
+    def test_rejects_cross_port_local_origin(self):
+        # The hole this closes: a Jupyter/Vite page on another localhost port.
+        for origin in ("http://localhost:8888", "http://127.0.0.1", "http://[::1]:5173"):
+            with self.subTest(origin=origin):
+                self.assertFalse(self.guard(Host="localhost:3402", Origin=origin))
+
+    def test_rejects_https_origin_on_our_port(self):
+        self.assertFalse(
+            self.guard(Host="localhost:3402", Origin="https://localhost:3402")
+        )
+
+    def test_null_origin_is_accepted_only_with_browser_same_origin_attestation(self):
+        # Under some referrer policies the Fetch spec nulls Origin on a
+        # same-origin POST. Sec-Fetch-Site cannot be set by page script, so
+        # its same-origin value outranks a nulled Origin - and nothing else does.
+        self.assertTrue(self.guard(
+            Host="localhost:3402", Origin="null", Sec_Fetch_Site="same-origin"))
+        self.assertTrue(self.post_guard(Origin="null", Sec_Fetch_Site="same-origin"))
+        self.assertFalse(self.guard(
+            Host="localhost:3402", Origin="null", Sec_Fetch_Site="cross-site"))
+        self.assertFalse(self.post_guard(Origin="null", Sec_Fetch_Site="cross-site"))
+        self.assertFalse(self.guard(
+            Host="localhost:3402", Origin="http://localhost:8000",
+            Sec_Fetch_Site="same-site"))
+
+    def test_rejects_null_origin(self):
+        for origin in ("null", "NULL"):
+            with self.subTest(origin=origin):
+                self.assertFalse(self.guard(Host="localhost:3402", Origin=origin))
+
+    def test_post_accepts_our_own_origin(self):
+        self.assertTrue(self.post_guard(Origin="http://localhost:3402"))
+
+    def test_post_rejects_cross_port_origin(self):
+        self.assertFalse(self.post_guard(Origin="http://localhost:8888"))
+
+    def test_post_accepts_sec_fetch_site_without_origin(self):
+        for site in ("same-origin", "none", "None"):
+            with self.subTest(site=site):
+                self.assertTrue(self.post_guard(Sec_Fetch_Site=site))
+
+    def test_post_rejects_bare_request_without_origin_or_sec_fetch_site(self):
+        self.assertFalse(self.post_guard())
+
+    def test_post_rejects_cross_site_sec_fetch_site(self):
+        for site in ("cross-site", "same-site"):
+            with self.subTest(site=site):
+                self.assertFalse(self.post_guard(Sec_Fetch_Site=site))
+
+    def test_json_content_type_allows_parameters_only(self):
+        self.assertTrue(serve.FinanceHandler.json_content_type("application/json"))
+        self.assertTrue(serve.FinanceHandler.json_content_type(
+            " Application/JSON ; charset=utf-8"))
+        self.assertFalse(serve.FinanceHandler.json_content_type("text/plain"))
+        self.assertFalse(serve.FinanceHandler.json_content_type(None))
 
 
 class StaticFileGuardTests(unittest.TestCase):
@@ -336,6 +414,22 @@ class StaticFileGuardTests(unittest.TestCase):
             Host="127.0.0.1:%d" % self.port,
             Origin="https://evil.com",
         )
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"tx_secret", body)
+
+    def test_rejects_static_data_for_another_local_port(self):
+        # A page served by some other localhost dev server is not the dashboard.
+        status, body = self.get(
+            "/data/transactions.json",
+            Host="127.0.0.1:%d" % self.port,
+            Origin="http://localhost:%d" % (self.port + 1),
+        )
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"tx_secret", body)
+
+    def test_rejects_static_data_for_host_naming_another_port(self):
+        status, body = self.get(
+            "/data/transactions.json", Host="127.0.0.1:%d" % (self.port + 1))
         self.assertEqual(status, 403)
         self.assertNotIn(b"tx_secret", body)
 
@@ -602,6 +696,38 @@ class SaveWritePathTests(unittest.TestCase):
         serve.save_transaction_detail(self.TX_ID, "Yx", "Shopping", "", "")
         self.assertEqual(self.read("OWNER_PATH")["tagsById"], {self.TX_ID: "Yx"})
 
+    def test_detail_save_unassigning_drops_the_tag_like_the_chip(self):
+        # "Unassigned" means one thing everywhere: drop my stable-ID tag. The
+        # merchant rule then names Nic again, and that counts as applied.
+        self.paths["OWNER_PATH"].write_text(
+            json.dumps({"tagsById": {self.TX_ID: "Yx"}}, indent=1), encoding="utf-8")
+        self.write_transactions([self.row(owner="Yx", ownerSource="exact-id")])
+        self.stage_rebuild(owner="Nic", ownerSource="merchant-rule")
+        result = serve.save_transaction_detail(
+            self.TX_ID, "Untagged", "Shopping", "", "")
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["transaction"]["owner"], "Nic")
+        self.assertEqual(result["transaction"]["ownerSource"], "merchant-rule")
+        self.assertEqual(self.read("OWNER_PATH")["tagsById"], {})
+
+    def test_detail_save_unassigning_is_not_audited_as_confirmed(self):
+        self.write_transactions([self.row(owner="Nic", ownerSource="merchant-rule")])
+        self.stage_rebuild(owner="Nic", ownerSource="merchant-rule")
+        serve.save_transaction_detail(self.TX_ID, "Untagged", "Shopping", "", "")
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        source = next(c for c in changes if c["field"] == "Owner source")
+        self.assertEqual(source["after"], "merchant fallback")
+
+    def test_detail_save_unassign_rolls_back_when_the_tag_survives(self):
+        self.paths["OWNER_PATH"].write_text(
+            json.dumps({"tagsById": {self.TX_ID: "Yx"}}, indent=1), encoding="utf-8")
+        self.originals["OWNER_PATH"] = self.paths["OWNER_PATH"].read_bytes()
+        self.write_transactions([self.row(owner="Yx", ownerSource="exact-id")])
+        self.stage_rebuild(owner="Yx", ownerSource="exact-id")
+        with self.assertRaisesRegex(RuntimeError, "did not apply"):
+            serve.save_transaction_detail(self.TX_ID, "Untagged", "Shopping", "", "")
+        self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
+
     def test_failed_validation_rolls_back_every_file_and_rebuilds_prior_state(self):
         self.stage_rebuild(owner="Shared", ownerSource="exact-id")
         serve.VALIDATE_SCRIPT = self.scripts["fail"]
@@ -716,13 +842,20 @@ class PostEndpointTests(unittest.TestCase):
         cls.server.server_close()
         shutil.rmtree(cls.directory, ignore_errors=True)
 
-    def post(self, path, body, host=None, origin=None):
+    def post(self, path, body, host=None, origin=_DEFAULT,
+             content_type="application/json", sec_fetch_site=None):
+        """POST as the dashboard page does unless a test says otherwise."""
         connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
-            headers = {"Host": host or "127.0.0.1:%d" % self.port,
-                       "Content-Type": "application/json"}
+            headers = {"Host": host or "127.0.0.1:%d" % self.port}
+            if origin is _DEFAULT:
+                origin = "http://127.0.0.1:%d" % self.port
             if origin:
                 headers["Origin"] = origin
+            if content_type:
+                headers["Content-Type"] = content_type
+            if sec_fetch_site:
+                headers["Sec-Fetch-Site"] = sec_fetch_site
             connection.request("POST", path, body=body, headers=headers)
             response = connection.getresponse()
             return response.status, json.loads(response.read() or b"{}")
@@ -738,6 +871,89 @@ class PostEndpointTests(unittest.TestCase):
                     path, '{"id": "tx_x"}', origin="https://evil.com")
                 self.assertEqual(status, 403)
                 self.assertIn("Local requests only", body["error"])
+
+    def test_post_from_another_local_port_is_rejected(self):
+        # The hole: a page on some other localhost dev server used to get in.
+        for path in ("/api/owner", "/api/definitely-not-real"):
+            with self.subTest(path=path):
+                status, body = self.post(
+                    path, '{"id": "tx_x"}',
+                    origin="http://localhost:%d" % (self.port + 1))
+                self.assertEqual(status, 403)
+                self.assertIn("Local requests only", body["error"])
+
+    def test_post_with_no_origin_and_no_sec_fetch_site_is_rejected(self):
+        status, body = self.post("/api/owner", '{"id": "tx_x"}', origin=None)
+        self.assertEqual(status, 403)
+        self.assertIn("Local requests only", body["error"])
+
+    def test_post_with_same_origin_sec_fetch_site_is_accepted(self):
+        # A browser that sends no Origin still attests the request is ours.
+        status, body = self.post(
+            "/api/owner", json.dumps({"id": "tx_nope", "owner": "Nic"}),
+            origin=None, sec_fetch_site="same-origin")
+        self.assertEqual(status, 400)
+        self.assertIn("not present", body["error"])
+
+    def test_simple_request_content_type_is_rejected(self):
+        # text/plain is the type a cross-origin "simple request" would use to
+        # dodge the preflight, so it never reaches a handler.
+        for content_type in ("text/plain", "text/plain;charset=UTF-8",
+                             "application/x-www-form-urlencoded",
+                             "multipart/form-data"):
+            with self.subTest(content_type=content_type):
+                status, body = self.post(
+                    "/api/owner", json.dumps({"id": "tx_nope", "owner": "Nic"}),
+                    content_type=content_type)
+                self.assertEqual(status, 400)
+                self.assertIn("Content-Type", body["error"])
+
+    def test_missing_content_type_is_rejected(self):
+        status, body = self.post(
+            "/api/owner", '{"a": 1}', content_type=None)
+        self.assertEqual(status, 400)
+        self.assertIn("Content-Type", body["error"])
+
+    def test_json_content_type_parameters_are_accepted(self):
+        status, body = self.post(
+            "/api/owner", json.dumps({"id": "tx_nope", "owner": "Nic"}),
+            content_type="application/json; charset=utf-8")
+        self.assertEqual(status, 400)
+        self.assertIn("not present", body["error"])
+
+    def test_post_to_host_naming_another_port_is_rejected(self):
+        status, body = self.post(
+            "/api/owner", '{"a": 1}',
+            host="127.0.0.1:%d" % (self.port + 1), origin=None,
+            sec_fetch_site="same-origin")
+        self.assertEqual(status, 403)
+        self.assertIn("Local requests only", body["error"])
+
+    def test_null_origin_post_with_same_origin_attestation_reaches_the_handler(self):
+        status, body = self.post("/api/owner", '{"id": "tx_x"}', origin="null",
+                                 sec_fetch_site="same-origin")
+        # Past the gate: the handler itself rejects the malformed payload.
+        self.assertEqual(status, 400)
+        self.assertNotIn("Local requests only", body.get("error", ""))
+
+    def test_referrer_policy_is_same_origin(self):
+        # "no-referrer" would make browsers send "Origin: null" on the
+        # dashboard's own POSTs; "same-origin" keeps the real Origin while
+        # still withholding the URL from third parties.
+        connection = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
+        try:
+            connection.request("GET", "/api/status",
+                               headers={"Host": "127.0.0.1:%d" % self.port})
+            response = connection.getresponse()
+            response.read()
+            self.assertEqual(response.getheader("Referrer-Policy"), "same-origin")
+        finally:
+            connection.close()
+
+    def test_null_origin_post_is_rejected(self):
+        status, body = self.post("/api/owner", '{"a": 1}', origin="null")
+        self.assertEqual(status, 403)
+        self.assertIn("Local requests only", body["error"])
 
     def test_unknown_endpoint_is_404_for_local_callers(self):
         status, body = self.post("/api/definitely-not-real", '{"a": 1}')

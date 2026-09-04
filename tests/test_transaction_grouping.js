@@ -16,9 +16,12 @@ var PLACEHOLDER_IDENTITY = {
     "Partner Full Name",
     "Yx",
     "Nickname",
-    "Own Savings",
-    "Own Stash",
-    "Trusted Vendor"
+    "Own Savings A/c",
+    "Own Stash A/c (closed)",
+    // Only a starred entry matches beyond its exact text, and only from eight
+    // characters up, so a statement that cuts a firm name short still lands on
+    // the same payee.
+    "Trusted Vendor*"
   ]
 };
 
@@ -416,8 +419,8 @@ test("trusted counterparties skip amount checks but keep integrity checks", func
   }
   var rows = [
     row("a", "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile", 2000),
-    // A truncated trailing word still matches, because the trusted name is a
-    // prefix of the normalized counterparty.
+    // A truncated trailing word still matches, because the trusted entry is
+    // starred and its stem is long enough to opt into prefix matching.
     row("ab", "PAYNOW-FAST TRUSTED VENDOR PTE. LT OTHR Transfer - UEN", 9000),
     row("abc", "PAYNOW-FAST A STRANGER OTHR Transfer - Mobile", 2000)
   ];
@@ -529,15 +532,91 @@ test("mBK references resolve to account names or formatted numbers", function ()
   grouping.configure({});
 });
 
-test("a configured nickname is a trusted counterparty", function () {
-  grouping.configure(PLACEHOLDER_IDENTITY);
+// Trust matching is a security boundary: an entry short enough to be a bare
+// first name or a nickname must never widen to a counterparty that merely
+// starts with it, or a large transfer to a stranger leaves the review queue.
+function trustProbe(description, amount) {
   var result = grouping.analyzeAccountTransactions([{
-    id: "m1", month: "2026-07", date: "2026-07-15",
-    description: "PAYNOW-FAST PIB2503305595567963 Nickname OTHR SOMEONE",
-    flow: "Transfer", direction: "withdrawal", amount: 800,
+    id: "t1", month: "2026-07", date: "2026-07-15",
+    description: description,
+    flow: "Transfer", direction: "withdrawal",
+    amount: amount === undefined ? 800 : amount,
     provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
   }], {});
-  assert.equal(result.m1.requiresReview, false);
+  return result.t1;
+}
+
+test("a configured nickname is a trusted counterparty", function () {
+  grouping.configure(PLACEHOLDER_IDENTITY);
+  var probe = trustProbe(
+    "PAYNOW-FAST PIB2503305595567963 Nickname OTHR Transfer - Mobile");
+  assert.equal(probe.counterparty, "Nickname");
+  assert.equal(probe.requiresReview, false);
+  grouping.configure({});
+});
+
+test("trusted names match exactly and case-insensitively", function () {
+  grouping.configure({ trustedCounterparties: ["pArTnEr FuLl NaMe"] });
+  assert.equal(trustProbe(
+    "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile").requiresReview,
+  false);
+  // The counterparty side is normalized too: repeated spaces in the entry are
+  // collapsed rather than making it unmatchable.
+  grouping.configure({ trustedCounterparties: ["  Partner   Full  Name  "] });
+  assert.deepEqual(grouping.getIdentity().trustedCounterparties,
+    ["Partner Full Name"]);
+  assert.equal(trustProbe(
+    "PAYNOW-FAST PARTNER FULL NAME OTHR Transfer - Mobile").requiresReview,
+  false);
+  grouping.configure({});
+});
+
+test("a bare first-name entry does not trust a stranger who shares it",
+  function () {
+    grouping.configure(PLACEHOLDER_IDENTITY);
+    var probe = trustProbe(
+      "PAYNOW-FAST PIB2503305595567963 Nickname OTHR Othername", 9000);
+    assert.equal(probe.counterparty, "Nickname Othername");
+    assert.ok(probe.checks.includes("large-transfer"));
+    assert.equal(probe.requiresReview, true);
+    // A stem under eight characters cannot buy its way out with a star: the
+    // star is ignored and the entry stays exact-only.
+    grouping.configure({ trustedCounterparties: ["Nick*"] });
+    assert.ok(trustProbe(
+      "PAYNOW-FAST NICK OTHERNAME OTHR Transfer - Mobile", 9000)
+      .checks.includes("large-transfer"));
+    // The stem itself is still trusted, exactly.
+    assert.equal(trustProbe(
+      "PAYNOW-FAST NICK OTHR Transfer - Mobile", 9000).requiresReview, false);
+    grouping.configure({});
+  });
+
+test("a starred entry of eight or more characters matches at a word boundary",
+  function () {
+    grouping.configure({ trustedCounterparties: ["Trusted Vendor*"] });
+    // The statement cuts the firm name at a different point each month.
+    assert.equal(trustProbe(
+      "PAYNOW-FAST TRUSTED VENDOR PTE L OTHR Transfer - UEN", 9000)
+      .requiresReview, false);
+    assert.equal(trustProbe(
+      "PAYNOW-FAST TRUSTED VENDOR OTHR Transfer - UEN", 9000).requiresReview,
+    false);
+    // Mid-word continuation is a different party and stays in the queue.
+    var other = trustProbe(
+      "PAYNOW-FAST TRUSTED VENDORX LTD OTHR Transfer - UEN", 9000);
+    assert.equal(other.counterparty, "Trusted Vendorx Ltd");
+    assert.ok(other.checks.includes("large-transfer"));
+    grouping.configure({});
+  });
+
+test("blank and star-only trusted entries are dropped", function () {
+  grouping.configure({ trustedCounterparties: ["", "   ", "*", " * ", "Yx"] });
+  assert.deepEqual(grouping.getIdentity().trustedCounterparties, ["Yx"]);
+  // Nothing was left that could match every counterparty.
+  assert.ok(trustProbe("PAYNOW-FAST A STRANGER OTHR Transfer - Mobile", 9000)
+    .checks.includes("large-transfer"));
+  assert.equal(trustProbe("PAYNOW-FAST YX OTHR Transfer - Mobile", 9000)
+    .requiresReview, false);
   grouping.configure({});
 });
 
