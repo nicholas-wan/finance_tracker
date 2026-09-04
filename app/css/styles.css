@@ -411,7 +411,6 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
   color: var(--text-3); font-size: var(--fs-xl); transform: translateY(-50%);
 }
 .insight.actionable:hover::after { color: var(--accent); }
-.m-col .val.capped { fill: var(--red); font-weight: 600; opacity: 1; }
 
 .tabs { display: flex; gap: 2px; justify-self: center; flex-wrap: wrap; }
 /* Weight stays fixed across states so the active tab never changes width and

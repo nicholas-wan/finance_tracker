@@ -2434,7 +2434,7 @@
       stepWrap.appendChild(row);
     });
 
-    // Annual table
+    // Annual table, most recent year first
     var yearWrap = document.getElementById("salary-years");
     clear(yearWrap);
     var table = el("table", "mini");
@@ -2444,7 +2444,7 @@
       head.appendChild(th);
     });
     table.appendChild(head);
-    years.forEach(function (y) {
+    years.slice().reverse().forEach(function (y) {
       var tr = document.createElement("tr");
       tr.appendChild(el("td", "", String(y.year)));
       tr.appendChild(el("td", "num", fmt0(y.income)));
