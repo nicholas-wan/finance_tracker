@@ -87,7 +87,7 @@
 
   function merchantLabel(transaction) {
     if (transaction.displayName) return transaction.displayName;
-    var key = merchantKey(transaction.description);
+    var key = transaction.merchantKey || merchantKey(transaction.description);
     if (key === "GRAB") return "Grab";
     if (key === "GRAB SUBSCRIPTION") return "Grab subscription";
     if (key === "NTUC FAIRPRICE") return "NTUC FairPrice";
@@ -265,12 +265,14 @@
     });
   }
 
-  function analyzeAccountTransactions(rows, reviewedIds) {
-    var reviewed = reviewedIds || {};
+  function analyzeAccountTransactions(rows, recognizedSignals) {
+    var reviewed = recognizedSignals || {};
     var ordered = (rows || []).slice().sort(function (left, right) {
       return accountSourceOrder(left).localeCompare(accountSourceOrder(right));
     });
-    var firstSeen = {};
+    // "New counterparty" means no earlier external withdrawal to this payee.
+    // A deposit or an internal movement must not immunise a later payment.
+    var firstExternalWithdrawalSeen = {};
     var duplicates = {};
     ordered.forEach(function (transaction) {
       var counterparty = accountCounterparty(transaction.description);
@@ -282,11 +284,13 @@
     var analysis = {};
     ordered.forEach(function (transaction) {
       var counterparty = accountCounterparty(transaction.description);
-      var first = firstSeen[counterparty] === undefined;
-      firstSeen[counterparty] = true;
       var reasons = [];
       var checks = [];
       var internal = accountIsInternalMovement(transaction);
+      var first = firstExternalWithdrawalSeen[counterparty] === undefined;
+      if (transaction.direction === "withdrawal" && !internal) {
+        firstExternalWithdrawalSeen[counterparty] = true;
+      }
       var trusted = accountTrustedCounterparty(counterparty);
       if ((transaction.flow || "Other") === "Other" &&
           !accountReviewWhitelisted(transaction)) {
@@ -327,6 +331,9 @@
         reasons.push("Source has not been reconciled");
         checks.push("unverified-source");
       }
+      var recognizedChecks = reviewed[transaction.id];
+      var recognized = Array.isArray(recognizedChecks) &&
+        recognizedChecks.slice().sort().join("|") === checks.slice().sort().join("|");
       analysis[transaction.id] = {
         counterparty: counterparty,
         firstCounterparty: first,
@@ -342,7 +349,9 @@
           transaction.direction !== "deposit" &&
           (Number(transaction.amount) >= SMALL_OUTFLOW_AMOUNT ||
             checks.indexOf("possible-duplicate") !== -1),
-        reviewed: Boolean(reviewed[transaction.id])
+        // Recognition is per signal. If a new check appears on this row, the
+        // check list changes and the transaction returns to the review queue.
+        reviewed: recognized
       };
     });
     return analysis;
@@ -417,7 +426,7 @@
     var displayNames = {};
     var fallbackNames = {};
     rows.forEach(function (transaction) {
-      var key = merchantKey(transaction.description) + "|" +
+      var key = (transaction.merchantKey || merchantKey(transaction.description)) + "|" +
         transaction.category + "|" + transaction.owner;
       if (!groups[key]) {
         groups[key] = {

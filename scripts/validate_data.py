@@ -19,7 +19,9 @@ from build_data import tag_key  # noqa: E402
 from risk_checks import signal_key  # noqa: E402
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATA_DIR = os.path.join(REPO_ROOT, "app", "data")
+DATA_DIR = os.environ.get(
+    "FINANCE_DATA_DIR", os.path.join(REPO_ROOT, "app", "data")
+)
 MANUAL_DIR = os.path.join(REPO_ROOT, "manual")
 
 # Everything downstream - month arithmetic, the balance chain's page/line
@@ -33,6 +35,15 @@ DATE_KEY_RE = re.compile(r"\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])")
 # cycle is monthly, so a month and a half means one has almost certainly been
 # missed rather than merely not issued yet.
 STALE_STATEMENT_DAYS = 45
+ACCOUNT_REVIEW_CHECKS = {
+    "unclassified",
+    "large-transfer",
+    "large-withdrawal",
+    "new-counterparty",
+    "possible-duplicate",
+    "derived-amount",
+    "unverified-source",
+}
 
 
 def load(path):
@@ -181,7 +192,7 @@ def main():
     audit_data = load_optional(
         os.path.join(MANUAL_DIR, "audit_history.json"), {"entries": []})
     account_review_data = load_optional(
-        os.path.join(MANUAL_DIR, "account_reviews.json"), {"reviewedIds": []})
+        os.path.join(MANUAL_DIR, "account_reviews.json"), {"recognizedSignals": []})
     salary_data = load_optional(
         os.path.join(MANUAL_DIR, "salary.json"), {"steps": [], "years": []})
     game_sales_data = load_optional(
@@ -197,6 +208,14 @@ def main():
 
     errors = []
     warnings = []
+    generation_values = [
+        payload.get("generationId") for payload in (cards, account, output)
+    ]
+    generations = {value for value in generation_values if value}
+    if generations and any(not value for value in generation_values):
+        errors.append("generated data files are missing an import generation")
+    elif len(generations) > 1:
+        errors.append("generated data files belong to different import generations")
     validate_rows("card data", cards.get("transactions", []), errors)
     validate_rows("account data", account.get("transactions", []), errors)
     validate_rows("dashboard data", output.get("transactions", []), errors)
@@ -816,17 +835,38 @@ def main():
             if not isinstance(tx_id, str) or not tx_id.startswith("tx_"):
                 errors.append("%s has a malformed transaction id %r" % (label, tx_id))
 
-    account_review_ids = account_review_data.get("reviewedIds", [])
-    if not isinstance(account_review_ids, list):
-        errors.append("account_reviews.reviewedIds must be a list")
-        account_review_ids = []
-    if len(account_review_ids) != len(set(account_review_ids)):
-        errors.append("account_reviews.reviewedIds contains duplicates")
-    for tx_id in account_review_ids:
+    legacy_account_review_ids = account_review_data.get("reviewedIds", [])
+    if legacy_account_review_ids:
+        warnings.append(
+            "account_reviews.json still holds row-only reviewedIds; run "
+            "scripts/migrate_account_reviews_to_signals.js"
+        )
+    account_signals = account_review_data.get("recognizedSignals", [])
+    if not isinstance(account_signals, list):
+        errors.append("account_reviews.recognizedSignals must be a list")
+        account_signals = []
+    seen_account_ids = set()
+    for index, entry in enumerate(account_signals, 1):
+        label = "recognized bank check %d" % index
+        if not isinstance(entry, dict):
+            errors.append("%s must be an object" % label)
+            continue
+        tx_id = entry.get("id")
+        checks = entry.get("checks")
+        if tx_id in seen_account_ids:
+            errors.append("account reviews repeat transaction %s" % tx_id)
+        seen_account_ids.add(tx_id)
         if tx_id not in account_by_id:
             errors.append(
-                "reviewed account transaction %s no longer matches a statement row" % tx_id
+                "%s no longer matches a statement row (%s)" % (label, tx_id)
             )
+        if (not isinstance(checks, list) or not checks or
+                any(not isinstance(check, str) or not check for check in checks)):
+            errors.append("%s must list at least one check" % label)
+        elif len(checks) != len(set(checks)):
+            errors.append("%s repeats a check" % label)
+        elif set(checks) - ACCOUNT_REVIEW_CHECKS:
+            errors.append("%s contains an unknown check" % label)
 
     account_groups = {}
     for row in account.get("transactions", []):
@@ -947,7 +987,9 @@ def main():
     queues = [
         ("unassigned owner", review.get("untagged", {})),
         ("Other category", review.get("otherCategory", {})),
+        ("overlapping category-rule", review.get("categoryRuleOverlap", {})),
         ("Lady card rule/unassigned", review.get("ladyRuleOrUnassigned", {})),
+        ("settlement-impacting merchant-rule", review.get("splitByRule", {})),
         ("suspicious transaction check", review.get("suspicious", {})),
     ]
     unverified = quality.get("provenance", {}).get("unverifiedTransactions", 0)

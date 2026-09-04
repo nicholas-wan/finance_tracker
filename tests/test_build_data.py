@@ -95,6 +95,7 @@ class IdentityEmbeddingTests(unittest.TestCase):
             "knownAccounts": {"1111111111": "Redacted Savings A/c"},
             "trustedCounterparties": ["Redacted Person"],
         })
+        self.assertEqual(output["transactions"][0]["merchantKey"], "SYNTH GROCER")
 
     def test_the_holder_name_and_deposit_accounts_stay_out_of_the_dashboard(self):
         # app/data/ is regenerated, copied and shared far more casually than
@@ -112,6 +113,33 @@ class IdentityEmbeddingTests(unittest.TestCase):
         output = self.build(None)
         self.assertEqual(output["identity"],
                          {"knownAccounts": {}, "trustedCounterparties": []})
+
+    def test_python_merchant_keys_match_the_browser_contract(self):
+        samples = {
+            "Grab* GPC-71541451439149cSINGAPORE": "GRAB",
+            "Grab* ab2d5d37108809ef Singapore": "GRAB",
+            "GRAB RIDES-EC PETALING JAYA": "GRAB",
+            "SUBSCRIPTIONGRAB* GPC-A1B2C3": "GRAB SUBSCRIPTION",
+            "NTUC FP-YISHUN MRT SINGAPORE": "NTUC FAIRPRICE",
+            "NORTHFIELD BAKERY SINGAPO": "NORTHFIELD BAKERY",
+            "HARBOUR DELI J J": "HARBOUR DELI",
+            "SINGAPO": "SINGAPO",
+        }
+        for description, expected in samples.items():
+            with self.subTest(description=description):
+                self.assertEqual(build_data.merchant_key(description), expected)
+
+    def test_category_rule_overlaps_are_enumerated_in_precedence_order(self):
+        self.assertEqual(
+            build_data.category_matches("GIANT HOTEL"),
+            ["Groceries", "Travel"],
+        )
+        self.assertEqual(build_data.categorize("GIANT HOTEL"), "Groceries")
+        self.assertFalse(build_data.has_category_override({}, "tx_one"))
+        self.assertFalse(build_data.has_category_override(
+            {"tx_one": {"displayName": "Giant"}}, "tx_one"))
+        self.assertTrue(build_data.has_category_override(
+            {"tx_one": {"category": "Groceries"}}, "tx_one"))
 
 
 if __name__ == "__main__":

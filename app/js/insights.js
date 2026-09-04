@@ -228,7 +228,7 @@ window.Insights = (function () {
     var byMerchant = {};
     spendable(data.transactions).forEach(function (t) {
       if (last12.indexOf(t.month) === -1 || t.type !== "debit") return;
-      var k = window.FinanceGrouping.merchantKey(t.description);
+      var k = t.merchantKey || window.FinanceGrouping.merchantKey(t.description);
       if (!byMerchant[k]) {
         byMerchant[k] = {
           total: 0, count: 0, months: {}, ids: [],

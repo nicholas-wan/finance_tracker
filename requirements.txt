@@ -1,6 +1,6 @@
 # Only what the scripts import. Install with:
 #   pip install -r requirements.txt
-pypdf==5.9.0
+pypdf==6.16.2
 
 # openpyxl is needed solely by scripts/migrate_from_xlsx.py, the one-time export
 # from Finances.xlsx. The regular pipeline never reads the spreadsheet.

@@ -265,7 +265,7 @@ def write_tree(root, data):
           data.get("remarks", {"remarksById": {}}))
     write(os.path.join(manual_dir, "risk_reviews.json"), {"recognizedSignals": []})
     write(os.path.join(manual_dir, "audit_history.json"), {"entries": []})
-    write(os.path.join(manual_dir, "account_reviews.json"), {"reviewedIds": []})
+    write(os.path.join(manual_dir, "account_reviews.json"), {"recognizedSignals": []})
     # Hand-maintained inputs are optional on disk; a test opts in by putting
     # the payload in its dataset under these keys.
     for key, filename in (
@@ -315,6 +315,36 @@ class BaselineTests(unittest.TestCase):
         failed, output = run()
         self.assertFalse(failed, output)
         self.assertNotIn("INTEGRITY ERRORS", output)
+
+    def test_mixed_import_generations_fail(self):
+        def mutate(data):
+            data["cards"]["generationId"] = "generation_a"
+            data["account"]["generationId"] = "generation_b"
+            data["output"]["generationId"] = "generation_a"
+
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("different import generations", output)
+
+    def test_partial_import_generation_fails(self):
+        def mutate(data):
+            data["cards"]["generationId"] = "generation_a"
+
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("missing an import generation", output)
+
+    def test_settlement_impacting_rule_rows_are_printed(self):
+        def mutate(data):
+            data["output"]["quality"]["review"]["splitByRule"] = {
+                "count": 2,
+                "amount": 32.0,
+                "owedImpact": 16.0,
+            }
+
+        failed, output = run(mutate)
+        self.assertFalse(failed, output)
+        self.assertIn("2 settlement-impacting merchant-rule transaction(s)", output)
 
 
 class CrossStatementContinuityTests(unittest.TestCase):

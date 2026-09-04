@@ -16,7 +16,10 @@ from pypdf import PdfReader
 from data_ids import assign_provenance, source_name
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_PATH = os.path.join(REPO_ROOT, "app", "data", "account_transactions.json")
+DATA_DIR = os.environ.get(
+    "FINANCE_DATA_DIR", os.path.join(REPO_ROOT, "app", "data")
+)
+OUT_PATH = os.path.join(DATA_DIR, "account_transactions.json")
 
 MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
           "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
@@ -119,13 +122,17 @@ def header_skip_re(identity=None):
     an identity it simply omits that alternative rather than guessing.
     """
     name = " ".join(str((identity or {}).get("statementHolderName") or "").split())
-    alternatives = [r"Page \d"]
+    alternatives = [r"Page \d+(?:\s+of\s+\d+)?\s*$"]
     if name:
-        alternatives.append(re.escape(name))
+        alternatives.append(re.escape(name) + r"\s*$")
     alternatives.extend([
-        r"Date Description", r"One Account", r"Account Transaction", r"Total\b",
+        r"Date Description(?:\s+.*)?$", r"One Account\s*$",
+        r"Account Transaction(?:s)?\s*$",
+        # A printed total contains only money columns. Do not use a loose
+        # ``Total\b`` prefix: a wrapped payee such as TOTAL WINE is row data.
+        r"Total(?:\s+[\d,]+\.\d{2})+\s*$",
         r"Please note that you are bound\b", r"omissions or unauthorised debits\b",
-        r"-{5,}",
+        r"-{5,}\s*$",
     ])
     return re.compile(r"^(" + "|".join(alternatives) + r")", re.I)
 
@@ -153,22 +160,8 @@ def statement_month(reader, path):
         mon = MONTHS.get(m.group(1).upper())
         if mon:
             return int(m.group(2)), mon
-    # Fall back to the filename: UOB_ONE_2026_5.pdf or UOB_ONE_JUN_26.pdf
-    base = os.path.basename(path).upper().replace(".PDF", "")
-    parts = base.split("_")
-    year = month = None
-    for p in parts:
-        if re.fullmatch(r"\d{4}", p):
-            year = int(p)
-        elif re.fullmatch(r"\d{1,2}", p):
-            if year and month is None:
-                month = int(p)
-            elif not year:
-                year = 2000 + int(p)
-        elif p in MONTHS:
-            month = MONTHS[p]
-    if year and month and 1 <= month <= 12:
-        return year, month
+    # Never infer accounting state from a mutable filename. If the printed
+    # period cannot be extracted, the statement needs a parser update.
     return None
 
 

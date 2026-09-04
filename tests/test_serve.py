@@ -147,10 +147,14 @@ class OwnerApiValidationTests(unittest.TestCase):
 
     def test_accepts_current_account_review(self):
         result = serve.validate_account_review_request(
-            {"id": "tx_abc123", "reviewed": True}, self.transactions
+            {"id": "tx_abc123", "reviewed": True,
+             "checksById": {"tx_abc123": ["large-transfer"]}}, self.transactions
         )
         # A single "id" still resolves, as a one-element batch.
-        self.assertEqual(result, (["tx_abc123"], True))
+        self.assertEqual(
+            result,
+            (["tx_abc123"], True, {"tx_abc123": ["large-transfer"]}),
+        )
 
     def test_rejects_missing_account_review_transaction(self):
         with self.assertRaisesRegex(ValueError, "not present"):
@@ -160,17 +164,39 @@ class OwnerApiValidationTests(unittest.TestCase):
 
     def test_accepts_a_batch_of_account_reviews(self):
         result = serve.validate_account_review_request(
-            {"ids": ["tx_def456", "tx_abc123"], "reviewed": True},
+            {"ids": ["tx_def456", "tx_abc123"], "reviewed": True,
+             "checksById": {
+                 "tx_abc123": ["large-transfer"],
+                 "tx_def456": ["possible-duplicate"],
+             }},
             self.transactions,
         )
-        self.assertEqual(result, (["tx_abc123", "tx_def456"], True))
+        self.assertEqual(result, (
+            ["tx_abc123", "tx_def456"], True,
+            {"tx_abc123": ["large-transfer"],
+             "tx_def456": ["possible-duplicate"]},
+        ))
+
+    def test_rejects_recognition_without_current_checks(self):
+        with self.assertRaisesRegex(ValueError, "at least one current check"):
+            serve.validate_account_review_request(
+                {"id": "tx_abc123", "reviewed": True}, self.transactions
+            )
+
+    def test_rejects_an_unknown_account_review_check(self):
+        with self.assertRaisesRegex(ValueError, "Unknown bank review check"):
+            serve.validate_account_review_request(
+                {"id": "tx_abc123", "reviewed": True,
+                 "checksById": {"tx_abc123": ["invented-check"]}},
+                self.transactions,
+            )
 
     def test_collapses_a_repeated_account_review_id(self):
         result = serve.validate_account_review_request(
             {"ids": ["tx_abc123", "tx_abc123"], "reviewed": False},
             self.transactions,
         )
-        self.assertEqual(result, (["tx_abc123"], False))
+        self.assertEqual(result, (["tx_abc123"], False, {"tx_abc123": []}))
 
     def test_rejects_an_empty_account_review_batch(self):
         with self.assertRaisesRegex(ValueError, "Between 1 and"):
@@ -534,7 +560,7 @@ class SaveWritePathTests(unittest.TestCase):
             "REMARK_PATH": {"remarksById": {}},
             "OVERRIDE_PATH": {"overridesById": {}},
             "AUDIT_PATH": {"entries": []},
-            "ACCOUNT_REVIEW_PATH": {"reviewedIds": []},
+            "ACCOUNT_REVIEW_PATH": {"recognizedSignals": []},
             "TRANSACTIONS_PATH": {
                 "transactions": [self.row()],
                 "quality": {"seed": True},
@@ -761,6 +787,29 @@ class SaveWritePathTests(unittest.TestCase):
             {self.TX_ID: {"category": "Games"}},
         )
 
+    def test_saving_the_winning_category_confirms_an_overlap(self):
+        overlap = self.row(
+            ruleCategory="Shopping",
+            ruleCategories=["Shopping", "Travel"],
+        )
+        self.write_transactions([overlap])
+        self.stage_rebuild(
+            ruleCategory="Shopping",
+            ruleCategories=["Shopping", "Travel"],
+        )
+        serve.save_transaction_detail(
+            self.TX_ID, "Nic", "Shopping", "", ""
+        )
+        self.assertEqual(
+            self.read("OVERRIDE_PATH")["overridesById"],
+            {self.TX_ID: {"category": "Shopping"}},
+        )
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        confirmation = next(
+            change for change in changes if change["field"] == "Category review"
+        )
+        self.assertEqual(confirmation["after"], "Shopping")
+
     def test_detail_save_still_writes_the_tag_when_the_owner_changes(self):
         self.stage_rebuild(owner="Yx", ownerSource="exact-id")
         serve.save_transaction_detail(self.TX_ID, "Yx", "Shopping", "", "")
@@ -904,13 +953,16 @@ class SaveWritePathTests(unittest.TestCase):
         # "Review all N" used to post N requests, each running the validator
         # and writing its own history row.
         result = serve.save_account_review(
-            [self.SECOND_BANK_ID, self.BANK_ID], True)
+            [self.SECOND_BANK_ID, self.BANK_ID], True,
+            {self.BANK_ID: ["large-transfer"],
+             self.SECOND_BANK_ID: ["possible-duplicate"]})
         self.assertTrue(result["ok"])
         self.assertEqual(result["ids"], [self.BANK_ID, self.SECOND_BANK_ID])
         self.assertEqual(result["id"], self.BANK_ID)
         self.assertTrue(result["reviewed"])
         self.assertEqual(
-            self.read("ACCOUNT_REVIEW_PATH")["reviewedIds"],
+            [entry["id"] for entry in
+             self.read("ACCOUNT_REVIEW_PATH")["recognizedSignals"]],
             [self.BANK_ID, self.SECOND_BANK_ID],
         )
         entries = self.read("AUDIT_PATH")["entries"]
@@ -928,29 +980,41 @@ class SaveWritePathTests(unittest.TestCase):
 
     def test_account_review_batch_records_a_mixed_before_state(self):
         self.paths["ACCOUNT_REVIEW_PATH"].write_text(
-            json.dumps({"reviewedIds": [self.BANK_ID]}), encoding="utf-8")
-        serve.save_account_review([self.BANK_ID, self.SECOND_BANK_ID], True)
+            json.dumps({"recognizedSignals": [{
+                "id": self.BANK_ID, "checks": ["large-transfer"]
+            }]}), encoding="utf-8")
+        serve.save_account_review(
+            [self.BANK_ID, self.SECOND_BANK_ID], True,
+            {self.BANK_ID: ["large-transfer"],
+             self.SECOND_BANK_ID: ["possible-duplicate"]})
         change = self.read("AUDIT_PATH")["entries"][0]["changes"][0]
         self.assertEqual(change["before"], "Reviewed, Needs review")
         self.assertEqual(change["after"], "Reviewed")
 
     def test_account_review_batch_reopening_clears_every_row(self):
         self.paths["ACCOUNT_REVIEW_PATH"].write_text(
-            json.dumps({"reviewedIds": [self.BANK_ID, self.SECOND_BANK_ID]}),
+            json.dumps({"recognizedSignals": [
+                {"id": self.BANK_ID, "checks": ["large-transfer"]},
+                {"id": self.SECOND_BANK_ID, "checks": ["possible-duplicate"]},
+            ]}),
             encoding="utf-8")
         serve.save_account_review([self.BANK_ID, self.SECOND_BANK_ID], False)
-        self.assertEqual(self.read("ACCOUNT_REVIEW_PATH")["reviewedIds"], [])
+        self.assertEqual(
+            self.read("ACCOUNT_REVIEW_PATH")["recognizedSignals"], [])
         entries = self.read("AUDIT_PATH")["entries"]
         self.assertEqual(entries[0]["action"], "Reopened 2 bank transactions")
 
     def test_single_account_review_is_unchanged(self):
-        result = serve.save_account_review(self.BANK_ID, True)
+        result = serve.save_account_review(
+            self.BANK_ID, True, {self.BANK_ID: ["large-transfer"]})
         self.assertEqual(result["id"], self.BANK_ID)
         self.assertTrue(result["reviewed"])
         # The single form gained "ids" and nothing else.
         self.assertEqual(result["ids"], [self.BANK_ID])
         self.assertEqual(
-            self.read("ACCOUNT_REVIEW_PATH")["reviewedIds"], [self.BANK_ID])
+            [entry["id"] for entry in
+             self.read("ACCOUNT_REVIEW_PATH")["recognizedSignals"]],
+            [self.BANK_ID])
         entries = self.read("AUDIT_PATH")["entries"]
         self.assertEqual(len(entries), 1)
         self.assertEqual(entries[0]["action"], "Reviewed bank transaction")
@@ -969,7 +1033,8 @@ class SaveWritePathTests(unittest.TestCase):
         self.assert_untouched("ACCOUNT_REVIEW_PATH", "AUDIT_PATH")
 
     def test_account_review_backs_up_before_writing(self):
-        serve.save_account_review(self.BANK_ID, True)
+        serve.save_account_review(
+            self.BANK_ID, True, {self.BANK_ID: ["large-transfer"]})
         for name in ("ACCOUNT_REVIEW_PATH", "AUDIT_PATH"):
             self.assert_backup_matches_original(name)
 
@@ -1231,7 +1296,7 @@ class ManualFileBootstrapTests(unittest.TestCase):
     EXPECTED = {
         "OWNER_PATH": ("owner_tags.json", {"tags": {}, "tagsById": {}}),
         "RISK_REVIEW_PATH": ("risk_reviews.json", {"recognizedSignals": []}),
-        "ACCOUNT_REVIEW_PATH": ("account_reviews.json", {"reviewedIds": []}),
+        "ACCOUNT_REVIEW_PATH": ("account_reviews.json", {"recognizedSignals": []}),
         "REMARK_PATH": ("transaction_remarks.json", {"remarksById": {}}),
         "OVERRIDE_PATH": ("transaction_overrides.json", {"overridesById": {}}),
         "AUDIT_PATH": ("audit_history.json", {"entries": []}),
@@ -1286,7 +1351,8 @@ class ManualFileBootstrapTests(unittest.TestCase):
         self.assertEqual(
             self.contents("transaction_overrides.json")["overridesById"], {})
         self.assertEqual(self.contents("risk_reviews.json")["recognizedSignals"], [])
-        self.assertEqual(self.contents("account_reviews.json")["reviewedIds"], [])
+        self.assertEqual(
+            self.contents("account_reviews.json")["recognizedSignals"], [])
         self.assertEqual(self.contents("audit_history.json")["entries"], [])
 
 

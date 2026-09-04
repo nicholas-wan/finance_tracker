@@ -21,6 +21,8 @@ from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import urlparse
 
+from file_lock import FinanceWriteLock
+
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "app"
@@ -67,7 +69,16 @@ ALLOWED_CATEGORIES = {
 # one request. The cap matches the owner batch and keeps a request inside the
 # 4KB body limit do_POST enforces.
 MAX_ACCOUNT_REVIEW_BATCH = 100
-WRITE_LOCK = threading.Lock()
+ACCOUNT_REVIEW_CHECKS = {
+    "unclassified",
+    "large-transfer",
+    "large-withdrawal",
+    "new-counterparty",
+    "possible-duplicate",
+    "derived-amount",
+    "unverified-source",
+}
+WRITE_LOCK = FinanceWriteLock(REPO_ROOT / "tmp" / ".finance-data.lock")
 LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 REPLACE_ATTEMPTS = 5
 REPLACE_RETRY_DELAY = 0.05
@@ -130,7 +141,7 @@ def manual_file_defaults():
     return {
         OWNER_PATH: {"tags": {}, "tagsById": {}},
         RISK_REVIEW_PATH: {"recognizedSignals": []},
-        ACCOUNT_REVIEW_PATH: {"reviewedIds": []},
+        ACCOUNT_REVIEW_PATH: {"recognizedSignals": []},
         REMARK_PATH: {"remarksById": {}},
         OVERRIDE_PATH: {"overridesById": {}},
         AUDIT_PATH: {"entries": []},
@@ -339,6 +350,7 @@ def validate_account_review_request(payload, transactions):
     if not isinstance(payload, dict):
         raise ValueError("Request body must be a JSON object.")
     reviewed = payload.get("reviewed")
+    checks_by_id = payload.get("checksById", {})
     if "ids" in payload:
         ids = payload.get("ids")
         if (not isinstance(ids, list) or not ids
@@ -357,7 +369,21 @@ def validate_account_review_request(payload, transactions):
     ids = sorted(set(ids))
     if any(tx_id not in transactions for tx_id in ids):
         raise ValueError("That account transaction is not present in the current statements.")
-    return ids, reviewed
+    if not isinstance(checks_by_id, dict):
+        raise ValueError("Bank review checks must be an object keyed by transaction ID.")
+    normalized_checks = {}
+    for tx_id in ids:
+        checks = checks_by_id.get(tx_id, [])
+        if (not isinstance(checks, list) or
+                any(not isinstance(check, str) or not check for check in checks)):
+            raise ValueError("Each bank review must list its current checks.")
+        unknown = sorted(set(checks) - ACCOUNT_REVIEW_CHECKS)
+        if unknown:
+            raise ValueError("Unknown bank review check: %s." % ", ".join(unknown))
+        if reviewed and not checks:
+            raise ValueError("A recognized bank review must list at least one current check.")
+        normalized_checks[tx_id] = sorted(set(checks))
+    return ids, reviewed, normalized_checks
 
 
 def validate_remark_request(payload, transactions):
@@ -791,7 +817,12 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         override_data = json.loads(originals[OVERRIDE_PATH].decode("utf-8"))
         overrides = override_data.setdefault("overridesById", {})
         override = {}
-        if category != current.get("ruleCategory", current.get("category")):
+        category_overlap = len(current.get("ruleCategories") or []) > 1
+        # Saving an overlapping row is an explicit choice even when the user
+        # keeps the first rule's category. Retaining that same-value override
+        # is what lets the review queue distinguish "first rule happened to
+        # win" from "the user confirmed the first rule".
+        if category_overlap or category != current.get("ruleCategory", current.get("category")):
             override["category"] = category
         if display_name:
             override["displayName"] = display_name
@@ -811,6 +842,12 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         for field, before, after in comparisons:
             if before != after:
                 changes.append({"field": field, "before": before, "after": after})
+        if category_overlap and category == current.get("category"):
+            changes.append({
+                "field": "Category review",
+                "before": ", ".join(current.get("ruleCategories") or []),
+                "after": category,
+            })
         if owner_changed and current.get("ownerSource") != "exact-id":
             changes.append({
                 "field": "Owner source",
@@ -890,7 +927,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         }
 
 
-def save_account_review(tx_ids, reviewed):
+def save_account_review(tx_ids, reviewed, checks_by_id=None):
     """Mark one bank row or a batch reviewed, under one validation run.
 
     ``tx_ids`` is a single ID string or a list of them; "Review all N" posts
@@ -904,27 +941,43 @@ def save_account_review(tx_ids, reviewed):
         transactions = {
             row.get("id"): row for row in account_data.get("transactions", [])
         }
-        tx_ids, reviewed = validate_account_review_request(
-            {"ids": tx_ids, "reviewed": reviewed}, transactions)
+        request = {
+            "ids": tx_ids,
+            "reviewed": reviewed,
+            "checksById": checks_by_id or {},
+        }
+        tx_ids, reviewed, checks_by_id = validate_account_review_request(
+            request, transactions)
         current = transactions[tx_ids[0]]
         paths = (ACCOUNT_REVIEW_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
         review_data = json.loads(originals[ACCOUNT_REVIEW_PATH].decode("utf-8"))
-        reviewed_ids = set(review_data.get("reviewedIds", []))
+        stored_signals = review_data.get("recognizedSignals", [])
+        signals_by_id = {
+            entry.get("id"): entry
+            for entry in stored_signals if isinstance(entry, dict) and entry.get("id")
+        }
         # A batch spans rows that may not agree, so the audit records the set
         # it moved from rather than one row's state.
         previous = [
             label for label, present in (
-                ("Reviewed", any(tx_id in reviewed_ids for tx_id in tx_ids)),
-                ("Needs review", any(tx_id not in reviewed_ids for tx_id in tx_ids)),
+                ("Reviewed", any(tx_id in signals_by_id for tx_id in tx_ids)),
+                ("Needs review", any(tx_id not in signals_by_id for tx_id in tx_ids)),
             ) if present
         ]
         for tx_id in tx_ids:
             if reviewed:
-                reviewed_ids.add(tx_id)
+                signals_by_id[tx_id] = {
+                    "id": tx_id,
+                    "checks": checks_by_id[tx_id],
+                    "recognizedAt": datetime.now().astimezone().isoformat(timespec="seconds"),
+                }
             else:
-                reviewed_ids.discard(tx_id)
-        review_data["reviewedIds"] = sorted(reviewed_ids)
+                signals_by_id.pop(tx_id, None)
+        review_data.pop("reviewedIds", None)
+        review_data["recognizedSignals"] = [
+            signals_by_id[key] for key in sorted(signals_by_id)
+        ]
         after = "Reviewed" if reviewed else "Needs review"
         changes = []
         if previous != [after]:
@@ -1122,11 +1175,11 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                     "error": "Could not read account reviews: %s" % error,
                 })
                 return
-            reviewed_ids = review_data.get("reviewedIds", []) \
+            recognized_signals = review_data.get("recognizedSignals", []) \
                 if isinstance(review_data, dict) else []
             self.send_json(200, {
                 "ok": True,
-                "reviewedIds": reviewed_ids,
+                "recognizedSignals": recognized_signals,
             })
             return
         if endpoint == "/api/audit-history":
@@ -1211,7 +1264,9 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                     raise ValueError("Request body must be a JSON object.")
                 result = save_account_review(
                     payload["ids"] if "ids" in payload else payload.get("id"),
-                    payload.get("reviewed"))
+                    payload.get("reviewed"),
+                    payload.get("checksById"),
+                )
             else:
                 # Read under the write lock: on Windows a concurrent rebuild's
                 # os.replace onto this file raises PermissionError, which would

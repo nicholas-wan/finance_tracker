@@ -17,7 +17,10 @@ from pypdf import PdfReader
 from data_ids import assign_provenance, source_name
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-OUT_PATH = os.path.join(REPO_ROOT, "app", "data", "card_transactions.json")
+DATA_DIR = os.environ.get(
+    "FINANCE_DATA_DIR", os.path.join(REPO_ROOT, "app", "data")
+)
+OUT_PATH = os.path.join(DATA_DIR, "card_transactions.json")
 
 MONTHS = {"JAN": 1, "FEB": 2, "MAR": 3, "APR": 4, "MAY": 5, "JUN": 6,
           "JUL": 7, "AUG": 8, "SEP": 9, "OCT": 10, "NOV": 11, "DEC": 12}
@@ -100,20 +103,9 @@ def statement_month(reader, path):
     m = STATEMENT_DATE_RE.search(text)
     if m:
         return int(m.group(3)), MONTHS[m.group(2).upper()]
-    base = os.path.basename(path).upper().replace(".PDF", "")
-    year = month = None
-    for part in base.split("_"):
-        if re.fullmatch(r"\d{4}", part):
-            year = int(part)
-        elif part in MONTHS:
-            month = MONTHS[part]
-        elif re.fullmatch(r"\d{1,2}", part):
-            if year is None:
-                year = 2000 + int(part)
-            elif month is None:
-                month = int(part)
-    if year and month and 1 <= month <= 12:
-        return year, month
+    # A filename is not evidence of the statement period. A renamed PDF can
+    # reconcile perfectly while assigning every row, ID and manual decision to
+    # the wrong month, so absence of the printed date is a hard parse failure.
     return None
 
 

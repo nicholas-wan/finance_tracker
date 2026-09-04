@@ -23,7 +23,9 @@ from risk_checks import detect_risks
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 MANUAL_DIR = os.path.join(REPO_ROOT, "manual")
-DATA_DIR = os.path.join(REPO_ROOT, "app", "data")
+DATA_DIR = os.environ.get(
+    "FINANCE_DATA_DIR", os.path.join(REPO_ROOT, "app", "data")
+)
 CARDS_PATH = os.path.join(DATA_DIR, "card_transactions.json")
 ACCOUNT_PATH = os.path.join(DATA_DIR, "account_transactions.json")
 OUT_PATH = os.path.join(DATA_DIR, "transactions.json")
@@ -218,12 +220,25 @@ def padded(description):
 
 
 def categorize(description):
+    matches = category_matches(description)
+    return matches[0] if matches else "Other"
+
+
+def category_matches(description):
+    """Return every matching rule category, preserving rule precedence."""
     d = padded(description)
+    matches = []
     for category, patterns in CATEGORY_RULES:
         for p in patterns:
             if p in d:
-                return category
-    return "Other"
+                matches.append(category)
+                break
+    return matches
+
+
+def has_category_override(overrides, transaction_id):
+    override = overrides.get(transaction_id)
+    return isinstance(override, dict) and bool(override.get("category"))
 
 
 def game_of(description):
@@ -256,12 +271,75 @@ def tag_key(month, description, amount, credit):
     return "|".join([month, description.upper()[:60], "%.2f" % amount, "C" if credit else "D"])
 
 
-def merchant_key(description):
+CITY_SUFFIXES = (
+    ("SINGAPORE",),
+    ("PETALING", "JAYA"),
+    ("JOHOR", "BAHRU"),
+)
+
+
+def _matches_city_suffix(tail, city):
+    for index, token in enumerate(tail):
+        expected = city[index]
+        if index < len(tail) - 1:
+            if token != expected:
+                return False
+            continue
+        minimum = min(4, len(expected)) if index == 0 else 1
+        if len(token) < minimum or not expected.startswith(token):
+            return False
+    return True
+
+
+def _strip_trailing_noise(key):
+    tokens = key.split()
+    changed = True
+    while changed and len(tokens) > 1:
+        changed = False
+        while len(tokens) > 1 and len(tokens[-1]) == 1:
+            tokens.pop()
+            changed = True
+        for city in CITY_SUFFIXES:
+            if changed:
+                break
+            longest = min(len(city), len(tokens) - 1)
+            for take in range(longest, 0, -1):
+                if _matches_city_suffix(tokens[-take:], city):
+                    tokens = tokens[:-take]
+                    changed = True
+                    break
+    return " ".join(tokens)
+
+
+def legacy_merchant_key(description):
     s = description.upper()
     s = re.sub(r"GPC-[0-9A-Z]+", "", s)
     s = re.sub(r"[0-9]{4,}", "", s)
     s = re.sub(r"[^A-Z ]+", " ", s)
     return " ".join(s.split())[:26]
+
+
+def merchant_key(description):
+    """Canonical merchant identity shared with transaction-grouping.js."""
+    original = str(description or "")
+    key = original.upper()
+    if re.match(r"^SUBSCRIPTIONGRAB(?:\*|\s|-|$)", key):
+        return "GRAB SUBSCRIPTION"
+    if re.match(r"^GRAB(?:\*|\s|-|$)", key):
+        return "GRAB"
+    if re.match(r"^NTUC\s+(?:FAIRPRICE\b|FP(?:\b|-))", key):
+        return "NTUC FAIRPRICE"
+    key = re.sub(r"GPC-[0-9A-Z]+", "", key)
+    key = re.sub(
+        r"\b(?:A-)?(?=[A-Z0-9]*[A-Z])(?=[A-Z0-9]*[0-9])[A-Z0-9]{8,}\b",
+        "",
+        key,
+    )
+    key = re.sub(r"[0-9]{4,}", "", key)
+    key = re.sub(r"[^A-Z ]+", " ", key)
+    key = re.sub(r"\b(?:SINGAPORE|PETALING JAYA|JOHOR BAHRU)\b", " ", key)
+    key = _strip_trailing_noise(" ".join(key.split()))
+    return key or original.upper().strip()
 
 
 def main():
@@ -295,8 +373,8 @@ def main():
     confirmed_patterns = [c.upper() for c in rules_file.get("confirmed", [])]
 
     def rule_is_confirmed(description):
-        m = merchant_key(description)
-        return any(p in m for p in confirmed_patterns)
+        keys = (merchant_key(description), legacy_merchant_key(description))
+        return any(p in key for p in confirmed_patterns for key in keys)
 
     # Repeat charges share a tag key, so hand out that key's owners one per row.
     # Rows are processed in a stable order, so the same row gets the same owner
@@ -307,7 +385,8 @@ def main():
     transactions = []
     tagged_id = tagged_exact = tagged_rule = 0
     for r in rows:
-        rule_category = categorize(r["description"])
+        rule_categories = category_matches(r["description"])
+        rule_category = rule_categories[0] if rule_categories else "Other"
         override = transaction_overrides.get(r["id"], {})
         category = override.get("category", rule_category)
         if category == "Payment":
@@ -341,7 +420,8 @@ def main():
                 tagged_exact += 1
                 owner_source = "exact-legacy"
             else:
-                owner = owner_rules.get(merchant_key(r["description"]))
+                owner = (owner_rules.get(merchant_key(r["description"]))
+                         or owner_rules.get(legacy_merchant_key(r["description"])))
                 if owner:
                     tagged_rule += 1
                     owner_source = ("merchant-rule-confirmed"
@@ -355,12 +435,14 @@ def main():
             "month": r["month"],
             "card": r.get("card", "UOB ONE CARD"),
             "description": r["description"],
+            "merchantKey": merchant_key(r["description"]),
             "amount": r["amount"],
             "type": tx_type,
             "owner": owner or "Untagged",
             "ownerSource": owner_source,
             "category": category,
             "ruleCategory": rule_category,
+            "ruleCategories": rule_categories,
             "provenance": r["provenance"],
         }
         if r.get("foreign"):
@@ -410,6 +492,11 @@ def main():
     ]
     untagged_rows = [t for t in review_rows if t["owner"] == "Untagged"]
     other_rows = [t for t in review_rows if t["category"] == "Other"]
+    overlap_rows = [
+        t for t in review_rows
+        if len(t.get("ruleCategories", [])) > 1
+        and not has_category_override(transaction_overrides, t["id"])
+    ]
     unverified_rows = [
         t for t in review_rows if not t["provenance"].get("verified")
     ]
@@ -438,6 +525,13 @@ def main():
         source_type = t["provenance"]["sourceType"]
         source_counts[source_type] = source_counts.get(source_type, 0) + 1
     account_data = load(ACCOUNT_PATH, {})
+    generation_id = cards.get("generationId")
+    account_generation = account_data.get("generationId")
+    if generation_id and account_generation and generation_id != account_generation:
+        raise SystemExit(
+            "Card and account data belong to different import generations; "
+            "run scripts/import_all.py."
+        )
     ids = [t["id"] for t in transactions]
     missing_provenance = sum(1 for t in transactions if not t.get("provenance"))
     duplicate_ids = len(ids) - len(set(ids))
@@ -477,7 +571,7 @@ def main():
         "statementCount": len(pdf_months),
     }
     quality = {
-        "status": "review" if (untagged_rows or other_rows or unverified_rows
+        "status": "review" if (untagged_rows or other_rows or overlap_rows or unverified_rows
                                or lady_review_rows or split_review_rows
                                or risk_summary["count"]) else "ready",
         "integrity": {
@@ -504,6 +598,11 @@ def main():
             "otherCategory": {
                 "count": len(other_rows),
                 "amount": round(sum(abs(t["amount"]) for t in other_rows), 2),
+            },
+            "categoryRuleOverlap": {
+                "count": len(overlap_rows),
+                "amount": round(sum(abs(t["amount"]) for t in overlap_rows), 2),
+                "ids": [t["id"] for t in overlap_rows],
             },
             "ladyRuleOrUnassigned": {
                 "count": len(lady_review_rows),
@@ -548,6 +647,7 @@ def main():
         with os.fdopen(descriptor, "w", encoding="utf-8") as f:
             json.dump({
                 "currency": "SGD",
+                "generationId": generation_id or account_generation,
                 "generatedAt": datetime.now().strftime("%Y-%m-%d %H:%M"),
                 "months": months,
                 "salarySteps": salary.get("steps", []),

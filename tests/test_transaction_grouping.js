@@ -392,7 +392,7 @@ test("bank review analysis flags conservative explainable cases", function () {
       direction: "deposit", amount: 10,
       provenance: { sourceFile: "JUL.pdf", page: 1, line: 3, verified: true } }
   ];
-  var result = grouping.analyzeAccountTransactions(rows, { a: true });
+  var result = grouping.analyzeAccountTransactions(rows, { a: ["large-transfer"] });
   assert.equal(result.a.requiresReview, true);
   assert.equal(result.a.reviewed, true);
   assert.ok(result.a.checks.includes("large-transfer"));
@@ -631,6 +631,36 @@ test("deposits never require review, but keep their data-quality notes", functio
   assert.equal(result.d1.requiresReview, false);
 });
 
+test("a deposit does not hide the first later payment to the same counterparty", function () {
+  var shared = {
+    month: "2026-07", flow: "Other", amount: 600,
+    provenance: { sourceFile: "JUL.pdf", page: 1, verified: true }
+  };
+  var result = grouping.analyzeAccountTransactions([
+    Object.assign({}, shared, { id: "in", date: "2026-07-01", line: 1,
+      description: "PAYNOW-FAST NEW PAYEE OTHR Transfer - Mobile", direction: "deposit" }),
+    Object.assign({}, shared, { id: "out", date: "2026-07-02", line: 2,
+      description: "PAYNOW-FAST NEW PAYEE OTHR Transfer - Mobile", direction: "withdrawal" })
+  ], {});
+  assert.ok(result.out.checks.includes("new-counterparty"));
+});
+
+test("recognition is invalidated when the checks on a bank row change", function () {
+  var row = {
+    id: "r1", month: "2026-07", date: "2026-07-15",
+    description: "PAYNOW-FAST A STRANGER OTHR Transfer - Mobile",
+    flow: "Transfer", direction: "withdrawal", amount: 800,
+    provenance: { sourceFile: "JUL.pdf", page: 1, line: 1, verified: true }
+  };
+  var checks = grouping.analyzeAccountTransactions([row], {}).r1.checks;
+  assert.equal(grouping.analyzeAccountTransactions(
+    [row], { r1: checks }
+  ).r1.reviewed, true);
+  assert.equal(grouping.analyzeAccountTransactions(
+    [row], { r1: checks.concat(["unverified-source"]) }
+  ).r1.reviewed, false);
+});
+
 test("incoming transfer duplicates stay quiet, outgoing still flag", function () {
   // Amount sits above the small-outflow allowance so only direction differs.
   function pair(direction) {
@@ -813,6 +843,13 @@ test("no live merchant key keeps a truncated city or stray letter tail", functio
       assert.ok(last.length < 4 || city.indexOf(last) !== 0,
         "truncated city tail should be trimmed: " + key);
     });
+  });
+});
+
+test("every generated merchant key matches the browser normalizer", function () {
+  var data = require("../app/data/transactions.json");
+  data.transactions.forEach(function (row) {
+    assert.equal(row.merchantKey, grouping.merchantKey(row.description), row.id);
   });
 });
 

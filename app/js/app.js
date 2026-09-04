@@ -21,7 +21,7 @@
 
   var data = null;
   var account = { transactions: [], months: [] };
-  var accountReviewedIds = {};
+  var accountReviewedSignals = {};
   // Handle returned by bindToggle, so a drill-down can reset the grouping
   // toggle's own closure state and not just the flag on `state`.
   var groupToggle = null;
@@ -135,7 +135,7 @@
   }
   function refreshAccountAnalysis() {
     var analysis = window.FinanceGrouping.analyzeAccountTransactions(
-      account.transactions, accountReviewedIds);
+      account.transactions, accountReviewedSignals);
     account.transactions.forEach(function (transaction) {
       transaction.accountReview = analysis[transaction.id] || {
         counterparty: window.FinanceGrouping.accountCounterparty(transaction.description),
@@ -556,7 +556,15 @@
     fetch("api/account-review", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ id: t.id, reviewed: reviewed })
+      body: JSON.stringify({
+        id: t.id,
+        reviewed: reviewed,
+        checksById: (function () {
+          var result = {};
+          result[t.id] = (t.accountReview && t.accountReview.checks) || [];
+          return result;
+        }())
+      })
     }).then(function (response) {
       return response.json().catch(function () {
         return { error: "The local server returned an unreadable response." };
@@ -565,8 +573,9 @@
         return payload;
       });
     }).then(function () {
-      if (reviewed) accountReviewedIds[t.id] = true;
-      else delete accountReviewedIds[t.id];
+      if (reviewed) {
+        accountReviewedSignals[t.id] = (t.accountReview.checks || []).slice();
+      } else delete accountReviewedSignals[t.id];
       refreshAccountAnalysis();
       renderLedger();
       var updated = account.transactions.find(function (row) { return row.id === t.id; });
@@ -603,7 +612,15 @@
         return fetch("api/account-review", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ ids: chunk, reviewed: true })
+          body: JSON.stringify({
+            ids: chunk,
+            reviewed: true,
+            checksById: chunk.reduce(function (result, id) {
+              var row = account.transactions.find(function (item) { return item.id === id; });
+              result[id] = row && row.accountReview ? row.accountReview.checks : [];
+              return result;
+            }, {})
+          })
         }).then(function (response) {
           return response.json().catch(function () {
             return { error: "The local server returned an unreadable response." };
@@ -615,8 +632,12 @@
             var applied = Array.isArray(payload.ids) && payload.ids.length
               ? payload.ids : chunk;
             applied.forEach(function (id) {
-              if (payload.reviewed === false) delete accountReviewedIds[id];
-              else accountReviewedIds[id] = true;
+              if (payload.reviewed === false) delete accountReviewedSignals[id];
+              else {
+                var row = account.transactions.find(function (item) { return item.id === id; });
+                accountReviewedSignals[id] = row && row.accountReview
+                  ? row.accountReview.checks.slice() : [];
+              }
             });
             saved += applied.length;
           });
@@ -765,7 +786,10 @@
     form.appendChild(drawerField(
       "Category",
       category,
-      t.category === t.ruleCategory
+      (t.ruleCategories || []).length > 1
+        ? "Rules suggest " + t.ruleCategories.join(" or ") +
+          ". Saving confirms the selected category."
+        : t.category === t.ruleCategory
         ? "Currently assigned by the merchant rule."
         : "Manual override. Select " + t.ruleCategory + " to restore the merchant rule."
     ));
@@ -1451,6 +1475,7 @@
     var grid = el("div", "quality-grid");
     var untagged = review.untagged || {};
     var other = review.otherCategory || {};
+    var overlap = review.categoryRuleOverlap || {};
     var lady = review.ladyRuleOrUnassigned || {};
     var split = review.splitByRule || {};
     var suspicious = review.suspicious || {};
@@ -1491,6 +1516,11 @@
       "Category is Other", other.count || 0, other.amount || 0,
       "These merchants are visible but not yet classified.",
       "Review categories", { category: "Other" }
+    ));
+    add(overlap.count, qualityCard(
+      "Category rules overlap", overlap.count || 0, overlap.amount || 0,
+      "More than one rule matches these rows; the first rule currently wins.",
+      "Review overlaps", { reviewMode: "category-overlap" }
     ));
     add(unverified, qualityCard(
       "Unverified source rows", unverified, 0,
@@ -2527,6 +2557,9 @@
     if (state.reviewMode === "split-by-rule" &&
         (t.ownerSource !== "merchant-rule" ||
          (t.owner !== "Shared" && t.owner !== "Yx"))) return false;
+    if (state.reviewMode === "category-overlap" &&
+        ((((data.quality || {}).review || {}).categoryRuleOverlap || {}).ids || [])
+          .indexOf(t.id) === -1) return false;
     if (state.reviewMode === "delivery-rides" &&
         !DELIVERY_RIDES.test(t.description)) return false;
     // Every row in a flagged group carries the check so any of them can be
@@ -3229,6 +3262,7 @@
     appendLedgerNet(foot, rows);
     document.getElementById("ledger-hint").textContent = periodLabel() +
       (state.reviewMode === "lady-unconfirmed" ? " · Lady card needs confirmation" : "") +
+      (state.reviewMode === "category-overlap" ? " · category rules overlap" : "") +
       (state.reviewMode === "delivery-rides" ? " · Grab + Foodpanda" : "");
     if (state.reviewMode === "suspicious") {
       document.getElementById("ledger-hint").textContent +=
@@ -3580,15 +3614,19 @@
     .then(function (json) {
       data = json;
       applyIdentity();
-      return loadJson("data/account_transactions.json").catch(function () {
-        return { months: [], transactions: [] };
-      });
+      return loadJson("data/account_transactions.json");
     })
     .then(function (acct) {
       account = acct;
+      if ((data.generationId || account.generationId) &&
+          data.generationId !== account.generationId) {
+        throw new Error("card and account data belong to different import generations");
+      }
       return Promise.all([
         loadJson("api/status").catch(function () { return { editable: false }; }),
-        loadJson("api/account-reviews").catch(function () { return { reviewedIds: [] }; })
+        loadJson("api/account-reviews").catch(function () {
+          return { recognizedSignals: [] };
+        })
       ]);
     })
     .then(function (loaded) {
@@ -3598,9 +3636,11 @@
       var batchLimit = Math.floor(Number(loaded[0].accountReviewBatch));
       editor.accountReviewBatchLimit = batchLimit > 0
         ? batchLimit : ACCOUNT_REVIEW_BATCH_LIMIT;
-      accountReviewedIds = {};
-      (loaded[1].reviewedIds || []).forEach(function (txId) {
-        accountReviewedIds[txId] = true;
+      accountReviewedSignals = {};
+      (loaded[1].recognizedSignals || []).forEach(function (signal) {
+        if (signal && typeof signal.id === "string" && Array.isArray(signal.checks)) {
+          accountReviewedSignals[signal.id] = signal.checks.slice();
+        }
       });
       refreshAccountAnalysis();
     })

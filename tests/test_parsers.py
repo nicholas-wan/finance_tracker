@@ -112,6 +112,12 @@ class ParserTestCase(unittest.TestCase):
 
 
 class CardParserTests(ParserTestCase):
+    def test_statement_month_never_falls_back_to_the_filename(self):
+        reader = FakeReader("No readable statement date")
+        self.assertIsNone(
+            parse_cc.statement_month(reader, "UOB_CC_2026_06.pdf")
+        )
+
     def test_duplicates_foreign_amount_credit_and_reconciliation(self):
         month, rows, checks, failures = self.parse_card("card_statement_redacted.txt")
         self.assertEqual(month, "2026-06")
@@ -380,6 +386,12 @@ class StatementCycleDateTests(ParserTestCase):
 
 
 class AccountParserTests(ParserTestCase):
+    def test_statement_month_never_falls_back_to_the_filename(self):
+        reader = FakeReader("No readable statement period")
+        self.assertIsNone(
+            parse_one.statement_month(reader, "UOB_ONE_2026_06.pdf")
+        )
+
     def test_direction_classification_and_visible_override(self):
         month, rows, overrides, failures, _ = self.parse_account(
             "account_statement_redacted.txt")
@@ -416,6 +428,23 @@ class AccountParserTests(ParserTestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("REDACTED HOLDER NAME", rows[0]["description"])
         self.assertIn("Redacted DBS", rows[0]["description"])
+
+    def test_wrapped_payee_that_starts_with_total_is_preserved(self):
+        text = (
+            "Period: 01 JUN 2026\n"
+            "01 JUN BALANCE B/F 1,000.00\n"
+            "02 JUN CARD PURCHASE\n"
+            "TOTAL WINE MERCHANT\n"
+            "10.00 990.00\n"
+            "End of Transaction Details\n"
+        )
+        with patch.object(parse_one, "PdfReader", return_value=FakeReader(text)):
+            _, rows, _, failures, _ = parse_one.parse_pdf(
+                "UOB_ONE_REDACTED.pdf", TEST_IDENTITY
+            )
+        self.assertEqual(failures, [])
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["description"], "CARD PURCHASE TOTAL WINE MERCHANT")
 
     def test_printed_opening_balance_is_exported_as_an_anchor(self):
         # The first movement on a statement seeds the balance chain from its own

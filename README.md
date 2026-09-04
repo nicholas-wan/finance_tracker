@@ -40,21 +40,22 @@ python -m http.server 3402 --directory app
 Place PDFs in `statements/<year>/`, then run:
 
 ```powershell
-python scripts/parse_cc.py
-python scripts/parse_one.py
-python scripts/build_data.py
-python scripts/validate_data.py
-python -m unittest discover -s tests
-node --test tests/*.js
+python -m pip install -r requirements.txt
+python scripts/import_all.py
 ```
 
 Parsing fails closed: an unreadable row, unreconciled card section, contradictory
 amount, or broken balance chain aborts the run without replacing generated data.
+The importer parses and validates all three generated files in a private staging
+directory, stamps them with one generation ID, then publishes the dashboard last.
+This prevents a failed or overlapping import from exposing a half-new dataset.
 Validation checks stable IDs, dates, provenance, account continuity, manual
 references, and source-to-dashboard totals. Audit history is exempt from reference
-checks because history may outlive the rows it describes. Use `validate_data.py
---strict` to also fail on unresolved categories, ownership, provenance, or
-suspicious checks.
+checks because history may outlive the rows it describes. Use `python
+scripts/import_all.py --strict` to publish only when unresolved categories,
+ownership, provenance, and suspicious checks are also clear. Run
+`python scripts/validate_data.py --strict` to apply the same strict gate to the
+currently published files without importing anything.
 
 Statement months come from PDF contents. Importing a second source for an existing
 month is rejected, while legitimate identical transactions within a statement are
@@ -186,8 +187,9 @@ Still open, in rough priority:
 - No card-testing check (several small charges from never-seen merchants on one
   day) and no cross-day velocity check for a new merchant.
 - A pre-commit hook that greps staged diffs for names and account numbers.
-- The Python owner-rule merchant key and the dashboard's display merchant key
-  remain two normalisers.
+- Identical same-day charges without a bank reference still rely on statement
+  order for their occurrence number; changing their order can move a row-level
+  annotation between otherwise indistinguishable charges.
 
 ## Limitations
 
