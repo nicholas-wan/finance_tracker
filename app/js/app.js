@@ -21,6 +21,7 @@
 
   var data = null;
   var account = { transactions: [], months: [] };
+  var cardFeeReviews = { resolvedIds: [] };
   var accountReviewedSignals = {};
   // Handle returned by bindToggle, so a drill-down can reset the grouping
   // toggle's own closure state and not just the flag on `state`.
@@ -162,7 +163,13 @@
     { name: "McDonald's", src: "assets/merchant-logos/mcdonalds.svg", pattern: /MCDONALD/ },
     { name: "Starbucks", src: "assets/merchant-logos/starbucks.png", pattern: /STARBUCKS/ },
     { name: "Deliveroo", src: "assets/merchant-logos/deliveroo.png", pattern: /DELIVEROO/ },
-    { name: "Trip.com", src: "assets/merchant-logos/trip.png", pattern: /TRIP\.COM/ },
+    { name: "Trip.com", src: "assets/merchant-logos/trip.png", pattern: /TRIP(?:\.COM|\s+COM)/ },
+    { name: "Klook", src: "assets/merchant-logos/klook.svg", pattern: /KLOOK/ },
+    { name: "Old Chang Kee", src: "assets/merchant-logos/old-chang-kee.svg", pattern: /OLD CHANG KEE/ },
+    { name: "SP Digital", src: "assets/merchant-logos/sp-digital.svg", pattern: /SP DIGITAL/ },
+    { name: "7-Eleven", src: "assets/merchant-logos/7-eleven.svg", pattern: /7[ -]ELEVEN/ },
+    { name: "MyRepublic", src: "assets/merchant-logos/myrepublic.svg", pattern: /MYREPUBLIC/ },
+    { name: "Ya Kun", src: "assets/merchant-logos/ya-kun.svg", pattern: /YA KUN/ },
     { name: "ShopBack", src: "assets/merchant-logos/shopback.ico", pattern: /SHOPBACK/ },
     { name: "The Coffee Bean", src: "assets/merchant-logos/coffeebean.png", pattern: /COFFEE\s+BEAN/ },
     { name: "Singapore public transport", src: "assets/merchant-logos/singapore-transit.svg", pattern: /BUS[\/\s-]*MRT/ }
@@ -1631,6 +1638,69 @@
       (missing.length ? missing.map(monthLabel).join(", ") + " missing" : "no gaps") +
       " · refreshed " + (buildAge === 0 ? "today" : buildAge + "d ago");
     wrap.appendChild(el("span", "freshness-meta", meta));
+  }
+
+  function renderCardFeeAlerts() {
+    var panel = document.getElementById("card-fee-alerts");
+    var wrap = document.getElementById("card-fee-alert-list");
+    if (!panel || !wrap) return;
+    clear(wrap);
+    var resolved = {};
+    (cardFeeReviews.resolvedIds || []).forEach(function (id) { resolved[id] = true; });
+    var feeAnchor = data.freshness && data.freshness.sourceThrough
+      ? localDate(data.freshness.sourceThrough) : new Date();
+    var feeCutoff = new Date(feeAnchor.getFullYear() - 1, feeAnchor.getMonth(), feeAnchor.getDate());
+    var allFees = data.transactions.filter(function (t) {
+      var chargeDate = t.date ? localDate(t.date) : null;
+      return t.type === "debit" && /CARD MEMBERSHIP FEE/i.test(t.description || "") &&
+        chargeDate && chargeDate >= feeCutoff && chargeDate <= feeAnchor;
+    });
+    panel.classList.toggle("hidden", !allFees.length);
+    if (!allFees.length) return;
+    allFees.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
+    var fees = allFees.filter(function (fee) { return !resolved[fee.id]; });
+    panel.querySelector(".hint").textContent = fees.length
+      ? fees.length + " active fee" + (fees.length === 1 ? "" : "s")
+      : "No active fee alerts";
+    wrap.appendChild(el("p", "card-fee-alert-summary", allFees.length +
+      " card membership fee" + (allFees.length === 1 ? "" : "s") + " recorded · Last charged " +
+      dateLabel(allFees[0].date) + " (" + statementLabel(allFees[0].month) + ")"));
+    if (!fees.length) {
+      wrap.appendChild(el("p", "card-fee-alert-clear", "All recorded card fees are resolved."));
+      return;
+    }
+    fees.forEach(function (fee) {
+      var item = el("div", "card-fee-alert");
+      var copy = el("div", "card-fee-alert-copy");
+      copy.appendChild(el("strong", "", fmt(fee.amount) + " card membership fee"));
+      copy.appendChild(el("span", "", dateLabel(fee.date) + " · " + statementLabel(fee.month) +
+        " · Apply for a waiver, then resolve this alert."));
+      item.appendChild(copy);
+      var button = el("button", "quality-action", "Resolve");
+      button.disabled = !editor.available;
+      button.title = editor.available ? "Mark this fee alert resolved" : "Start the local editor to resolve alerts";
+      button.addEventListener("click", function () {
+        button.disabled = true;
+        fetch("api/card-fee-review", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ id: fee.id, resolved: true })
+        }).then(function (response) {
+          return response.json().then(function (payload) {
+            if (!response.ok) throw new Error(payload.error || "Could not resolve fee alert.");
+            return payload;
+          });
+        }).then(function (payload) {
+          cardFeeReviews.resolvedIds = payload.resolvedIds || cardFeeReviews.resolvedIds.concat([fee.id]);
+          renderCardFeeAlerts();
+          showToast("Card fee alert resolved.", "success");
+        }).catch(function (error) {
+          button.disabled = false;
+          showToast(error.message, "error");
+        });
+      });
+      item.appendChild(button);
+      wrap.appendChild(item);
+    });
   }
 
   function renderDataQuality() {
@@ -4842,6 +4912,7 @@
   function renderAll() {
     renderBankRules();
     renderFreshness();
+    renderCardFeeAlerts();
     renderKpis();
     renderDataQuality();
     renderStacked();
@@ -5239,6 +5310,9 @@
         loadJson("api/status").catch(function () { return { editable: false }; }),
         loadJson("api/account-reviews").catch(function () {
           return { recognizedSignals: [] };
+        }),
+        loadJson("api/card-fee-reviews").catch(function () {
+          return { resolvedIds: [] };
         })
       ]);
     })
@@ -5255,6 +5329,7 @@
           accountReviewedSignals[signal.id] = signal.checks.slice();
         }
       });
+      cardFeeReviews = loaded[2] || { resolvedIds: [] };
       refreshAccountAnalysis();
     })
     .then(function () {

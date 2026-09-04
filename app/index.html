@@ -80,6 +80,14 @@
   <section class="pane" id="pane-overview" role="tabpanel" aria-labelledby="tab-overview">
     <section class="freshness-strip" id="statement-freshness" aria-live="polite"></section>
 
+    <section class="panel card-fee-alert-panel hidden" id="card-fee-alerts" aria-labelledby="card-fee-alert-title">
+      <div class="panel-head">
+        <h2 id="card-fee-alert-title"><svg class="icon"><use href="#i-percent"/></svg>Card fee waiver</h2>
+        <span class="hint">apply before resolving</span>
+      </div>
+      <div id="card-fee-alert-list" aria-live="polite"></div>
+    </section>
+
     <div class="kpis" id="kpis"></div>
 
     <section class="panel spending-summary-panel" aria-labelledby="spending-summary-title">
@@ -346,6 +354,7 @@
           title="Show all Grab statement charges, including unreconciled wallet funding">
           <svg class="icon"><use href="#i-bus"/></svg>Grab only
         </button>
+        <a class="history-help-button" href="https://help.grab.com/passenger/en-my/360038782911-How-to-find-my-Grab-transaction-history" target="_blank" rel="noopener noreferrer" title="Instructions for finding Grab transaction history">Get Grab history</a>
         <button class="pill suspicious-pill" id="suspicious-filter" type="button" aria-pressed="false"
           title="Show only transactions the checks flagged and you have not reviewed">
           <svg class="icon"><use href="#i-target"/></svg>Suspicious only

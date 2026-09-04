@@ -1297,6 +1297,7 @@ class ManualFileBootstrapTests(unittest.TestCase):
         "OWNER_PATH": ("owner_tags.json", {"tags": {}, "tagsById": {}}),
         "RISK_REVIEW_PATH": ("risk_reviews.json", {"recognizedSignals": []}),
         "ACCOUNT_REVIEW_PATH": ("account_reviews.json", {"recognizedSignals": []}),
+        "CARD_FEE_REVIEW_PATH": ("card_fee_reviews.json", {"resolvedIds": []}),
         "REMARK_PATH": ("transaction_remarks.json", {"remarksById": {}}),
         "OVERRIDE_PATH": ("transaction_overrides.json", {"overridesById": {}}),
         "AUDIT_PATH": ("audit_history.json", {"entries": []}),
@@ -1315,7 +1316,7 @@ class ManualFileBootstrapTests(unittest.TestCase):
     def contents(self, filename):
         return json.loads((self.manual / filename).read_text(encoding="utf-8"))
 
-    def test_creates_exactly_the_six_server_owned_files(self):
+    def test_creates_exactly_the_seven_server_owned_files(self):
         created = serve.ensure_manual_files()
         expected = sorted(name for name, _ in self.EXPECTED.values())
         self.assertEqual(sorted(path.name for path in created), expected)

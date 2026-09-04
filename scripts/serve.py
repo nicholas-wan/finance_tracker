@@ -29,6 +29,7 @@ APP_DIR = REPO_ROOT / "app"
 OWNER_PATH = REPO_ROOT / "manual" / "owner_tags.json"
 RISK_REVIEW_PATH = REPO_ROOT / "manual" / "risk_reviews.json"
 ACCOUNT_REVIEW_PATH = REPO_ROOT / "manual" / "account_reviews.json"
+CARD_FEE_REVIEW_PATH = REPO_ROOT / "manual" / "card_fee_reviews.json"
 REMARK_PATH = REPO_ROOT / "manual" / "transaction_remarks.json"
 OVERRIDE_PATH = REPO_ROOT / "manual" / "transaction_overrides.json"
 AUDIT_PATH = REPO_ROOT / "manual" / "audit_history.json"
@@ -142,6 +143,7 @@ def manual_file_defaults():
         OWNER_PATH: {"tags": {}, "tagsById": {}},
         RISK_REVIEW_PATH: {"recognizedSignals": []},
         ACCOUNT_REVIEW_PATH: {"recognizedSignals": []},
+        CARD_FEE_REVIEW_PATH: {"resolvedIds": []},
         REMARK_PATH: {"remarksById": {}},
         OVERRIDE_PATH: {"overridesById": {}},
         AUDIT_PATH: {"entries": []},
@@ -927,6 +929,32 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
         }
 
 
+def save_card_fee_review(tx_id, resolved):
+    if not isinstance(tx_id, str) or not tx_id:
+        raise ValueError("Card fee alert requires a transaction ID.")
+    if resolved not in (True, False):
+        raise ValueError("Card fee alert resolved must be true or false.")
+    with WRITE_LOCK:
+        transaction_data = load_json(TRANSACTIONS_PATH)
+        transaction = next((row for row in transaction_data.get("transactions", [])
+                            if row.get("id") == tx_id), None)
+        if transaction is None or transaction.get("type") != "debit" or \
+                "CARD MEMBERSHIP FEE" not in str(transaction.get("description", "")).upper():
+            raise ValueError("That transaction is not a current card membership fee.")
+        review_data = load_json(CARD_FEE_REVIEW_PATH) if CARD_FEE_REVIEW_PATH.exists() \
+            else {"resolvedIds": []}
+        ids = set(review_data.get("resolvedIds", []))
+        if resolved:
+            ids.add(tx_id)
+        else:
+            ids.discard(tx_id)
+        payload = {"resolvedIds": sorted(ids)}
+        snapshot_backups((CARD_FEE_REVIEW_PATH,)) if CARD_FEE_REVIEW_PATH.exists() else None
+        CARD_FEE_REVIEW_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(CARD_FEE_REVIEW_PATH, payload)
+        return {"ok": True, "resolvedIds": payload["resolvedIds"]}
+
+
 def save_account_review(tx_ids, reviewed, checks_by_id=None):
     """Mark one bank row or a batch reviewed, under one validation run.
 
@@ -1182,6 +1210,15 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "recognizedSignals": recognized_signals,
             })
             return
+        if endpoint == "/api/card-fee-reviews":
+            try:
+                with WRITE_LOCK:
+                    review_data = load_json(CARD_FEE_REVIEW_PATH) if CARD_FEE_REVIEW_PATH.exists() \
+                        else {"resolvedIds": []}
+                self.send_json(200, {"ok": True, "resolvedIds": review_data.get("resolvedIds", [])})
+            except Exception as error:
+                self.send_json(500, {"ok": False, "error": "Could not read card fee alerts: %s" % error})
+            return
         if endpoint == "/api/audit-history":
             # Read under the write lock: on Windows a concurrent save's
             # os.replace onto an open audit file raises PermissionError and
@@ -1229,6 +1266,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             "/api/remark",
             "/api/transaction-detail",
             "/api/account-review",
+            "/api/card-fee-review",
         }:
             self.send_json(404, {"ok": False, "error": "Unknown endpoint."})
             return
@@ -1267,6 +1305,10 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                     payload.get("reviewed"),
                     payload.get("checksById"),
                 )
+            elif endpoint == "/api/card-fee-review":
+                if not isinstance(payload, dict):
+                    raise ValueError("Request body must be a JSON object.")
+                result = save_card_fee_review(payload.get("id"), payload.get("resolved"))
             else:
                 # Read under the write lock: on Windows a concurrent rebuild's
                 # os.replace onto this file raises PermissionError, which would
