@@ -8,7 +8,11 @@
   --border: #e3e1d9;
   --accent: #1f67b5;
   --accent-soft: #e6f1fb;
-  --yx-header-accent: #7668c4;
+  /* Brand colour for this tracker: the monogram, the header's accent bar and
+     tint, and the wordmark all draw from it so the identity reads at a glance. */
+  --brand: #6b5bd6;
+  --brand-ink: #ffffff;
+  --yx-header-accent: var(--brand);
   --green: #0f6e56;
   --green-soft: #e1f5ee;
   --red: #a32d2d;
@@ -70,7 +74,9 @@
   --border: #34342f;
   --accent: #5b9de0;
   --accent-soft: #12283d;
-  --yx-header-accent: #afa9ec;
+  --brand: #9d90f2;
+  --brand-ink: #17132b;
+  --yx-header-accent: var(--brand);
   --green: #5dcaa5;
   --green-soft: #0c2b22;
   --red: #f09595;
@@ -144,10 +150,27 @@ h2 .icon { color: var(--text-3); }
   align-items: center; gap: 16px;
 }
 .topbar-inner h1 { justify-self: start; }
+/* Brand lockup: a compact monogram beside the wordmark, sized to the header
+   controls (34px) rather than the heading, with the brand colour carried
+   through the header's top bar and a faint tint of its background. */
+.brand { display: inline-flex; align-items: center; gap: 10px; min-width: 0; }
+.brand-mark {
+  display: inline-flex; flex: 0 0 auto; width: 30px; height: 30px; border-radius: 8px;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, .18), inset 0 0 0 1px rgba(255, 255, 255, .06);
+}
+.brand-mark svg { display: block; width: 100%; height: 100%; }
+.brand-mark .brand-base { fill: var(--brand); }
+.brand-mark text {
+  fill: var(--brand-ink); font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Inter, sans-serif;
+  font-size: 13.5px; font-weight: 700; letter-spacing: -.02em;
+}
+.brand-name { color: var(--brand); font-weight: 700; letter-spacing: -.01em; white-space: nowrap; }
+.topbar {
+  border-top: 3px solid var(--brand);
+  background: color-mix(in srgb, var(--brand) 6%, color-mix(in srgb, var(--bg) 88%, transparent));
+}
 /* Yx's dashboard uses a restrained lavender accent so it is easy to
    distinguish from Nic's blue header without changing the shared layout. */
-body.yx-single-owner .topbar { box-shadow: inset 0 2px 0 var(--yx-header-accent); }
-body.yx-single-owner .topbar-inner h1 { color: var(--yx-header-accent); }
 .month-nav { display: flex; align-items: center; gap: 6px; }
 .icon-btn {
   width: 30px; height: 30px; border: 1px solid var(--border); border-radius: 8px;
@@ -332,6 +355,7 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 @media (max-width: 560px) { .card-fee-alert { align-items: flex-start; flex-direction: column; gap: 8px; } }
 
 .two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
+.two-col.income-history-single { grid-template-columns: 1fr; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
 .overview-priority {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
@@ -444,6 +468,52 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 .m-col:hover .hover-band { opacity: 0.14; }
 
 .top-right { display: flex; align-items: center; gap: 8px; justify-self: end; }
+.share-control { position: relative; }
+.share-button {
+  display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 11px;
+  border: 1px solid var(--border); border-radius: 9px; background: var(--surface);
+  color: var(--text-2); font: inherit; font-size: var(--fs-small); font-weight: 600; cursor: pointer;
+}
+.share-button .icon { width: 15px; height: 15px; flex: 0 0 auto; }
+.share-button span { white-space: nowrap; }
+.share-button:hover, .share-button[aria-expanded="true"] { border-color: var(--accent); color: var(--accent); }
+.share-button.sharing { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+.share-button.sharing::before {
+  content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--green);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--green) 25%, transparent);
+}
+.share-popover {
+  position: absolute; top: calc(100% + 6px); right: 0; z-index: 30;
+  width: min(340px, calc(100vw - 28px)); padding: 14px; display: grid; gap: 10px;
+  background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.16); text-align: left;
+}
+.share-popover:not(.hidden) { animation: menu-enter 170ms var(--motion-ease) both; }
+.share-popover h3 { margin: 0; font-size: var(--fs-body); }
+.share-popover p { margin: 0; color: var(--text-2); font-size: var(--fs-small); line-height: 1.45; }
+.share-popover .share-warning { color: var(--text); }
+.share-url {
+  display: flex; gap: 6px; align-items: center;
+}
+.share-url input {
+  flex: 1; min-width: 0; padding: 7px 9px; border: 1px solid var(--border); border-radius: 8px;
+  background: var(--surface-2); color: var(--text); font: inherit; font-size: var(--fs-small);
+  font-family: ui-monospace, "Cascadia Mono", Consolas, monospace;
+}
+.share-actions { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; }
+.share-actions .link-button, .share-actions .drawer-save { margin: 0; }
+.share-primary {
+  padding: 7px 12px; border: 1px solid var(--accent); border-radius: 8px;
+  background: var(--accent); color: #fff; font: inherit; font-size: var(--fs-small); font-weight: 650; cursor: pointer;
+}
+.share-primary:disabled { opacity: .6; cursor: wait; }
+.share-danger { border-color: var(--red); color: var(--red); }
+.share-danger:hover { background: var(--red-soft); }
+.share-status { color: var(--text-3); font-size: var(--fs-micro); }
+@media (max-width: 760px) {
+  .share-button span { display: none; }
+  .share-button { padding: 0 9px; }
+}
 #theme-toggle { font-size: var(--fs-md); line-height: 1; }
 
 .insight-list { display: flex; flex-direction: column; gap: 8px; }
@@ -492,6 +562,79 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 .step-delta { font-size: var(--fs-caption); text-align: right; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .step-delta.pos { color: var(--green); }
 .step-delta.neg { color: var(--red); }
+
+.income-outlook-panel { display: grid; gap: 14px; }
+.income-outlook-panel .panel-head { margin-bottom: 0; }
+.income-stat-grid {
+  display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px;
+}
+.income-stat-grid .kpi {
+  min-width: 0; padding: 11px 13px; background: var(--surface-2); box-shadow: none;
+}
+.income-stat-grid .kpi .value { font-size: var(--fs-stat-sm); }
+.income-stat-grid .kpi .delta { line-height: 1.35; }
+.income-long-head {
+  display: flex; align-items: end; justify-content: space-between; gap: 12px;
+  padding-top: 2px; border-top: 1px solid var(--border);
+}
+.income-long-head h3 { margin: 10px 0 1px; font-size: var(--fs-body); }
+.income-long-head p,
+.income-forecast-basis { margin: 0; color: var(--text-3); font-size: var(--fs-caption); }
+.income-forecast-basis { text-align: right; }
+.income-long-grid {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px;
+}
+.income-long-card {
+  min-width: 0; padding: 12px 13px; border: 1px solid var(--border); border-radius: 10px;
+  background: color-mix(in srgb, var(--accent-soft) 35%, var(--surface));
+}
+.income-long-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.income-long-heading strong { font-size: var(--fs-body); }
+.income-long-heading span { color: var(--text-3); font-size: var(--fs-caption); }
+.income-long-value {
+  margin: 7px 0 1px; color: var(--text); font-size: var(--fs-md); font-weight: 650;
+  font-variant-numeric: tabular-nums;
+}
+.income-long-range { margin: 0; color: var(--text-3); font-size: var(--fs-caption); }
+.income-long-divider {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
+  margin-top: 10px; padding-top: 8px; border-top: 1px solid var(--border);
+  color: var(--text-2); font-size: var(--fs-caption);
+}
+.income-long-divider strong { color: var(--text); font-variant-numeric: tabular-nums; }
+.income-methodology {
+  border: 1px solid var(--border); border-radius: 10px; background: var(--surface-2);
+}
+.income-methodology summary {
+  padding: 9px 12px; color: var(--text-2); font-size: var(--fs-small);
+  font-weight: 650; cursor: pointer;
+}
+.income-methodology[open] summary { border-bottom: 1px solid var(--border); }
+.income-methodology-content {
+  display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px;
+  padding: 12px;
+}
+.income-method-block { min-width: 0; }
+.income-method-block h4 { margin: 0 0 5px; font-size: var(--fs-small); }
+.income-method-block p {
+  margin: 0; color: var(--text-2); font-size: var(--fs-caption); line-height: 1.5;
+}
+.income-method-block .income-method-note { margin-top: 5px; color: var(--text-3); }
+.income-method-links { margin-top: 6px !important; }
+.income-method-links a { color: var(--accent); }
+
+@media (max-width: 960px) {
+  .income-stat-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .income-methodology-content { grid-template-columns: 1fr; }
+}
+@media (max-width: 680px) {
+  .income-long-grid { grid-template-columns: 1fr; }
+  .income-long-head { align-items: flex-start; flex-direction: column; gap: 3px; }
+  .income-forecast-basis { text-align: left; }
+}
+@media (max-width: 440px) {
+  .income-stat-grid { grid-template-columns: 1fr; }
+}
 
 table.mini { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
 table.mini th { text-align: left; font-size: var(--fs-caption); font-weight: 500; color: var(--text-3); padding: 4px 6px 8px; border-bottom: 1px solid var(--border); }
@@ -672,6 +815,28 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   grid-template-columns: minmax(150px, 0.72fr) minmax(250px, 1.35fr) minmax(210px, 1fr);
   gap: 14px; margin: 4px 0 18px; padding: 14px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2);
+}
+.travel-year-country-breakdown { min-width: 0; }
+.travel-year-block { margin-top: 8px; }
+.travel-year-head,
+.travel-country-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.travel-year-head {
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  color: var(--text-2); font-size: var(--fs-small);
+}
+.travel-country-row {
+  min-height: 27px; padding: 3px 5px; margin: 1px -5px; border-radius: 6px;
+  color: var(--text-2); font-size: var(--fs-caption);
+}
+.travel-country-row.actionable:hover { background: var(--surface); color: var(--text); }
+.travel-country-row strong { color: var(--text); }
+.travel-country-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.travel-country-inline {
+  display: block; margin-top: 3px; color: var(--text-3); font-size: var(--fs-micro);
+  white-space: nowrap;
 }
 .transaction-summary.bank-summary {
   grid-template-columns: minmax(170px, 0.85fr) minmax(210px, 1fr)
@@ -1046,8 +1211,11 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .insurance-policy-row:hover .insurance-policy-name strong { color: var(--accent); }
 .insurance-policy-row:focus-visible td { background: var(--accent-soft); }
 .insurance-policy-name, .insurance-benefit-summary, .insurance-term { white-space: normal !important; }
+.insurance-policy-title-line {
+  display: flex; min-width: 0; align-items: center; gap: 6px;
+}
 .insurance-policy-name strong {
-  display: block; overflow: hidden; color: var(--text); font-size: var(--fs-body);
+  display: block; min-width: 0; overflow: hidden; color: var(--text); font-size: var(--fs-body);
   font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap;
   transition: color var(--motion-fast) ease;
 }
@@ -1061,7 +1229,7 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   font-size: var(--fs-micro); font-weight: 700; line-height: 1.5; vertical-align: 1px;
 }
 .insurance-policy-verify-button {
-  display: inline-flex; align-items: center; margin: 3px 0 0 7px; padding: 1px 6px;
+  display: inline-flex; flex: 0 0 auto; align-items: center; margin: 0; padding: 1px 6px;
   border: 1px solid var(--border); border-radius: 999px; background: transparent;
   color: var(--text-2); font: inherit; font-size: var(--fs-micro); font-weight: 700;
   line-height: 1.5; vertical-align: 1px; cursor: pointer;
@@ -1272,7 +1440,7 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .insurance-charge-latest { width: 92px; color: var(--text-2); font-variant-numeric: tabular-nums; }
 .insurance-charge-table tbody tr[role="button"] { cursor: pointer; }
 .insurance-charge-table tbody tr[role="button"]:focus-visible td { background: var(--accent-soft); }
-.insurance-charge-group-row td { height: auto; padding-top: 10px; padding-bottom: 10px; vertical-align: middle; }
+.insurance-charge-group-row td { height: 38px; padding-top: 5px; padding-bottom: 5px; vertical-align: middle; }
 .insurance-charge-group-row td:first-child { overflow: visible; white-space: normal; }
 .insurance-charge-policy { display: flex; align-items: center; gap: 9px; min-width: 0; }
 .insurance-charge-expand {
@@ -1284,18 +1452,23 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   color: var(--accent); transform: rotate(90deg);
 }
 .insurance-charge-group-row.no-entries .insurance-charge-expand { color: var(--accent); }
-.insurance-charge-policy-copy { display: block; min-width: 0; }
+.insurance-charge-policy-copy {
+  display: flex; min-width: 0; align-items: center; gap: 8px; overflow: hidden;
+}
 .insurance-charge-policy-copy > strong {
-  display: block; overflow: hidden; color: var(--text); font-size: var(--fs-body);
+  display: block; min-width: 0; overflow: hidden; color: var(--text); font-size: var(--fs-body);
   font-weight: 650; text-overflow: ellipsis; white-space: nowrap;
 }
-.insurance-charge-meta { display: flex; align-items: center; gap: 5px; margin-top: 3px; }
+.insurance-charge-meta { display: flex; flex: 0 0 auto; align-items: center; gap: 4px; margin: 0; }
 .insurance-charge-meta > small {
   display: block; width: fit-content; padding: 1px 6px;
   border-radius: 999px; font-size: var(--fs-caption); font-weight: 600;
 }
 .insurance-charge-meta > small.insurance-charge-cadence {
   background: var(--surface-2); color: var(--text-2); box-shadow: inset 0 0 0 1px var(--border);
+}
+.insurance-charge-meta > small.insurance-charge-source {
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); color: var(--text-2);
 }
 .insurance-charge-meta > small.matched { background: var(--green-soft); color: var(--green); }
 .insurance-charge-meta > small.upcoming { background: var(--accent-soft); color: var(--accent); }
@@ -1368,7 +1541,10 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   height: auto; padding: 0 !important; border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface-2) 48%, var(--surface)); white-space: normal;
 }
-.insurance-charge-detail { padding: 10px 14px 12px 31px; }
+.insurance-charge-detail { padding: 8px 14px 10px 31px; }
+.insurance-charge-expanded-summary {
+  margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--border);
+}
 .insurance-charge-detail-head {
   display: flex; align-items: center; justify-content: space-between; gap: 12px;
   margin-bottom: 6px; color: var(--text-3); font-size: var(--fs-small);
@@ -1789,6 +1965,9 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 @media (max-width: 760px) {
   .topbar-inner { display: flex; flex-wrap: wrap; padding: 10px 14px; row-gap: 8px; }
   .topbar-inner h1 { order: 1; font-size: var(--fs-lg); }
+  .brand { gap: 8px; }
+  .brand-mark { width: 26px; height: 26px; border-radius: 7px; }
+  .brand-mark text { font-size: 14px; }
   .top-right { order: 2; margin-left: auto; }
   .tabs {
     order: 3; flex: 0 0 100%; display: flex; justify-content: flex-start;
@@ -1814,10 +1993,12 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   }
   .source-filter-strip::-webkit-scrollbar { display: none; }
   .source-filter-strip > * { flex: 0 0 auto; white-space: nowrap; }
-  .filters > #category-filter { flex: 1 1 auto; min-width: 0; }
+  .filters > #category-filter,
+  .filters > #travel-country-filter { flex: 1 1 auto; min-width: 0; }
   /* Ledger: the fixed Remarks column left the description one letter wide.
      Remarks stay editable in the drawer and, when present, read under the
-     description; grouped and bank ledgers still need the column. */
+     description; grouped rows fold their count the same way. Only the
+     individual bank ledger keeps the column, where it carries the amount. */
   .ledger:not(.bank-ledger) .col-remark,
   .ledger.bank-ledger.grouped-ledger .col-remark { display: none; }
   .row-remark-inline {
@@ -1873,7 +2054,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .insurance-policy-row .insurance-policy-name,
   .insurance-policy-row .insurance-benefit-summary { grid-column: 1 / -1; }
   .insurance-policy-row .insurance-policy-name > span { white-space: normal; }
-  .insurance-policy-row .insurance-policy-verify-button { margin-left: 0; margin-top: 6px; }
+  .insurance-policy-row .insurance-policy-verify-button { margin: 0; }
   .insurance-policy-row td[data-label]::before {
     content: attr(data-label); display: block; margin-bottom: 1px; color: var(--text-3);
     font-size: var(--fs-micro); font-weight: 650; letter-spacing: .06em; text-transform: uppercase;

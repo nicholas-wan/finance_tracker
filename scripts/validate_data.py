@@ -18,6 +18,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from build_data import (  # noqa: E402
     TRIP_MATCH_WINDOW_DAYS,
     is_grab_description,
+    is_shopee_description,
     is_trip_description,
     merge_grab_web_history,
     normalize_trip_booking_no,
@@ -258,23 +259,97 @@ def validate_shopee(manual_data, output, final_by_id, errors):
     published_by_id = {o.get("orderId"): o for o in published if isinstance(o, dict)}
     if len(source_by_id) != len(source) or set(source_by_id) != set(published_by_id):
         errors.append("published Shopee orders do not exactly match the manual import")
+    expected_aggregates = {}
+    aggregates = manual_data.get("statementAggregates", []) if isinstance(manual_data, dict) else []
+    if not isinstance(aggregates, list):
+        errors.append("manual Shopee statementAggregates must be a list")
+        aggregates = []
+    for index, aggregate in enumerate(aggregates, 1):
+        if not isinstance(aggregate, dict):
+            errors.append("Shopee statement aggregate %d must be an object" % index)
+            continue
+        transaction_id = aggregate.get("transactionId")
+        order_ids = aggregate.get("orderIds")
+        note = aggregate.get("note")
+        if (not isinstance(transaction_id, str) or not transaction_id
+                or not isinstance(order_ids, list) or len(order_ids) < 2
+                or any(not isinstance(value, str) or not value for value in order_ids)
+                or len(set(order_ids)) != len(order_ids)
+                or not isinstance(note, str) or not note.strip()):
+            errors.append("Shopee statement aggregate %d is incomplete" % index)
+            continue
+        if transaction_id in expected_aggregates:
+            errors.append("Shopee statement aggregates repeat transaction %s" % transaction_id)
+            continue
+        expected_aggregates[transaction_id] = {
+            "orderIds": order_ids,
+            "note": note.strip(),
+        }
+
     attached = {}
+    surfaced_aggregates = set()
     for tx_id, transaction in final_by_id.items():
-        detail = transaction.get("shopee")
-        if not isinstance(detail, dict):
+        primary = transaction.get("shopee")
+        plural = transaction.get("shopeeOrders")
+        if plural is not None:
+            if not isinstance(plural, list) or not plural:
+                errors.append("transaction %s has invalid Shopee order details" % tx_id)
+                details = []
+            else:
+                details = plural
+                if primary != details[0]:
+                    errors.append("transaction %s has inconsistent primary Shopee order" % tx_id)
+        else:
+            details = [primary] if isinstance(primary, dict) else []
+        if not details:
+            if transaction.get("shopeeMatch") is not None:
+                errors.append("transaction %s has Shopee match evidence without an order" % tx_id)
             continue
-        order_id = detail.get("orderId")
-        if order_id in attached:
-            errors.append("Shopee order %s is attached to more than one transaction" % order_id)
-        attached[order_id] = tx_id
-        if order_id not in published_by_id:
-            errors.append("transaction %s names unknown Shopee order %r" % (tx_id, order_id))
-            continue
-        published_order = published_by_id[order_id]
-        for field in ("merchant", "status", "amount", "items", "historyIndex"):
-            if detail.get(field) != published_order.get(field):
-                errors.append(
-                    "transaction %s Shopee detail disagrees on %s" % (tx_id, field))
+        if (not is_shopee_description(transaction.get("description", ""))
+                or transaction.get("type") != "debit"):
+            errors.append("transaction %s is not a Shopee charge but carries an order" % tx_id)
+        published_ids = []
+        total_cents = 0
+        for detail in details:
+            if not isinstance(detail, dict):
+                errors.append("transaction %s has invalid Shopee order details" % tx_id)
+                continue
+            order_id = detail.get("orderId")
+            published_ids.append(order_id)
+            if order_id in attached:
+                errors.append("Shopee order %s is attached to more than one transaction" % order_id)
+            attached[order_id] = tx_id
+            if order_id not in published_by_id:
+                errors.append("transaction %s names unknown Shopee order %r" % (tx_id, order_id))
+                continue
+            published_order = published_by_id[order_id]
+            for field in (
+                    "merchant", "status", "amount", "items", "historyIndex", "category"):
+                if detail.get(field) != published_order.get(field):
+                    errors.append(
+                        "transaction %s Shopee detail disagrees on %s" % (tx_id, field))
+            total_cents += int(round(float(detail.get("amount", 0)) * 100))
+        if total_cents != int(round(float(transaction.get("amount", 0)) * 100)):
+            errors.append("transaction %s Shopee order totals disagree with its amount" % tx_id)
+        match = transaction.get("shopeeMatch")
+        expected = expected_aggregates.get(tx_id)
+        if expected:
+            surfaced_aggregates.add(tx_id)
+            if published_ids != expected["orderIds"]:
+                errors.append("transaction %s disagrees with its Shopee aggregate" % tx_id)
+            if match != {"kind": "aggregate", "note": expected["note"]}:
+                errors.append("transaction %s has inconsistent Shopee aggregate evidence" % tx_id)
+        else:
+            if len(details) != 1:
+                errors.append("transaction %s has an unreviewed Shopee aggregate" % tx_id)
+            expected_match = {
+                "kind": "exact",
+                "note": "The order total uniquely matches this Shopee statement charge.",
+            }
+            if match != expected_match:
+                errors.append("transaction %s has inconsistent Shopee exact-match evidence" % tx_id)
+    for transaction_id in set(expected_aggregates) - surfaced_aggregates:
+        errors.append("Shopee statement aggregate %s is not published" % transaction_id)
     for order_id, order in published_by_id.items():
         original = source_by_id.get(order_id)
         if not original:
@@ -287,8 +362,6 @@ def validate_shopee(manual_data, output, final_by_id, errors):
             transaction = final_by_id.get(tx_id)
             if not transaction or attached.get(order_id) != tx_id:
                 errors.append("Shopee order %s link is not reciprocal" % order_id)
-            elif transaction.get("amount") != order.get("amount"):
-                errors.append("Shopee order %s link disagrees on amount" % order_id)
         elif order_id in attached:
             errors.append("unmatched Shopee order %s is attached to a transaction" % order_id)
     summary = output.get("quality", {}).get("shopee", {})
@@ -303,20 +376,13 @@ def validate_shopee(manual_data, output, final_by_id, errors):
 
 
 TRIP_DETAIL_FIELDS = (
-    "bookingNo", "status", "productType", "bookingDate", "travelTime",
+    "bookingNo", "status", "productType", "bookingDate", "productName", "travelTime",
     "traveller", "currency", "amount", "sourceFile",
 )
 
 
-def validate_trip(manual_data, output, final_by_id, errors):
-    """Every published Trip.com link must be exact, dated, one-to-one, and unaltered.
-
-    The build's matcher is the only thing that should ever attach a booking to
-    a charge, so this re-derives the rule on the published rows: SGD, debit,
-    Trip.com description, same cents, inside the window, one booking per
-    charge and one charge per booking, and the booking fields exactly as the
-    manual export holds them. The quality summary must count the same links.
-    """
+def validate_trip(manual_data, output, final_by_id, errors, reconciliation_data=None):
+    """Re-derive exact and reviewed Trip.com links from their private sources."""
     source = manual_data.get("bookings", []) if isinstance(manual_data, dict) else None
     summary = output.get("quality", {}).get("trip")
     if not source and summary is None:
@@ -338,80 +404,188 @@ def validate_trip(manual_data, output, final_by_id, errors):
     if "tripBookings" in output:
         errors.append("the full Trip.com export must not be published to the dashboard")
 
-    attached = {}
+    reconciliation_data = reconciliation_data or {"links": []}
+    expected_manual = {}
+    links = reconciliation_data.get("links", []) if isinstance(reconciliation_data, dict) else None
+    if not isinstance(links, list):
+        errors.append("manual Trip.com reconciliation must contain a links list")
+        links = []
+    for index, link in enumerate(links, 1):
+        if not isinstance(link, dict):
+            errors.append("Trip.com reconciliation %d must be an object" % index)
+            continue
+        transaction_ids = link.get("transactionIds")
+        booking_nos = link.get("bookingNos")
+        kind = link.get("kind")
+        note = link.get("note")
+        if (not isinstance(transaction_ids, list) or not transaction_ids
+                or not isinstance(booking_nos, list) or not booking_nos
+                or not isinstance(kind, str) or not kind
+                or not isinstance(note, str) or not note):
+            errors.append("Trip.com reconciliation %d is incomplete" % index)
+            continue
+        normalized_nos = [normalize_trip_booking_no(value) for value in booking_nos]
+        for transaction_id in transaction_ids:
+            if transaction_id in expected_manual:
+                errors.append("Trip.com reconciliation repeats transaction %s" % transaction_id)
+                continue
+            expected_manual[transaction_id] = {
+                "bookingNos": normalized_nos,
+                "kind": kind,
+                "note": note,
+            }
+
+    attached_auto = {}
+    attached_all = set()
+    matched_charge_ids = set()
+    matched_refund_ids = set()
+    matched_cancelled_charge_ids = set()
     for tx_id, transaction in final_by_id.items():
         detail = transaction.get("tripBooking")
+        plural = transaction.get("tripBookings")
+        if plural is not None:
+            if not isinstance(plural, list) or not plural:
+                errors.append("transaction %s has invalid Trip.com booking details" % tx_id)
+                details = []
+            else:
+                details = plural
+                if detail != details[0]:
+                    errors.append("transaction %s has inconsistent primary Trip.com booking" % tx_id)
+        else:
+            details = [detail] if detail is not None else []
         marker = transaction.get("trip")
         is_trip_row = is_trip_description(transaction.get("description", ""))
         expected_marker = (
-            {"status": "booking-matched" if detail is not None else "unmatched"}
+            {"status": "booking-matched" if details else "unmatched"}
             if is_trip_row else None
         )
         if marker != expected_marker:
             errors.append("transaction %s has an inconsistent Trip.com marker" % tx_id)
-        if detail is None:
+        if not details:
             if transaction.get("displayNameSource") == "trip-booking":
                 errors.append("transaction %s claims a Trip.com name without a booking" % tx_id)
             continue
-        if not isinstance(detail, dict):
-            errors.append("transaction %s has invalid Trip.com booking details" % tx_id)
-            continue
-        booking_no = detail.get("bookingNo")
-        if booking_no in attached:
-            errors.append("Trip.com booking %s is attached to more than one transaction" % booking_no)
-        attached[booking_no] = tx_id
-        original = source_by_no.get(booking_no)
-        if not original:
-            errors.append("transaction %s names unknown Trip.com booking %r" % (tx_id, booking_no))
-            continue
-        if transaction.get("type") != "debit" or not is_trip_description(
-                transaction.get("description", "")):
+        if not is_trip_row or transaction.get("type") not in ("debit", "refund"):
             errors.append("transaction %s is not a Trip.com charge but carries a booking" % tx_id)
-        if detail.get("currency") != "SGD":
-            errors.append("transaction %s is linked to a non-SGD Trip.com booking" % tx_id)
-        try:
-            same_amount = (
-                int(round(float(detail.get("amount")) * 100))
-                == int(round(float(transaction.get("amount")) * 100))
-            )
-        except (TypeError, ValueError):
-            same_amount = False
-        if not same_amount:
-            errors.append("transaction %s Trip.com link disagrees on amount" % tx_id)
-        booking_day = parse_trip_date(detail.get("bookingDate"))
-        row_day = parse_trip_date(transaction.get("date"))
-        if (booking_day is None or row_day is None
-                or abs((row_day - booking_day).days) > TRIP_MATCH_WINDOW_DAYS):
-            errors.append("transaction %s Trip.com link is outside the match window" % tx_id)
-        for field in TRIP_DETAIL_FIELDS:
-            published = detail.get(field)
-            expected = original.get(field)
-            if field == "bookingNo":
-                expected = normalize_trip_booking_no(expected)
-            elif field == "currency":
-                expected = str(expected or "").strip().upper()
-            elif field == "amount":
-                try:
-                    expected = None if expected is None else round(float(expected), 2)
-                except (TypeError, ValueError):
-                    expected = object()
-            else:
-                expected = str(expected or "").strip()
-            if published != expected:
-                errors.append("Trip.com booking %s changed %s during build" % (booking_no, field))
+
+        manual_link = expected_manual.get(tx_id)
+        published_nos = []
+        originals = []
+        for detail in details:
+            if not isinstance(detail, dict):
+                errors.append("transaction %s has invalid Trip.com booking details" % tx_id)
+                continue
+            booking_no = normalize_trip_booking_no(detail.get("bookingNo"))
+            published_nos.append(booking_no)
+            original = source_by_no.get(booking_no)
+            if not original:
+                errors.append("transaction %s names unknown Trip.com booking %r" % (tx_id, booking_no))
+                continue
+            originals.append(original)
+            attached_all.add(booking_no)
+            if detail.get("currency") != "SGD":
+                errors.append("transaction %s is linked to a non-SGD Trip.com booking" % tx_id)
+            for field in TRIP_DETAIL_FIELDS:
+                published = detail.get(field)
+                expected = original.get(field)
+                if field == "bookingNo":
+                    expected = normalize_trip_booking_no(expected)
+                elif field == "currency":
+                    expected = str(expected or "").strip().upper()
+                elif field == "amount":
+                    try:
+                        expected = None if expected is None else round(float(expected), 2)
+                    except (TypeError, ValueError):
+                        expected = object()
+                else:
+                    expected = str(expected or "").strip()
+                if published != expected:
+                    errors.append(
+                        "Trip.com booking %s changed %s during build" % (booking_no, field)
+                    )
+
+        if manual_link:
+            if published_nos != manual_link["bookingNos"]:
+                errors.append("transaction %s disagrees with the reviewed Trip.com link" % tx_id)
+            expected_match = {"kind": manual_link["kind"], "note": manual_link["note"]}
+            if transaction.get("tripMatch") != expected_match:
+                errors.append("transaction %s changed its Trip.com reconciliation evidence" % tx_id)
+        else:
+            if len(details) != 1 or transaction.get("type") != "debit":
+                errors.append(
+                    "transaction %s is not a Trip.com charge with an automatic exact match "
+                    "and has no reviewed reconciliation" % tx_id
+                )
+            if published_nos:
+                booking_no = published_nos[0]
+                if booking_no in attached_auto:
+                    errors.append(
+                        "Trip.com booking %s is attached to more than one automatic charge"
+                        % booking_no
+                    )
+                attached_auto[booking_no] = tx_id
+            exact_detail = details[0] if len(details) == 1 and isinstance(details[0], dict) else {}
+            try:
+                same_amount = (
+                    int(round(float(exact_detail.get("amount")) * 100))
+                    == int(round(float(transaction.get("amount")) * 100))
+                )
+            except (TypeError, ValueError):
+                same_amount = False
+            if not same_amount:
+                errors.append("transaction %s Trip.com link disagrees on amount" % tx_id)
+            booking_day = parse_trip_date(exact_detail.get("bookingDate"))
+            row_day = parse_trip_date(transaction.get("date"))
+            if (booking_day is None or row_day is None
+                    or abs((row_day - booking_day).days) > TRIP_MATCH_WINDOW_DAYS):
+                errors.append("transaction %s Trip.com link is outside the match window" % tx_id)
+            if (transaction.get("tripMatch") is not None
+                    and transaction.get("tripMatch", {}).get("kind") != "exact"):
+                errors.append("transaction %s changed its automatic Trip.com evidence" % tx_id)
+
+        product_names = list(dict.fromkeys(
+            str(original.get("productName") or "").strip() for original in originals
+        ))
+        expected_name = (
+            product_names[0] if len(product_names) == 1
+            else "%d Trip.com bookings" % len(details)
+        )
         if (transaction.get("displayNameSource") == "trip-booking"
-                and transaction.get("displayName") != original.get("productName", "").strip()):
-            errors.append("transaction %s Trip.com display name is not the product name" % tx_id)
+                and transaction.get("displayName") != expected_name):
+            errors.append(
+                "transaction %s Trip.com display name is not the product name derived from its bookings"
+                % tx_id
+            )
         if transaction.get("displayNameSource") not in ("trip-booking", "override"):
             errors.append("transaction %s Trip.com link has no display-name source" % tx_id)
+
+        if transaction.get("type") == "refund":
+            matched_refund_ids.add(tx_id)
+        else:
+            matched_charge_ids.add(tx_id)
+            if any(
+                    str(original.get("status") or "").strip().lower() == "cancelled"
+                    for original in originals):
+                matched_cancelled_charge_ids.add(tx_id)
+
+    missing_reviewed = set(expected_manual) - set(final_by_id)
+    if missing_reviewed:
+        errors.append("reviewed Trip.com links name transactions missing from the dashboard")
     if not isinstance(summary, dict):
         errors.append("Trip.com quality summary is missing")
         return
-    if summary.get("bookings") != len(source_by_no) or summary.get("matched") != len(attached):
+    if (summary.get("bookings") != len(source_by_no)
+            or summary.get("matched") != len(matched_charge_ids)):
         errors.append("Trip.com quality summary disagrees with published links")
-    if summary.get("matchedCancelled") != sum(
-            1 for booking_no in attached if booking_no in source_by_no
-            and str(source_by_no[booking_no].get("status") or "").strip().lower() == "cancelled"):
+    optional_counts = {
+        "matchedRefunds": len(matched_refund_ids),
+        "matchedTransactions": len(matched_charge_ids | matched_refund_ids),
+        "matchedBookings": len(attached_all),
+    }
+    for key, expected in optional_counts.items():
+        if key in summary and summary.get(key) != expected:
+            errors.append("Trip.com quality summary miscounts %s" % key)
+    if summary.get("matchedCancelled") != len(matched_cancelled_charge_ids):
         errors.append("Trip.com quality summary miscounts cancelled links")
 
 
@@ -580,6 +754,8 @@ def main():
         os.path.join(MANUAL_DIR, "shopee_orders.json"), {"orders": []})
     trip_data = load_optional(
         os.path.join(MANUAL_DIR, "trip_bookings.json"), {"bookings": []})
+    trip_reconciliation_data = load_optional(
+        os.path.join(MANUAL_DIR, "trip_booking_reconciliation.json"), {"links": []})
     grab_data = load_optional(
         os.path.join(MANUAL_DIR, "grab_receipts.json"), {"receipts": []})
     grab_web_data = load_optional(
@@ -690,7 +866,9 @@ def main():
     final_by_id = {row["id"]: row for row in output.get("transactions", []) if row.get("id")}
     validate_foodpanda(foodpanda_data, output, final_by_id, errors)
     validate_shopee(shopee_data, output, final_by_id, errors)
-    validate_trip(trip_data, output, final_by_id, errors)
+    validate_trip(
+        trip_data, output, final_by_id, errors, trip_reconciliation_data
+    )
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
     if (os.path.exists(insurance_path) or "insurance" in output) and \
             output.get("insurance") != prepare_insurance(insurance_data):
@@ -841,6 +1019,11 @@ def main():
     # and the source's credit flag. Without this a refund silently becomes a
     # debit, or a plain charge silently becomes a settled payment.
     overrides_by_id = override_data.get("overridesById", {})
+    shopee_categories_by_id = {
+        order.get("orderId"): order.get("category")
+        for order in output.get("shopeeOrders", [])
+        if isinstance(order, dict)
+    }
     for row in output.get("transactions", []):
         tx_id = row.get("id")
         category = row.get("category")
@@ -855,8 +1038,7 @@ def main():
         shopee_category = (
             row.get("categorySource") == "shopee-order"
             and isinstance(row.get("shopee"), dict)
-            and category == "Groceries"
-            and row["shopee"].get("merchant", "").lower() == "shopee supermarket"
+            and category == shopee_categories_by_id.get(row["shopee"].get("orderId"))
         )
         grab_category = (
             row.get("categorySource") in (

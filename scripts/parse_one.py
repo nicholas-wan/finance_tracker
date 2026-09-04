@@ -58,7 +58,8 @@ FLOW_RULES = [
     # IRAS prints as "INLAND REVENUE AUTHO..." over PayNow, which never says IRAS.
     ("Tax", ["IRAS", "INCOME TAX", "TAXS", "INLAND REVENUE"]),
     ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST", "INTEREST CREDIT"]),
-    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", "GREAT EASTERN", " AIA ", "AVIVA", " INCOME "]),
+    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", "GREAT EASTERN", " AIA ", "AVIVA",
+                   "SINGAPORE LIFE", "SINGLIFE", " INCOME "]),
     # " HDB " keeps HDBANK, a Vietnamese bank, out of the mortgage bucket.
     ("Mortgage & home", [" HDB ", "MORTGAGE", "HOME LOAN", "TOWN COUNCIL", "SP SERVICES",
                          "SP DIGITAL"]),

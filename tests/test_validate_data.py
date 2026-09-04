@@ -892,6 +892,48 @@ class ManualInputTests(unittest.TestCase):
         self.assertIn("1 legacy owner-tag key(s) match no card row", output)
 
 
+class ShopeeOrderLinkTests(unittest.TestCase):
+    def test_reviewed_aggregate_passes_and_covers_each_order(self):
+        source_orders = [
+            {"orderId": "242058592217954", "merchant": "First Store",
+             "status": "completed", "amount": 10.25, "items": ["First item"],
+             "historyIndex": 0},
+            {"orderId": "242058592217955", "merchant": "Second Store",
+             "status": "completed", "amount": 8.65, "items": ["Second item"],
+             "historyIndex": 1},
+        ]
+        note = "Two adjacent orders add exactly to the statement charge."
+        manual = {
+            "orders": source_orders,
+            "statementAggregates": [{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [order["orderId"] for order in source_orders],
+                "note": note,
+            }],
+        }
+        published = [dict(order, category="Shopping",
+                          statementTransactionId="tx_shopee000000000001",
+                          date="2026-08-24") for order in source_orders]
+        details = [{key: order[key] for key in (
+            "orderId", "merchant", "status", "amount", "items", "historyIndex", "category"
+        )} for order in published]
+        row = {
+            "id": "tx_shopee000000000001", "date": "2026-08-24",
+            "description": "SHOPEE SG MP SINGAPORE", "type": "debit", "amount": 18.90,
+            "shopee": details[0], "shopeeOrders": details,
+            "shopeeMatch": {"kind": "aggregate", "note": note},
+        }
+        output = {
+            "shopeeOrders": published,
+            "quality": {"shopee": {
+                "orders": 2, "matched": 2, "unmatched": 0, "groceries": 0,
+            }},
+        }
+        errors = []
+        validate_data.validate_shopee(manual, output, {row["id"]: row}, errors)
+        self.assertEqual(errors, [])
+
+
 class TripBookingLinkTests(unittest.TestCase):
     """validate_trip re-derives the matcher's rule on the published rows."""
 
@@ -916,7 +958,8 @@ class TripBookingLinkTests(unittest.TestCase):
         row.update(overrides)
         return row
 
-    def check(self, row=None, manual=None, quality=None, output_extra=None):
+    def check(self, row=None, manual=None, quality=None, output_extra=None,
+              reconciliation=None):
         row = row or self.linked_row()
         manual = {"bookings": [self.booking()]} if manual is None else manual
         summary = {"bookings": 1, "matched": 1, "matchedCancelled": 0}
@@ -925,7 +968,9 @@ class TripBookingLinkTests(unittest.TestCase):
         output = {"quality": {"trip": summary}}
         output.update(output_extra or {})
         errors = []
-        validate_data.validate_trip(manual, output, {row["id"]: row}, errors)
+        validate_data.validate_trip(
+            manual, output, {row["id"]: row}, errors, reconciliation
+        )
         return errors
 
     def test_a_clean_link_passes(self):
@@ -983,6 +1028,42 @@ class TripBookingLinkTests(unittest.TestCase):
             manual={"bookings": [self.booking(status="Cancelled")]},
             quality={"matchedCancelled": 1})
         self.assertEqual(cancelled, [])
+
+    def test_a_reviewed_aggregate_refund_passes(self):
+        first = self.booking(status="Cancelled")
+        second = self.booking(
+            bookingNo="1234567890124", status="Cancelled", amount=100.0
+        )
+        row = self.linked_row(
+            type="refund",
+            amount=421.45,
+            tripBooking=first,
+            tripBookings=[first, second],
+            tripMatch={
+                "kind": "aggregate",
+                "note": "The refund combines both cancelled bookings.",
+            },
+        )
+        errors = self.check(
+            row=row,
+            manual={"bookings": [first, second]},
+            quality={
+                "bookings": 2,
+                "matched": 0,
+                "matchedRefunds": 1,
+                "matchedTransactions": 1,
+                "matchedBookings": 2,
+            },
+            reconciliation={
+                "links": [{
+                    "transactionIds": [row["id"]],
+                    "bookingNos": [first["bookingNo"], second["bookingNo"]],
+                    "kind": "aggregate",
+                    "note": "The refund combines both cancelled bookings.",
+                }]
+            },
+        )
+        self.assertEqual(errors, [])
 
 
 if __name__ == "__main__":

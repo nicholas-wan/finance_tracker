@@ -31,11 +31,29 @@ dashboard tabs are supported. Running `python scripts/serve.py` manually remains
 persistent until `Ctrl+C`; the launcher reuses a healthy manually started server and
 only opens the dashboard against it, rather than replacing it.
 
-For a view-only dashboard:
+For a view-only dashboard on this computer without the editable server (use
+another port if the editable server is already on 3403):
 
 ```powershell
-python -m http.server 3403 --directory app
+python -m http.server 3404 --directory app
 ```
+
+### Share on Wi-Fi
+
+The **Share on Wi-Fi** button in the header (editable server only) opens a
+read-only copy of the dashboard on every network interface on port 4403
+(`--share-port` overrides it), copies a link of the form
+`http://<this PC's address>:4403/?k=<code>` to the clipboard, and shows it with
+**Copy** and **Stop sharing** buttons. The copy runs inside the dashboard
+process, so it cannot outlive it; it answers only to requests carrying the
+random code (the first visit stores it as a cookie), never lists folders, and
+refuses every write. Whoever has the link can read every statement row,
+including the booking number and traveller on matched Trip.com charges, so the
+share stops by itself after two hours, when you press Stop, or when the
+dashboard server exits. While a share is live the server ignores auto-stop, so
+closing your own tab does not cut the guest off. Windows may ask once to allow
+Python through the firewall on private networks. Editing never leaves this
+computer.
 
 ## Create a separate household copy
 
@@ -61,6 +79,10 @@ trackers need to be open together, give the second one a different local port:
 
 Do not copy this repository's `manual/`, `statements/`, or `app/data/` folders
 into the new clone. Back up each clone's private folders separately.
+
+Give the clone its own header identity: change the monogram text in the
+`.brand-mark` SVG in `app/index.html`, the `--brand` and `--brand-ink` colours
+(light and dark) at the top of `app/css/styles.css`, and `app/favicon.svg`.
 
 ## Import statements
 
@@ -93,6 +115,22 @@ preserved.
 The Transactions page supports period, search, category/flow, owner, direction, and
 review-status filters.
 
+- The header identifies the tracker at a glance: a **Yx** monogram tile beside the
+  wordmark, with the purple brand colour on the top bar, a faint header tint, and the
+  wordmark, in both themes.
+- The **Income** tab derives its history from salary-labelled bank credits; empty
+  hand-entered salary-sheet panels disappear automatically. The outlook separates
+  recurring payroll streams from variable pay, detects a bonus month only when it
+  exceeds the ordinary-pay baseline by at least 25% in both latest complete years,
+  and forecasts any remaining repeated bonus months separately. The current-year
+  estimate therefore includes actual bonuses already received without spreading an
+  early lump sum over every remaining month. Three-, five-, and ten-year scenarios
+  show 3%–7% annual growth around a 5% midpoint. **How this forecast is calculated**
+  expands to the live formula, assumptions, detected months, and the Public Service
+  Division references used to distinguish mid-year/year-end AVC, NPAA/13th-month,
+  and performance-linked components. Published civil-service bonus multiples are
+  context only; the amounts come from this account's own history because agency and
+  individual awards may differ.
 - Card summaries show net cost after refunds, category and owner breakdowns, and
   6M/12M comparisons. **Group purchases** combines normalized merchants without
   merging the source rows.
@@ -135,24 +173,41 @@ review-status filters.
   status, total, and every item name captured from the purchase card. Since
   Shopee hid order dates behind a slider check, only amount groups with equal
   order/statement cardinality inside the statement-era history are linked.
+  Reviewed bundled charges can be recorded in `statementAggregates`; each entry
+  names one stable transaction ID, two or more order IDs, and an evidence note,
+  and the order totals must add to the statement charge exactly. The ledger
+  displays those bundles as one row per order, all on the statement date, while
+  preserving the combined charge as the source evidence.
 - **Trip.com only** shows every Trip.com statement row: named bookings,
   charges that could not be matched safely, and refunds, so the month's Trip.com
   net cost is complete. Booking history comes from the site's **My Bookings**
   Excel exports, merged by `scripts/import_trip_bookings.py` (later exports win
-  on a repeated booking number). A card charge shows the actual hotel, flight, attraction, or
-  transfer name only when it and one booking are the sole pair within seven days
-  of each other with exactly that SGD amount. Ambiguous, unmatched,
-  foreign-currency, undated, and refund rows keep the original Trip.com statement
-  description rather than being assigned to a guessed booking. A booking that
-  was later cancelled still names its charge, marked **Cancelled** in the ledger
-  and the drawer, because the charge was real and the refund is its own credit
-  row. Opening a matched transaction shows the original statement description
-  and a **Trip.com booking** section with status, type, booking number, dates,
+  on a repeated booking number). A card charge shows the actual hotel, flight,
+  attraction, or transfer name automatically when it and one booking are the
+  sole pair within seven days with exactly the same SGD amount. Reviewed links
+  in `manual/trip_booking_reconciliation.json` cover discounts, split payments,
+  aggregate charges, refunds, and replacement-booking price adjustments by
+  naming stable transaction IDs and booking numbers explicitly. The drawer
+  shows the reconciliation evidence and every booking when one statement row
+  covers several. Unreviewed, foreign-currency, and undated rows keep the
+  original statement description rather than being assigned by a loose amount
+  tolerance. A booking that was later cancelled remains marked **Cancelled**.
+  Opening a matched transaction shows the original statement description and
+  a **Trip.com booking** section with status, type, booking number, dates,
   traveller, and total. The booking name is a derived label: the drawer's
   display-name field shows it as a placeholder, so saving a remark does not
   freeze it as an override, and it never becomes the label of a grouped
-  Trip.com row. The quality summary counts matched, cancelled, ambiguous, and
-  unmatched charges; the validator re-derives every published link.
+  Trip.com row. The quality summary counts matched bookings, charges, refunds,
+  cancellations, ambiguous charges, and unmatched rows; the validator
+  re-derives every published link.
+- Selecting the **Travel** category adds a country/region filter and replaces the
+  ordinary category summary with a year-by-country/region breakdown. Destination
+  evidence comes from matched booking names, flight airport codes, or an explicit
+  transaction location; `Singapore` in a platform's billing descriptor is not
+  treated as the destination. Refunds net inside the same statement year and
+  country/region, each individual travel row shows the inferred destination, and
+  generic Klook, KKday, Airbnb, and platform-only charges remain visibly grouped as
+  **Unknown** until stronger evidence exists.
 - **Grab only** shows every Grab statement charge. Safely matched food rows lead
   with the stall name, while rides use friendly saved location names where
   configured. Food item lines and delivery addresses stay out of the interface;
@@ -165,12 +220,15 @@ review-status filters.
   insured person. Its compact table keeps the key fields visible; selecting a
   policy expands a concise explanation, with the full record available as a
   secondary action. Matured and lapsed policies sit in a separate archive modal.
-  Scheduled annualised premiums and actual card charges are deliberately separate because a policy
-  may be paid through another account or CPF. The statement section compares
-  premiums due through the latest imported date with matched card charges,
-  identifies missing and unlinked payments, groups repeated charges by policy,
-  and states whether they tally. Policies checked directly against an insurer
-  portal carry a source-specific verification badge and verification date.
+  Scheduled annualised premiums and posted payments are deliberately separate
+  because a policy may be paid by card, an imported bank account, or CPF. Card and
+  bank payments reconcile against their own latest statement cutoffs; the statement
+  section identifies missing and unlinked payments, groups repeated payments by
+  policy, shows monthly/yearly cadence at a glance, and states whether the totals
+  tally. Expanding a compact row reveals its calendar, payment history, and source
+  entries. Policies checked directly against an insurer portal carry the same static
+  verification badge in the register and payment list; there is no user-facing
+  “mark verified” control.
 
 Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
 renames or extraction line shifts do not detach decisions (replacing a CSV source
@@ -212,7 +270,9 @@ generated-data rebuilds are atomic and roll back if validation fails.
   `Groceries`, while a saved transaction override remains authoritative.
 - Shopee purchase history: `manual/shopee_orders.json` (also Git-ignored). The
   import retains older history and item names even when no statement link can
-  be made safely.
+  be made safely. Set `statementOrderMaxHistoryIndex` at the last order covered
+  by the statement window so an older same-priced order cannot be linked by
+  coincidence; `statementAggregates` handles explicitly reviewed order bundles.
 - Trip.com booking history: `manual/trip_bookings.json` (Git-ignored). Export the
   required periods from Trip.com's **All Bookings → Export** (each export covers
   one period; the current private file came from three covering older history,
@@ -228,9 +288,12 @@ generated-data rebuilds are atomic and roll back if validation fails.
   workbooks without writing. `*.xlsx` is Git-ignored, so the exports can live
   anywhere. `prepare_trip_bookings()` in `scripts/build_data.py` then validates
   booking numbers, product names, three-letter currencies, and finite amounts,
-  and links only exact SGD amounts that pair one booking with one charge inside
-  `TRIP_MATCH_WINDOW_DAYS`. Only the bookings that explain a charge reach
-  `app/data/`; the full export, traveller names included, stays in `manual/`.
+  and automatically links exact SGD amounts that pair one booking with one
+  charge inside `TRIP_MATCH_WINDOW_DAYS`. Add reviewed exceptions to
+  `manual/trip_booking_reconciliation.json`; every entry must name existing
+  stable transaction IDs and booking numbers and explain the evidence. Only
+  bookings that explain statement activity reach `app/data/`, attached with
+  their booking fields and match note; the full export stays in `manual/`.
 - Grab Gmail capture: `manual/grab_receipt_search_raw.json` plus any later mail
   in `manual/grab_receipt_search_supplemental.json`, parsed with `python
   scripts/import_grab_receipts.py` into `manual/grab_receipts.json`. These files

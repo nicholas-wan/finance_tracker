@@ -195,12 +195,14 @@ class FoodpandaOrderTests(unittest.TestCase):
 
 
 class ShopeeOrderTests(unittest.TestCase):
-    def source(self, orders):
-        return {
+    def source(self, orders, **overrides):
+        source = {
             "statementFrom": "2026-02-01",
             "statementThrough": "2026-09-30",
             "orders": orders,
         }
+        source.update(overrides)
+        return source
 
     def order(self, order_id="242058592217954", amount=18.90):
         return {"orderId": order_id, "merchant": "Example Store",
@@ -227,6 +229,44 @@ class ShopeeOrderTests(unittest.TestCase):
             self.source([self.order()]), rows)
         self.assertNotIn("statementTransactionId", orders[0])
         self.assertEqual(matches, {})
+
+    def test_reviewed_aggregate_links_multiple_orders_to_one_charge(self):
+        first = self.order(amount=10.25)
+        second = self.order("242058592217955", amount=8.65)
+        second["historyIndex"] = 1
+        source = self.source(
+            [first, second],
+            statementAggregates=[{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [first["orderId"], second["orderId"]],
+                "note": "Two adjacent orders add exactly to the statement charge.",
+            }],
+        )
+        orders, matches = build_data.prepare_shopee_orders(source, [self.card()])
+        self.assertEqual(
+            [order["statementTransactionId"] for order in orders],
+            ["tx_shopee000000000001", "tx_shopee000000000001"],
+        )
+        self.assertEqual(matches["tx_shopee000000000001"]["kind"], "aggregate")
+        self.assertEqual(
+            [order["orderId"] for order in matches["tx_shopee000000000001"]["orders"]],
+            [first["orderId"], second["orderId"]],
+        )
+
+    def test_reviewed_aggregate_must_equal_the_statement_charge(self):
+        first = self.order(amount=10.00)
+        second = self.order("242058592217955", amount=8.00)
+        second["historyIndex"] = 1
+        source = self.source(
+            [first, second],
+            statementAggregates=[{
+                "transactionId": "tx_shopee000000000001",
+                "orderIds": [first["orderId"], second["orderId"]],
+                "note": "Synthetic mismatch.",
+            }],
+        )
+        with self.assertRaisesRegex(SystemExit, "do not equal"):
+            build_data.prepare_shopee_orders(source, [self.card()])
 
 
 class TripBookingTests(unittest.TestCase):
@@ -355,6 +395,80 @@ class TripBookingTests(unittest.TestCase):
         bookings, matches, stats = build_data.prepare_trip_bookings(None, [self.card()])
         self.assertEqual((bookings, matches), ([], {}))
         self.assertEqual(stats["statementCharges"], 1)
+
+    def test_reviewed_links_support_aggregate_charges_and_refunds(self):
+        second = self.booking(
+            bookingNo="1234567890124", productName="Example Hotel", amount=100.0
+        )
+        charge = self.card(amount=421.45)
+        refund = self.card(
+            "tx_trip0000000000002", amount=100.0, date="2026-06-20", credit=True
+        )
+        reconciliation = {
+            "links": [
+                {
+                    "transactionIds": [charge["id"]],
+                    "bookingNos": [self.booking()["bookingNo"], second["bookingNo"]],
+                    "kind": "aggregate",
+                    "note": "One statement charge covers both same-day bookings.",
+                },
+                {
+                    "transactionIds": [refund["id"]],
+                    "bookingNos": [second["bookingNo"]],
+                    "kind": "refund",
+                    "note": "The later credit refunds the second booking.",
+                },
+            ]
+        }
+        _, matches, stats = build_data.prepare_trip_bookings(
+            {"bookings": [self.booking(), second]}, [charge, refund], reconciliation
+        )
+        self.assertEqual(
+            [booking["bookingNo"] for booking in matches[charge["id"]]["bookings"]],
+            ["1234567890123", "1234567890124"],
+        )
+        self.assertEqual(stats["matched"], 1)
+        self.assertEqual(stats["matchedRefunds"], 1)
+        self.assertEqual(stats["matchedTransactions"], 2)
+        self.assertEqual(stats["matchedBookings"], 2)
+        self.assertEqual(stats["unmatchedCharges"], 0)
+        self.assertEqual(stats["unmatchedRefunds"], 0)
+
+    def test_reviewed_links_reject_unknown_and_repeated_rows(self):
+        cases = [
+            {
+                "transactionIds": ["tx_missing"],
+                "bookingNos": [self.booking()["bookingNo"]],
+                "kind": "discounted",
+                "note": "Reviewed.",
+            },
+            {
+                "transactionIds": [self.card()["id"]],
+                "bookingNos": 123,
+                "kind": "discounted",
+                "note": "Reviewed.",
+            },
+        ]
+        for link in cases:
+            with self.subTest(link=link):
+                with self.assertRaises(SystemExit):
+                    build_data.prepare_trip_bookings(
+                        {"bookings": [self.booking()]},
+                        [self.card()],
+                        {"links": [link]},
+                    )
+        repeated = {
+            "transactionIds": [self.card()["id"]],
+            "bookingNos": [self.booking()["bookingNo"]],
+            "kind": "discounted",
+            "note": "Reviewed.",
+        }
+        with self.assertRaises(SystemExit):
+            build_data.prepare_trip_bookings(
+                {"bookings": [self.booking()]},
+                [self.card()],
+                {"links": [repeated, repeated]},
+            )
 
 
 class GrabReceiptTests(unittest.TestCase):

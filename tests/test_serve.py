@@ -3,6 +3,8 @@ import importlib
 import io
 import json
 import shutil
+import time
+import socket
 import sys
 import tempfile
 import threading
@@ -10,6 +12,7 @@ import unittest
 from email.message import Message
 from http.server import ThreadingHTTPServer
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -1316,6 +1319,147 @@ class PostEndpointTests(unittest.TestCase):
             "/api/client-heartbeat", json.dumps({"clientId": "not-a-uuid"}))
         self.assertEqual(status, 400)
         self.assertIn("UUID", body["error"])
+
+
+class FakeTimer:
+    def __init__(self, interval, function, args=()):
+        self.interval = interval
+        self.function = function
+        self.args = args
+        self.daemon = False
+        self.cancelled = False
+
+    def start(self):
+        pass
+
+    def cancel(self):
+        self.cancelled = True
+
+
+class ShareServerTests(unittest.TestCase):
+    """The Wi-Fi share is an in-process, code-gated, read-only copy of app/."""
+
+    def setUp(self):
+        serve.stop_share()
+        self.addCleanup(serve.stop_share)
+        patches = [
+            patch.object(serve, "lan_address", return_value="192.168.1.23"),
+            patch.object(serve.threading, "Timer", FakeTimer),
+        ]
+        for item in patches:
+            item.start()
+            self.addCleanup(item.stop)
+
+    def request(self, port, method, path, headers=None, body=None):
+        connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
+        connection.request(method, path, body=body, headers=headers or {})
+        response = connection.getresponse()
+        payload = response.read()
+        connection.close()
+        return response, payload
+
+    def start(self):
+        status = serve.start_share(0)
+        token = status["url"].rsplit("?k=", 1)[1]
+        return status, status["port"], token
+
+    def test_idle_status_is_not_running(self):
+        status = serve.share_status()
+        self.assertFalse(status["running"])
+        self.assertIsNone(status["url"])
+
+    def test_start_binds_a_server_and_reports_a_coded_link(self):
+        status, port, token = self.start()
+        self.assertTrue(status["running"])
+        self.assertRegex(status["url"], r"^http://192\.168\.1\.23:\d+/\?k=[A-Za-z0-9_-]{12}$")
+        self.assertEqual(status["url"], "http://192.168.1.23:%d/?k=%s" % (port, token))
+        self.assertRegex(status["stopsAt"], r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}$")
+
+    def test_the_code_gates_every_request_and_then_rides_on_a_cookie(self):
+        _, port, token = self.start()
+        self.assertEqual(self.request(port, "GET", "/")[0].status, 403)
+        self.assertEqual(self.request(port, "GET", "/?k=not-the-code")[0].status, 403)
+        self.assertEqual(self.request(port, "GET", "/css/styles.css")[0].status, 403)
+        response, _ = self.request(port, "GET", "/?k=" + token)
+        self.assertEqual(response.status, 200)
+        cookie = response.getheader("Set-Cookie") or ""
+        self.assertIn("finance_share=" + token, cookie)
+        self.assertIn("HttpOnly", cookie)
+        with_cookie = {"Cookie": "finance_share=" + token}
+        self.assertEqual(self.request(port, "GET", "/css/styles.css", with_cookie)[0].status, 200)
+        self.assertEqual(
+            self.request(port, "GET", "/css/styles.css", {"Cookie": "finance_share=wrong"})[0].status,
+            403)
+
+    def test_directory_listings_and_writes_are_refused(self):
+        _, port, token = self.start()
+        with_cookie = {"Cookie": "finance_share=" + token, "Content-Type": "application/json"}
+        self.assertEqual(self.request(port, "GET", "/js/", with_cookie)[0].status, 404)
+        self.assertEqual(self.request(port, "GET", "/css/", with_cookie)[0].status, 404)
+        self.assertEqual(
+            self.request(port, "POST", "/api/owner", with_cookie, b'{"id":"tx_x"}')[0].status, 405)
+        self.assertEqual(
+            self.request(port, "POST", "/api/owner", {"Content-Type": "application/json"},
+                         b'{"id":"tx_x"}')[0].status, 403)
+        # The page pings these constantly; they are answered quietly, no code needed.
+        self.assertEqual(self.request(port, "POST", "/api/client-heartbeat")[0].status, 204)
+
+    def test_the_start_up_api_reads_as_a_read_only_dashboard(self):
+        _, port, token = self.start()
+        with_cookie = {"Cookie": "finance_share=" + token}
+        response, payload = self.request(port, "GET", "/api/status", with_cookie)
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(payload)["editable"], False)
+        self.assertEqual(self.request(port, "GET", "/api/share", with_cookie)[0].status, 404)
+        self.assertEqual(self.request(port, "GET", "/api/audit-history", with_cookie)[0].status, 200)
+
+    def test_starting_twice_reuses_the_running_share(self):
+        first, _, _ = self.start()
+        second = serve.start_share(0)
+        self.assertEqual(first["url"], second["url"])
+
+    def test_stop_closes_the_port_and_clears_the_status(self):
+        _, port, token = self.start()
+        status = serve.stop_share()
+        self.assertFalse(status["running"])
+        self.assertIsNone(serve.share_status()["url"])
+        with self.assertRaises(OSError):
+            self.request(port, "GET", "/?k=" + token)
+
+    def test_a_timer_from_an_earlier_share_cannot_stop_a_later_one(self):
+        self.start()
+        stale = serve.share_state["generation"]
+        serve.stop_share()
+        self.start()
+        serve._expire_share(stale)
+        self.assertTrue(serve.share_status()["running"])
+        serve._expire_share(serve.share_state["generation"])
+        self.assertFalse(serve.share_status()["running"])
+
+    def test_a_busy_port_is_reported_by_number(self):
+        blocker = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        blocker.bind(("0.0.0.0", 0))
+        blocker.listen(1)
+        self.addCleanup(blocker.close)
+        busy = blocker.getsockname()[1]
+        with self.assertRaisesRegex(RuntimeError, str(busy)):
+            serve.start_share(busy)
+        self.assertFalse(serve.share_status()["running"])
+
+    def test_no_lan_address_refuses_to_start(self):
+        with patch.object(serve, "lan_address", return_value=None):
+            with self.assertRaisesRegex(ValueError, "Wi-Fi address"):
+                serve.start_share(0)
+        self.assertFalse(serve.share_status()["running"])
+
+    def test_auto_stop_waits_while_a_share_is_live(self):
+        lifecycle = serve.DashboardLifecycle(object(), stale_after=1, empty_grace=1, startup_grace=1)
+        lifecycle.started_at = time.monotonic() - 100
+        self.assertTrue(lifecycle._should_shutdown())
+        self.start()
+        self.assertFalse(lifecycle._should_shutdown())
+        serve.stop_share()
+        self.assertTrue(lifecycle._should_shutdown())
 
 
 class ManualFileBootstrapTests(unittest.TestCase):

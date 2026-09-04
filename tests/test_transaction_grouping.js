@@ -1335,3 +1335,66 @@ test("spending summary states the change, driver and largest purchase", function
   assert.match(summary.text, /Shopping was the main driver/);
   assert.match(summary.text, /largest charge was S\$180\.00 for Standing desk/);
 });
+
+test("travel countries use booking destinations instead of Singapore billing text", function () {
+  var insights = loadInsights();
+  assert.equal(insights.travelCountry({
+    category: "Travel",
+    description: "Trip.com Singapore",
+    displayName: "Singapore (SIN) => Shanghai (PVG)"
+  }), "China");
+  assert.equal(insights.travelCountry({
+    category: "Travel",
+    description: "Trip.com Singapore",
+    tripBooking: { productName: "Comfort Inn Yeouido", productType: "Hotels" }
+  }), "South Korea");
+});
+
+test("generic travel platforms stay unknown until destination evidence exists", function () {
+  var insights = loadInsights();
+  assert.equal(insights.travelCountry({
+    category: "Travel",
+    description: "Klook Travel Singapore"
+  }), "Unknown");
+  assert.equal(insights.travelCountry({
+    category: "Shopping",
+    description: "agoda.com Berlin"
+  }), "");
+});
+
+test("income forecast separates recurring pay from repeated bonus months", function () {
+  var insights = loadInsights();
+  var months = [];
+  var rows = [];
+  [2024, 2025, 2026].forEach(function (year) {
+    var lastMonth = year === 2026 ? 8 : 12;
+    for (var month = 1; month <= lastMonth; month += 1) {
+      var key = year + "-" + String(month).padStart(2, "0");
+      var base = year === 2024 ? 5000 : year === 2025 ? 5500 : 6000;
+      months.push(key);
+      rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: base,
+        description: "Agency payroll 123456789"
+      });
+      rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: 50,
+        description: "Recurring payroll allowance 987654321"
+      });
+      if (month === 5) rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: base * 2,
+        description: "Agency payroll 123456789"
+      });
+      if (month === 12) rows.push({
+        month: key, direction: "deposit", flow: "Salary", amount: base,
+        description: "Agency payroll 123456789"
+      });
+    }
+  });
+  var forecast = insights.incomeForecast(rows, months);
+  assert.equal(forecast.baseMonthly, 6050);
+  assert.deepEqual(Array.from(forecast.completeYears), ["2024", "2025"]);
+  assert.deepEqual(Array.from(forecast.bonusPatterns, function (item) { return item.month; }), [5, 12]);
+  assert.ok(forecast.forecastCentral > forecast.forecastFloor);
+  assert.equal(forecast.futurePatterns.length, 1);
+  assert.equal(forecast.futurePatterns[0].month, 12);
+});

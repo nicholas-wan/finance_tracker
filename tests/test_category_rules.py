@@ -222,6 +222,34 @@ class CategoryRuleTests(unittest.TestCase):
             "Subscriptions",
         )
 
+    def test_reviewed_other_queue_merchants(self):
+        reviewed = {
+            "ALIPAY BEIJING": "Travel",
+            "WEIXIN*Panduo platform Shenzhen": "Travel",
+            "WEIXIN*Cotti+Coffee Shenzhen": "Travel",
+            "ALP*hangzhouwangniushi Shanghai": "Travel",
+            "ALP*DIDI Taxi Shanghai": "Travel",
+            "FORTYTWO PTE LTD 08/12": "Home & furnishings",
+            "THE FURNITURE BOUTIQUE SINGAPORE": "Home & furnishings",
+            "HOOGA SINGAPORE": "Home & furnishings",
+            "COW PLAY COW MOO Singapore": "Entertainment",
+            "CASH STUDIO-CLARKE QUAY SINGAPORE": "Entertainment",
+            "WWW.ABSOLUTEYOUSINGAPO SINGAPORE": "Sports & fitness",
+            "RUHK PRIVATE LIMITED SINGAPORE": "Food & dining",
+            "AC MERIDIAN PWCP PTE LTD SINGAPORE": "Food & dining",
+            "SMP*ICE & TIME Singapore": "Food & dining",
+            "SP VOSTELO.COM SINGAPORE": "Shopping",
+            "GETGALATEA.COM HTTPSGETGALAT": "Subscriptions",
+            "NET*G & G HAIR & BTY SALOSINGAPORE": "Personal care",
+            "LYFT CITI BIKE RIDE 8558659553": "Transport",
+            "ONE CARD ENHANCED REBATE": "Rebates",
+            "YUN-U SAS LIMITED WA": "Rebates",
+            "UKVI ETAMOB00001345272 WWW.GOV.UK/BR": "Travel",
+        }
+        for description, category in reviewed.items():
+            with self.subTest(description=description):
+                self.assertEqual(build_data.categorize(description), category)
+
 
 if __name__ == "__main__":
     unittest.main()

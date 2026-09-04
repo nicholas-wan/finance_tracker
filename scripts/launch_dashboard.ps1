@@ -1,7 +1,7 @@
 param(
     [switch]$NoOpen,
     [ValidateRange(1, 65535)]
-    [int]$Port = 3402
+    [int]$Port = 3403
 )
 
 $ErrorActionPreference = "Stop"

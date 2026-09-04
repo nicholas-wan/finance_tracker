@@ -22,6 +22,156 @@ window.Insights = (function () {
     return MONTH_NAMES[parseInt(p[1], 10) - 1] + " " + p[0];
   }
   function signed(t) { return t.type === "debit" ? t.amount : -t.amount; }
+  var TRAVEL_COUNTRY_RULES = [
+    ["Hong Kong", /HONG KONG|\bHKG\b/i],
+    ["Taiwan", /TAIWAN|TAIPEI|\bTPE\b|\bKHH\b/i],
+    ["Macau", /MACAU|MACAO|\bMFM\b/i],
+    ["China", /\b(?:PVG|CAN|TFU)\b|SHANGHAI|BEIJING|SHENZHEN|GUANGZHOU|CHENGDU|ZHANGJIAJIE|HAIKOU|HANGZHOU|WUXI|ZHONGSHAN|CHIMELONG|TOY STORY HOTEL/i],
+    ["South Korea", /YEOUIDO|SEOUL|SOUTH KOREA|\b(?:ICN|GMP)\b/i],
+    ["Japan", /SARDONYX|\bUENO\b|MIYAJIMA|NARITA|SUNSHINE AQUARIUM|TOKYO|JAPAN|\b(?:NRT|HND|KIX|HIJ)\b/i],
+    ["Canada", /NIAGARA|TORONTO|ONTARIO|RIPLEYSCANA|CANADA|\bYYZ\b/i],
+    ["United States", /BOSTON|BUFFALO|WILMINGTON|UNITED STATES|\bUSA\b|\b(?:BOS|BUF)\b/i],
+    ["Australia", /AUSTRALIANETA|SYDNEY|TARONGA|AUSTRALIA|\bSYD\b/i],
+    ["France", /TOUR EIFFEL|TROCADERO|PARIS|FRANCE|\bCDG\b/i],
+    ["Germany", /BERLIN|GERMANY|\bBER\b/i],
+    ["United Kingdom", /UKVI|UNITED KINGDOM|WWW\.GOV\.UK|\bLONDON\b|\bLHR\b/i],
+    ["Singapore", /RITZ CARLTON MILLENIA|MARINA BAY SANDS|SENTOSA/i]
+  ];
+  function travelCountry(transaction) {
+    if (!transaction || transaction.category !== "Travel") return "";
+    var bookings = Array.isArray(transaction.tripBookings) && transaction.tripBookings.length
+      ? transaction.tripBookings : transaction.tripBooking ? [transaction.tripBooking] : [];
+    var text = bookings.map(function (booking) {
+      return [booking.productName, booking.productType].filter(Boolean).join(" ");
+    }).concat([
+      transaction.displayName,
+      transaction.description
+    ]).filter(Boolean).join(" ");
+    for (var i = 0; i < TRAVEL_COUNTRY_RULES.length; i += 1) {
+      if (TRAVEL_COUNTRY_RULES[i][1].test(text)) return TRAVEL_COUNTRY_RULES[i][0];
+    }
+    return "Unknown";
+  }
+  function salaryStreamKey(description) {
+    return String(description || "")
+      .toUpperCase()
+      .replace(/[0-9]+/g, " ")
+      .replace(/[^A-Z]+/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  }
+  function incomeForecast(transactions, statementMonths) {
+    var salaryRows = (transactions || []).filter(function (transaction) {
+      return transaction.direction === "deposit" && transaction.flow === "Salary";
+    });
+    var totals = {};
+    salaryRows.forEach(function (transaction) {
+      totals[transaction.month] = (totals[transaction.month] || 0) + transaction.amount;
+    });
+    var months = (statementMonths || []).filter(function (month) {
+      return totals[month] > 0;
+    }).sort();
+    if (!months.length) return null;
+    var latestMonth = months[months.length - 1];
+    var latestYear = parseInt(latestMonth.slice(0, 4), 10);
+    var elapsedMonths = parseInt(latestMonth.slice(5, 7), 10);
+    var lookback = months.slice(-12);
+    var streams = {};
+    salaryRows.forEach(function (transaction) {
+      if (lookback.indexOf(transaction.month) === -1) return;
+      var key = salaryStreamKey(transaction.description);
+      if (!key) return;
+      if (!streams[key]) streams[key] = {};
+      if (!streams[key][transaction.month]) streams[key][transaction.month] = [];
+      streams[key][transaction.month].push(transaction.amount);
+    });
+    var recurringKeys = Object.keys(streams).filter(function (key) {
+      return Object.keys(streams[key]).length >= Math.max(3, Math.ceil(lookback.length * 0.6));
+    });
+    var baseMonthly = recurringKeys.reduce(function (total, key) {
+      var ordinaryPayments = Object.keys(streams[key]).sort().slice(-3).map(function (month) {
+        return Math.min.apply(null, streams[key][month]);
+      });
+      return total + median(ordinaryPayments);
+    }, 0);
+    if (!baseMonthly) {
+      baseMonthly = median(months.slice(-6).map(function (month) { return totals[month]; }));
+    }
+
+    var ytdMonths = months.filter(function (month) {
+      return parseInt(month.slice(0, 4), 10) === latestYear &&
+        parseInt(month.slice(5, 7), 10) <= elapsedMonths;
+    });
+    var ytd = ytdMonths.reduce(function (total, month) { return total + totals[month]; }, 0);
+    var priorYtd = months.filter(function (month) {
+      return parseInt(month.slice(0, 4), 10) === latestYear - 1 &&
+        parseInt(month.slice(5, 7), 10) <= elapsedMonths;
+    }).reduce(function (total, month) { return total + totals[month]; }, 0);
+
+    var byYear = {};
+    months.forEach(function (month) {
+      var year = month.slice(0, 4);
+      if (!byYear[year]) byYear[year] = [];
+      byYear[year].push(month);
+    });
+    var completeYears = Object.keys(byYear).filter(function (year) {
+      return parseInt(year, 10) < latestYear && byYear[year].length === 12;
+    }).sort().slice(-2);
+    var yearBases = {};
+    completeYears.forEach(function (year) {
+      var values = byYear[year].map(function (month) { return totals[month]; })
+        .sort(function (left, right) { return left - right; });
+      yearBases[year] = median(values.slice(0, Math.max(1, Math.ceil(values.length * 0.75))));
+    });
+    var bonusPatterns = [];
+    if (completeYears.length >= 2) {
+      for (var monthNumber = 1; monthNumber <= 12; monthNumber += 1) {
+        var ratios = completeYears.map(function (year) {
+          var key = year + "-" + ("0" + monthNumber).slice(-2);
+          return Math.max(0, (totals[key] || 0) / yearBases[year] - 1);
+        });
+        if (ratios.every(function (ratio) { return ratio >= 0.25; })) {
+          bonusPatterns.push({
+            month: monthNumber,
+            ratios: ratios,
+            medianRatio: median(ratios),
+            lowRatio: Math.min.apply(null, ratios),
+            highRatio: Math.max.apply(null, ratios)
+          });
+        }
+      }
+    }
+    var remainingMonths = Math.max(0, 12 - elapsedMonths);
+    var futurePatterns = bonusPatterns.filter(function (pattern) {
+      return pattern.month > elapsedMonths;
+    });
+    var forecastFloor = ytd + baseMonthly * remainingMonths;
+    var expectedFutureBonus = futurePatterns.reduce(function (total, pattern) {
+      return total + baseMonthly * pattern.medianRatio;
+    }, 0);
+    var highFutureBonus = futurePatterns.reduce(function (total, pattern) {
+      return total + baseMonthly * pattern.highRatio;
+    }, 0);
+    return {
+      latestMonth: latestMonth,
+      latestYear: latestYear,
+      elapsedMonths: elapsedMonths,
+      remainingMonths: remainingMonths,
+      ytd: ytd,
+      priorYtd: priorYtd,
+      yoy: priorYtd ? (ytd / priorYtd - 1) * 100 : null,
+      baseMonthly: baseMonthly,
+      baseStreams: recurringKeys.length,
+      bonusReceivedYtd: Math.max(0, ytd - baseMonthly * elapsedMonths),
+      completeYears: completeYears,
+      bonusPatterns: bonusPatterns,
+      futurePatterns: futurePatterns,
+      forecastFloor: forecastFloor,
+      expectedFutureBonus: expectedFutureBonus,
+      forecastCentral: forecastFloor + expectedFutureBonus,
+      forecastHigh: forecastFloor + highFutureBonus
+    };
+  }
   function spendable(txs) { return txs.filter(function (t) { return !EXCLUDED[t.category]; }); }
   function sum(list, fn) {
     var total = 0;
@@ -499,5 +649,12 @@ window.Insights = (function () {
 
   // merchantKey is no longer part of the public surface: the one normalizer
   // now lives in FinanceGrouping, and nothing outside this module used it.
-  return { build: build, summarize: summarize, money: money, monthLabel: label };
+  return {
+    build: build,
+    summarize: summarize,
+    money: money,
+    monthLabel: label,
+    travelCountry: travelCountry,
+    incomeForecast: incomeForecast
+  };
 })();

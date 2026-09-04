@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260904-26">
+<link rel="stylesheet" href="css/styles.css?v=20260905-34">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -53,7 +53,22 @@
 
 <header class="topbar">
   <div class="topbar-inner">
-    <h1>Finances</h1>
+    <h1 class="brand" title="Yx's finance tracker">
+      <span class="brand-mark" aria-hidden="true">
+        <svg viewBox="0 0 32 32" focusable="false">
+          <defs>
+            <linearGradient id="brand-gloss" x1="0" y1="0" x2="0" y2="1">
+              <stop offset="0" stop-color="#fff" stop-opacity=".22"/>
+              <stop offset="1" stop-color="#fff" stop-opacity="0"/>
+            </linearGradient>
+          </defs>
+          <rect class="brand-base" width="32" height="32" rx="8"/>
+          <rect width="32" height="32" rx="8" fill="url(#brand-gloss)"/>
+          <text x="16" y="21.6" text-anchor="middle">Yx</text>
+        </svg>
+      </span>
+      <span class="brand-name">Finances</span>
+    </h1>
     <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
       <button class="tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="pane-overview" data-tab="overview"><svg class="icon"><use href="#i-dashboard"/></svg>Overview</button>
       <button class="tab" id="tab-income" role="tab" aria-selected="false" aria-controls="pane-income" data-tab="income"><svg class="icon"><use href="#i-wallet"/></svg>Income</button>
@@ -61,6 +76,13 @@
       <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
     </nav>
     <div class="top-right">
+      <div class="share-control hidden" id="share-control">
+        <button id="share-button" class="share-button" type="button" aria-haspopup="dialog" aria-expanded="false"
+          title="Share a read-only copy of this dashboard over your Wi-Fi">
+          <svg class="icon"><use href="#i-users"/></svg><span id="share-label">Share on Wi-Fi</span>
+        </button>
+        <div class="share-popover hidden" id="share-popover" role="dialog" aria-label="Wi-Fi sharing"></div>
+      </div>
       <button id="theme-toggle" class="icon-btn" aria-label="Switch colour theme"></button>
     </div>
   </div>
@@ -156,15 +178,15 @@
 
   <section class="pane hidden" id="pane-income" role="tabpanel" aria-labelledby="tab-income">
     <div class="kpis" id="income-kpis"></div>
-    <section class="panel">
+    <section class="panel" id="salary-steps-panel">
       <div class="panel-head">
         <h2><svg class="icon"><use href="#i-up"/></svg>Salary steps</h2>
         <span class="hint">effective month and monthly gross</span>
       </div>
       <div id="salary-steps"></div>
     </section>
-    <div class="two-col">
-      <section class="panel">
+    <div class="two-col" id="income-history-grid">
+      <section class="panel" id="salary-years-panel">
         <div class="panel-head"><h2><svg class="icon"><use href="#i-calendar"/></svg>Annual income</h2><span class="hint">from your Salary sheet</span></div>
         <div id="salary-years"></div>
       </section>
@@ -173,6 +195,25 @@
         <div id="income-months"></div>
       </section>
     </div>
+    <section class="panel income-outlook-panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-target"/></svg>Income outlook</h2>
+        <span class="hint" id="income-outlook-period"></span>
+      </div>
+      <div class="income-stat-grid" id="income-stats"></div>
+      <div class="income-long-head">
+        <div>
+          <h3>Long-range forecast</h3>
+          <p>Projected annual income and total earned over each horizon</p>
+        </div>
+        <span class="income-forecast-basis">3%–7% growth range · 5% midpoint</span>
+      </div>
+      <div class="income-long-grid" id="income-long-range"></div>
+      <details class="income-methodology">
+        <summary>How this forecast is calculated</summary>
+        <div class="income-methodology-content" id="income-methodology-content"></div>
+      </details>
+    </section>
   </section>
 
   <section class="pane hidden" id="pane-insurance" role="tabpanel" aria-labelledby="tab-insurance">
@@ -242,7 +283,7 @@
       <p class="insurance-charge-note" id="insurance-charge-note"></p>
       <table class="ledger insurance-charge-table">
         <thead>
-          <tr><th>Policy or charge</th><th class="insurance-charge-count">Entries</th><th class="insurance-charge-latest">Date</th><th class="col-amt">Amount</th></tr>
+          <tr><th>Policy and cadence</th><th class="insurance-charge-latest">Last / due</th><th class="col-amt">Paid / due</th></tr>
         </thead>
         <tbody id="insurance-charge-body"></tbody>
       </table>
@@ -291,7 +332,7 @@
           <svg class="icon"><use href="#i-bike"/></svg>Foodpanda only
         </button>
         <button class="pill" id="shopee-filter" type="button" aria-pressed="false"
-          title="Show statement transactions matched to a Shopee order">
+          title="Show matched Shopee purchases, with combined statement charges split by order">
           <svg class="icon"><use href="#i-card"/></svg>Shopee only
         </button>
         <button class="pill" id="trip-filter" type="button" aria-pressed="false"
@@ -312,6 +353,7 @@
         </div>
         <div class="pills" id="owner-pills"></div>
         <select id="category-filter" aria-label="Filter by category"></select>
+        <select class="hidden" id="travel-country-filter" aria-label="Filter travel by country"></select>
         <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label>
         <div class="bank-review-controls hidden" id="bank-review-controls">
           <div class="pills bank-direction-pills" id="bank-direction-pills"
@@ -429,8 +471,8 @@
 
 <script src="js/server-lifecycle.js?v=20260812-1"></script>
 <script src="js/charts.js?v=20260812-1"></script>
-<script src="js/insights.js?v=20260904-3"></script>
+<script src="js/insights.js?v=20260905-5"></script>
 <script src="js/transaction-grouping.js?v=20260812-1"></script>
-<script src="js/app.js?v=20260904-46"></script>
+<script src="js/app.js?v=20260905-53"></script>
 </body>
 </html>

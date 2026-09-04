@@ -636,6 +636,9 @@ class AccountParserTests(ParserTestCase):
         # The existing tax and transfer rules keep working.
         self.assertEqual(parse_one.classify("GIRO IRAS INCOME TAX"), "Tax")
         self.assertEqual(parse_one.classify("Interest Credit"), "Interest")
+        self.assertEqual(
+            parse_one.classify("Inward DR - GIRO INSU 80445639 SINGAPORE LIFE LTD"),
+            "Insurance")
         self.assertEqual(parse_one.classify("PAYNOW-FAST SOMEONE ELSE"), "Transfer")
 
 
