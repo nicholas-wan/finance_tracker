@@ -135,13 +135,19 @@ only priced, non-archived appliances and are not estimates of current value.
 dates through the next 90 days, plus a collapsible list of unverified records.
 Verified appliance warranties appear when they expire within 90 days. A verified
 item with no delivery or installation date is asked for one only while its cover
-could still depend on it; once the warranty has expired or is not tracked, the
-missing date no longer counts against the record. A policy
+could still depend on it; once the warranty has expired or is not tracked, or an
+explicit warranty start date is recorded, the missing date no longer counts
+against the record. A policy
 date from an unverified document prompts a renewal check, not a coverage claim.
 Mortgage reminders use the explicit review date, or suggest the earlier of 90
 days or the recorded notice period before lock-in ends. Maintenance uses an
 explicit next date, or the last service plus the recorded interval (clamped to
-month-end). These reminders appear in the dashboard, not desktop notifications.
+month-end). A prepaid multi-visit plan (such as the three-year Happie filter
+package) is one maintenance record carrying a `schedule` of dated steps, shown
+as a single card with each step marked done, overdue, or upcoming; `linkedRecord`
+ties it to the appliance so the card borrows that item's thumbnail and the item
+view lists the schedule. These reminders appear in the dashboard, not desktop
+notifications.
 
 Home records live in Git-ignored `manual/home.json`. Saves use the server's local
 origin checks, write lock, atomic replacement and rotating backups, and reject
@@ -156,8 +162,10 @@ Home to avoid entering the same policy twice.
 The collection has three views, remembered in the browser: **List** (the
 default, one row per item grouped by category with sortable Item, Cost,
 Warranty and To-do columns), **Grid** (the cards), and **Coverage** (a timeline
-of every dated warranty on one year axis with a Today marker; dashed bars come
-from unverified documents). The left rail lists each category and, where it
+of every dated warranty on one year axis with a Today marker; bars carry the
+term length, the axis stops five years ahead so short covers stay readable and
+longer covers run off the edge with an arrow to their end year; thin lower bars
+are additional cover; dashed bars come from unverified documents). The left rail lists each category and, where it
 earns it, zones underneath (Kitchen & laundry, Living & bedrooms, Bathrooms,
 Whole home, mapped from the exact `room` on each record; longer location notes
 live in `roomDetail`). A category splits into zones only when it holds at

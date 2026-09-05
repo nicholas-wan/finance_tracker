@@ -12,15 +12,44 @@ NUMBERS = {"cost", "premium", "balance", "instalment", "rate", "noticeDays", "fr
 TEXT = {"id", "kind", "name", "status", "room", "brand", "model", "serial", "provider",
         "coverage", "cadence", "rateSchedule", "action", "sourceUrl", "sourceName",
         "notes", "transactionId", "transactionSource", "category", "funding", "costBasis",
-        "warrantyTerms", "secondaryWarranty"}
+        "warrantyTerms", "secondaryWarranty", "installationType", "installationSource",
+        "linkedRecord"}
+SCHEDULE_KEYS = {"label", "due", "done", "completed"}
+
+
+def _iso_date(value):
+    try:
+        return isinstance(value, str) and date.fromisoformat(value).isoformat() == value
+    except ValueError:
+        return False
+
+
+def validate_schedule(value):
+    """A fixed list of dated steps (e.g. a prepaid multi-year filter package) on a maintenance record."""
+    if not isinstance(value, list) or len(value) > 24:
+        raise ValueError("schedule must be a list of up to 24 entries.")
+    result = []
+    for item in value:
+        if (not isinstance(item, dict) or set(item) - SCHEDULE_KEYS
+                or not isinstance(item.get("label"), str) or not item["label"].strip() or len(item["label"]) > 80
+                or not isinstance(item.get("done", False), bool) or not _iso_date(item.get("due"))
+                or (item.get("completed") and not _iso_date(item["completed"]))):
+            raise ValueError("Each schedule entry needs a label, a valid due date and a true/false done flag.")
+        entry = {"label": item["label"].strip(), "due": item["due"], "done": item.get("done", False)}
+        if item.get("completed"):
+            entry["completed"] = item["completed"]
+        result.append(entry)
+    return result
 
 
 def validate_record(record, transactions):
-    if not isinstance(record, dict) or set(record) - (DATES | NUMBERS | TEXT):
+    if not isinstance(record, dict) or set(record) - (DATES | NUMBERS | TEXT | {"schedule"}):
         raise ValueError("Invalid Home record fields.")
     result = {}
     for key, value in record.items():
-        if key in NUMBERS:
+        if key == "schedule":
+            result[key] = validate_schedule(value)
+        elif key in NUMBERS:
             if value is None or value == "":
                 continue
             if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
@@ -41,6 +70,8 @@ def validate_record(record, transactions):
             result[key] = value
     if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", result.get("id", "")):
         raise ValueError("Invalid record ID.")
+    if result.get("linkedRecord") and not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", result["linkedRecord"]):
+        raise ValueError("Invalid linked record ID.")
     if result.get("kind") not in KINDS or result.get("status") not in STATUSES:
         raise ValueError("Choose a valid record type and status.")
     if not result.get("name"):

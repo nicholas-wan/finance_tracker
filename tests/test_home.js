@@ -20,6 +20,8 @@ assert.equal(actions([{kind:'appliance',status:'Verified',warrantyStatus:'expire
 assert.equal(actions([{kind:'appliance',status:'Verified',warrantyStatus:'not_applicable'}], '2026-09-05').length,0);
 assert.equal(actions([{kind:'appliance',status:'Verified',expires:'2025-01-01',secondaryExpiry:'2029-01-01'}], '2026-09-05')[0].label,'Add delivery or installation date');
 assert.equal(needsInformation({kind:'appliance',status:'Verified',warrantyStatus:'expired'}),false);
+assert.equal(needsInformation({kind:'appliance',status:'Verified',warrantyStart:'2024-07-13',expires:'2027-07-12'},'2026-09-05'),false,'a recorded warranty start replaces the delivery date');
+assert.equal(actions([{kind:'appliance',status:'Verified',warrantyStart:'2024-07-13',expires:'2027-07-12'}], '2026-09-05').length,0);
 result=actions([{kind:'mortgage',status:'Verified',lockInEnd:'2026-12-01',noticeDays:120}], '2026-09-05');
 assert.equal(result[0].date, '2026-08-03');
 assert.equal(result[0].label, 'Suggested mortgage review');

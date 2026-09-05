@@ -65,6 +65,25 @@ class HomeTests(unittest.TestCase):
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 validate_record(dict(self.record, **changes), set())
 
+    def test_maintenance_schedule_is_validated(self):
+        base = {'id': 'home_water_dispenser_filter_package', 'kind': 'maintenance', 'name': 'Filters',
+                'status': 'Verified', 'linkedRecord': 'home_water_dispenser', 'installationType': 'Delivery',
+                'installationSource': 'Owner',
+                'schedule': [{'label': ' Year 1 of 3 ', 'due': '2026-08-29', 'done': False},
+                             {'label': 'Year 2 of 3', 'due': '2027-08-29', 'done': True, 'completed': '2027-09-01'}]}
+        saved = validate_record(base, set())
+        self.assertEqual(saved['schedule'], [{'label': 'Year 1 of 3', 'due': '2026-08-29', 'done': False},
+                                             {'label': 'Year 2 of 3', 'due': '2027-08-29', 'done': True, 'completed': '2027-09-01'}])
+        self.assertEqual(saved['linkedRecord'], 'home_water_dispenser')
+        for bad in ['not a list', [{'label': 'x'}], [{'label': 'x', 'due': '2026-13-01', 'done': False}],
+                    [{'label': 'x', 'due': '2026-08-29', 'done': 'yes'}],
+                    [{'label': 'x', 'due': '2026-08-29', 'done': False, 'extra': 1}],
+                    [{'label': 'x', 'due': '2026-08-29', 'done': True, 'completed': 'soon'}]]:
+            with self.assertRaises(ValueError):
+                validate_record(dict(base, schedule=bad), set())
+        with self.assertRaises(ValueError):
+            validate_record(dict(base, linkedRecord='../etc'), set())
+
     def test_payment_reference_does_not_mutate_statement(self):
         serve.TRANSACTIONS_PATH.write_text(json.dumps({'transactions':[{'id':'tx1','amount':150}]}))
         before = serve.TRANSACTIONS_PATH.read_bytes()
