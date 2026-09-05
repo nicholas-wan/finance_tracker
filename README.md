@@ -204,6 +204,19 @@ Bosch washer's MyBosch extended-warranty certificate) are logged in
 the `[Category] Brand Model - Document - YYYY-MM-DD.pdf` naming used in the
 Drive Warranty folder.
 
+The owner's standing decisions about what the register does and does not
+verify live in `CLAUDE.md` at the repository root, so they are loaded into
+every assistant session: serial numbers are never requested, expired
+warranties need no further verification, receipt-less housewarming gifts are
+warranty **Not tracked**, 2024 purchases with no term on their documents are
+recorded as expired under an assumed standard term, and manufacturer terms
+taken from public pages (Levoit, Omnidesk, Neakasa) are labelled
+listing-based on the record. Household purchases may be paid by either
+person, so a purchase missing from this tracker is looked up in the
+household's second clone before the owner is asked; a record notes who paid
+in `funding`. As of 5 September 2026 every item in the collection is
+Verified with a document link and a settled warranty state.
+
 The Transactions page supports period, search, category/flow, owner, direction, and
 review-status filters.
 
