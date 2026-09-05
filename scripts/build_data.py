@@ -11,6 +11,7 @@
 # Run parse_cc.py and parse_one.py first, then this.
 
 import calendar
+import itertools
 import json
 import math
 import os
@@ -457,6 +458,189 @@ def is_shopee_description(description):
 def is_trip_description(description):
     value = str(description or "").upper()
     return "TRIP.COM" in value or "TRIP COM" in value or "WWW TRIP COM" in value
+
+
+def is_klook_description(description):
+    return "KLOOK" in str(description or "").upper()
+
+
+KLOOK_STATUSES = ("confirmed", "completed", "canceled", "expired")
+# A ticket can be bought most of a year ahead of the activity and settles on
+# the card within days; nothing later than a week after the activity is it.
+KLOOK_MATCH_BEFORE_DAYS = 400
+KLOOK_MATCH_AFTER_DAYS = 7
+
+
+def prepare_klook_orders(order_data, card_rows, partner_charges=(), earliest_month=None):
+    """Validate hand-captured Klook orders and link them to statement rows.
+
+    The orders come from the account's bookings page, which shows the name,
+    package, activity date, quantity, total paid and status of every order but
+    not the day it was paid. So a charge links when exactly one payable order
+    carries its SGD amount and the charge falls inside the booking window
+    before the activity (exact); a refund when exactly one cancelled order does
+    (refund); and a charge equal to the sum of two or three payable orders for
+    the same activity date links to all of them (aggregate). Expired orders
+    were never paid and are never linked. Returns the orders, the links keyed
+    by row id, and the quality summary.
+    """
+    if not isinstance(order_data, dict) or not isinstance(order_data.get("orders", []), list):
+        raise SystemExit("manual/klook_orders.json must hold an orders list")
+    orders = []
+    for index, raw in enumerate(order_data.get("orders", []), 1):
+        label = "Klook order %d" % index
+        if not isinstance(raw, dict):
+            raise SystemExit("%s must be an object" % label)
+        name = str(raw.get("name") or "").strip()
+        if not name:
+            raise SystemExit("%s has no name" % label)
+        activity = str(raw.get("activityDate") or "").strip()
+        try:
+            datetime.strptime(activity, "%Y-%m-%d")
+        except ValueError:
+            raise SystemExit("%s has an invalid activityDate %r" % (label, raw.get("activityDate")))
+        amount = raw.get("amount")
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) \
+                or not math.isfinite(amount) or amount < 0:
+            raise SystemExit("%s has an invalid amount %r" % (label, amount))
+        currency = str(raw.get("currency") or "SGD").strip().upper()
+        if not re.fullmatch(r"[A-Z]{3}", currency):
+            raise SystemExit("%s has an invalid currency" % label)
+        status = str(raw.get("status") or "").strip().lower()
+        if status not in KLOOK_STATUSES:
+            raise SystemExit("%s has an unexpected status %r" % (label, raw.get("status")))
+        for field in ("package", "quantity", "note"):
+            if raw.get(field) is not None and not isinstance(raw.get(field), str):
+                raise SystemExit("%s %s must be text" % (label, field))
+        orders.append({
+            "name": name,
+            "package": str(raw.get("package") or "").strip(),
+            "activityDate": activity,
+            "quantity": str(raw.get("quantity") or "").strip(),
+            "amount": round(float(amount), 2),
+            "currency": currency,
+            "status": status,
+            "note": str(raw.get("note") or "").strip(),
+        })
+
+    def cents(value):
+        return int(round(float(value) * 100))
+
+    def in_window(row_date, activity):
+        try:
+            gap = (datetime.strptime(activity, "%Y-%m-%d")
+                   - datetime.strptime(str(row_date), "%Y-%m-%d")).days
+        except (TypeError, ValueError):
+            return False
+        return -KLOOK_MATCH_AFTER_DAYS <= gap <= KLOOK_MATCH_BEFORE_DAYS
+
+    candidates = []
+    for row in list(card_rows) + list(partner_charges):
+        if not is_klook_description(row.get("description")):
+            continue
+        refund = bool(row.get("credit")) or row.get("type") == "refund"
+        candidates.append({
+            "id": row["id"], "date": row.get("date"), "amount": row.get("amount"), "refund": refund,
+        })
+
+    payable = [
+        order for order in orders
+        if order["currency"] == "SGD" and order["status"] != "expired" and order["amount"] > 0
+    ]
+    matches = {}
+    used_charge = set()
+    used_refund = set()
+    for cand in candidates:
+        if cand["refund"]:
+            continue
+        options = [
+            i for i, order in enumerate(payable)
+            if cents(order["amount"]) == cents(cand["amount"]) and in_window(cand["date"], order["activityDate"])
+        ]
+        rivals = [
+            other for other in candidates
+            if not other["refund"] and cents(other["amount"]) == cents(cand["amount"])
+            and any(in_window(other["date"], payable[i]["activityDate"]) for i in options)
+        ]
+        if len(options) == 1 and len(rivals) == 1:
+            used_charge.add(options[0])
+            matches[cand["id"]] = {
+                "kind": "exact", "orders": [payable[options[0]]],
+                "note": "The order total uniquely matches this Klook charge.",
+            }
+    for cand in candidates:
+        if not cand["refund"]:
+            continue
+        options = [
+            i for i, order in enumerate(payable)
+            if order["status"] == "canceled" and cents(order["amount"]) == cents(cand["amount"])
+            and in_window(cand["date"], order["activityDate"])
+        ]
+        rivals = [
+            other for other in candidates
+            if other["refund"] and cents(other["amount"]) == cents(cand["amount"])
+        ]
+        if len(options) == 1 and len(rivals) == 1:
+            used_refund.add(options[0])
+            matches[cand["id"]] = {
+                "kind": "refund", "orders": [payable[options[0]]],
+                "note": "The refund equals the cancelled order's total.",
+            }
+    for cand in candidates:
+        if cand["refund"] or cand["id"] in matches:
+            continue
+        free = [
+            i for i, order in enumerate(payable)
+            if i not in used_charge and in_window(cand["date"], order["activityDate"])
+        ]
+        found = []
+        for size in (2, 3):
+            for combo in itertools.combinations(free, size):
+                if len({payable[i]["activityDate"] for i in combo}) != 1:
+                    continue
+                if sum(cents(payable[i]["amount"]) for i in combo) == cents(cand["amount"]):
+                    found.append(combo)
+        if len(found) == 1:
+            used_charge.update(found[0])
+            matches[cand["id"]] = {
+                "kind": "aggregate", "orders": [payable[i] for i in found[0]],
+                "note": "The charge equals the sum of %d Klook orders for the same day." % len(found[0]),
+            }
+    # An order older than the first statement cannot be awaiting one.
+    def before_statements(order):
+        return bool(earliest_month) and order["activityDate"][:7] < earliest_month
+    awaiting = [
+        {"name": order["name"], "activityDate": order["activityDate"],
+         "amount": order["amount"], "status": order["status"]}
+        for i, order in enumerate(payable)
+        if order["status"] in ("confirmed", "completed") and i not in used_charge
+        and not before_statements(order)
+    ]
+    stats = {
+        "orders": len(orders),
+        "payable": len(payable),
+        "expired": sum(1 for order in orders if order["status"] == "expired"),
+        "matchedCharges": sum(1 for match in matches.values() if match["kind"] != "refund"),
+        "matchedRefunds": sum(1 for match in matches.values() if match["kind"] == "refund"),
+        "matchedOrders": len(used_charge),
+        "beforeStatements": sum(1 for order in payable if before_statements(order)),
+        "awaiting": awaiting,
+    }
+    return orders, matches, stats
+
+
+def attach_klook(record, match, name_allowed):
+    """Put a Klook link on a published row. The order name is derived
+    evidence like a Trip.com product name, so it carries its own source."""
+    orders = match["orders"]
+    if name_allowed:
+        names = list(dict.fromkeys(order["name"] for order in orders))
+        record["displayName"] = names[0] if len(names) == 1 else "%d Klook orders" % len(orders)
+        record["displayNameSource"] = "klook-order"
+    record["klookOrder"] = orders[0]
+    if len(orders) > 1:
+        record["klookOrders"] = orders
+    record["klookMatch"] = {"kind": match["kind"], "note": match["note"]}
 
 
 def prepare_shopee_orders(order_data, card_rows):
@@ -1584,6 +1768,16 @@ def main():
         rows,
         manual("trip_booking_reconciliation.json", {"links": []}),
     )
+    partner_travel = prepare_partner_travel(manual("partner_travel.json", {}))
+    # Klook orders belong to this account, so a charge on the other person's
+    # card can be one of them too; both sets are linked in one pass so an
+    # amount is never claimed twice.
+    klook_orders, klook_by_transaction, klook_stats = prepare_klook_orders(
+        manual("klook_orders.json", {"orders": []}), rows, partner_travel["charges"],
+        min((r["month"] for r in rows), default=None))
+    for charge in partner_travel["charges"]:
+        if charge["id"] in klook_by_transaction:
+            attach_klook(charge, klook_by_transaction[charge["id"]], not charge.get("displayName"))
     grab_source, grab_history_stats = merge_grab_web_history(
         manual("grab_receipts.json", {"receipts": []}),
         manual("grab_web_history.json", {"fields": [], "records": []}),
@@ -1779,6 +1973,8 @@ def main():
                 "kind": trip_match_kind,
                 "note": trip_match_note,
             }
+        if r["id"] in klook_by_transaction:
+            attach_klook(record, klook_by_transaction[r["id"]], not trip_booking)
         # A hand-set destination for a travel charge whose descriptor names
         # only the platform's billing entity; the dashboard reads it before
         # its own inference.
@@ -1861,7 +2057,6 @@ def main():
     months = sorted({t["month"] for t in transactions})
     salary = manual("salary.json", {})
     sales = manual("game_sales.json", {}).get("sales", [])
-    partner_travel = prepare_partner_travel(manual("partner_travel.json", {}))
     settlements = manual("settlements.json", {"openingBalances": []})
     # Only the two fields the dashboard actually reads are published. The
     # holder's name and the fixed-deposit account numbers stay in manual/,
@@ -2041,6 +2236,7 @@ def main():
             ),
         },
         "trip": trip_stats,
+        "klook": klook_stats,
         "grab": {
             "receipts": len(grab_receipts),
             "webHistoryRecords": grab_history_stats["records"],
@@ -2130,6 +2326,9 @@ def main():
              100.0 * other / max(len(transactions), 1)))
     print("Owner: %d by stable ID, %d from legacy exact tags, %d from merchant rules, %d untagged"
           % (tagged_id, tagged_exact, tagged_rule, untagged))
+    print("Klook orders %d (%d expired): %d charges and %d refunds linked, %d paid orders awaiting a statement"
+          % (klook_stats["orders"], klook_stats["expired"], klook_stats["matchedCharges"],
+             klook_stats["matchedRefunds"], len(klook_stats["awaiting"])))
     print("Partner travel charges %d paid by %s"
           % (len(partner_travel["charges"]), partner_travel["paidBy"] or "nobody"))
     print("Salary steps %d, annual rows %d, game sales %d"

@@ -157,6 +157,16 @@
     }
     return transaction.tripBooking ? [transaction.tripBooking] : [];
   }
+  function klookOrdersFor(transaction) {
+    if (Array.isArray(transaction.klookOrders) && transaction.klookOrders.length) {
+      return transaction.klookOrders;
+    }
+    return transaction.klookOrder ? [transaction.klookOrder] : [];
+  }
+  function klookStatusLabel(status) {
+    return { confirmed: "Booking confirmed", completed: "Booking completed",
+      canceled: "Booking cancelled", expired: "Booking expired" }[status] || status || "";
+  }
   function shopeeOrdersFor(transaction) {
     if (Array.isArray(transaction.shopeeOrders) && transaction.shopeeOrders.length) {
       return transaction.shopeeOrders;
@@ -1053,6 +1063,11 @@
         (countryGuessed(t) ? " (guessed from the trip dates)" : "")));
     }
     if (t.foreign) meta.appendChild(drawerMetaRow("Foreign amount", t.foreign));
+    klookOrdersFor(t).forEach(function (order) {
+      meta.appendChild(drawerMetaRow("Klook order", order.name +
+        (order.activityDate ? " \u00b7 " + dateLabel(order.activityDate) : "") +
+        " \u00b7 " + klookStatusLabel(order.status)));
+    });
     meta.appendChild(drawerMetaRow("Original description", t.description));
     meta.appendChild(drawerMetaRow("Statement", statementLabel(t.month) + " on " + t.paidBy + "'s card"));
     var source = (data.partnerTravel && data.partnerTravel.source) || {};
@@ -1093,6 +1108,14 @@
         transactionTripBookings.length === 1 ? "Trip.com booking" : "Trip.com bookings"));
       if (transactionTripBookings.some(isCancelledTripBooking)) {
         summaryTags.appendChild(el("span", "source-badge cancelled-source", "Cancelled booking"));
+      }
+    }
+    var transactionKlookOrders = klookOrdersFor(t);
+    if (transactionKlookOrders.length) {
+      summaryTags.appendChild(el("span", "source-badge trip-source",
+        transactionKlookOrders.length === 1 ? "Klook order" : "Klook orders"));
+      if (transactionKlookOrders.some(function (order) { return order.status === "canceled"; })) {
+        summaryTags.appendChild(el("span", "source-badge cancelled-source", "Cancelled order"));
       }
     }
     if (t.grab) {
@@ -1190,6 +1213,31 @@
         (t.tripMatch && t.tripMatch.note) ||
         "The booking evidence was reconciled to this statement row."));
       body.appendChild(tripEvidence);
+    }
+    if (transactionKlookOrders.length) {
+      var klookEvidence = el("section", "drawer-section trip-evidence");
+      klookEvidence.appendChild(el("h3", "",
+        transactionKlookOrders.length === 1 ? "Klook order" : "Klook orders"));
+      transactionKlookOrders.forEach(function (order, index) {
+        if (transactionKlookOrders.length > 1) {
+          klookEvidence.appendChild(el("h4", "drawer-subheading",
+            "Order " + (index + 1) + " of " + transactionKlookOrders.length));
+        }
+        var klookMeta = el("div", "drawer-meta");
+        klookMeta.appendChild(drawerMetaRow("Activity", order.name));
+        if (order.package) klookMeta.appendChild(drawerMetaRow("Package", order.package));
+        if (order.activityDate) klookMeta.appendChild(drawerMetaRow("Activity date", dateLabel(order.activityDate)));
+        if (order.quantity) klookMeta.appendChild(drawerMetaRow("Quantity", order.quantity));
+        klookMeta.appendChild(drawerMetaRow("Status", klookStatusLabel(order.status)));
+        klookMeta.appendChild(drawerMetaRow("Order total",
+          order.currency === "SGD" || !order.currency ? fmt(order.amount)
+            : order.currency + " " + Number(order.amount).toFixed(2)));
+        if (order.note) klookMeta.appendChild(drawerMetaRow("Note", order.note));
+        klookEvidence.appendChild(klookMeta);
+      });
+      klookEvidence.appendChild(el("p", "drawer-note",
+        (t.klookMatch && t.klookMatch.note) || "The order was reconciled to this statement row."));
+      body.appendChild(klookEvidence);
     }
     if (t.grab && Array.isArray(t.grab.receipts)) {
       t.grab.receipts.forEach(function (receipt, index) {
@@ -5966,6 +6014,23 @@
       payer: state.travelPayer,
       onSelect: function (trip) { openTripInTransactions(trip); }
     });
+    // Orders paid on Klook that no statement row explains yet: a later
+    // statement, another card, or KlookCash.
+    var awaiting = ((data.quality || {}).klook || {}).awaiting || [];
+    if (awaiting.length && state.travelPayer === "All") {
+      var box = el("div", "klook-awaiting");
+      box.appendChild(el("strong", "", awaiting.length + " Klook order" + (awaiting.length === 1 ? "" : "s") +
+        " paid but not yet on a statement"));
+      awaiting.slice().sort(function (a, b) { return b.activityDate.localeCompare(a.activityDate); })
+        .forEach(function (order) {
+          var line = el("div", "klook-awaiting-row");
+          line.appendChild(el("span", "", order.name));
+          line.appendChild(el("span", "muted", dateLabel(order.activityDate)));
+          line.appendChild(el("strong", "", fmt(order.amount)));
+          box.appendChild(line);
+        });
+      tripsWrap.appendChild(box);
+    }
   }
 
   function renderTravel() {
@@ -6521,6 +6586,17 @@
           t.type === "refund" ? "Refund of charge" : "Refunded in full"));
       }
       // Phones hide the Remarks column; a saved remark still shows here.
+      var rowKlookOrders = klookOrdersFor(t);
+      if (rowKlookOrders.length) {
+        tdDesc.appendChild(el("small", "purchase-description-secondary",
+          "Klook \u00b7 " + (rowKlookOrders.length > 1
+            ? rowKlookOrders.length + " orders"
+            : klookStatusLabel(rowKlookOrders[0].status)) +
+          (t.klookMatch ? " \u00b7 " + (t.klookMatch.kind === "refund" ? "Refund matched" : "Order matched") : "")));
+        if (rowKlookOrders.some(function (order) { return order.status === "canceled"; })) {
+          tdDesc.appendChild(el("span", "source-badge cancelled-source", "Cancelled"));
+        }
+      }
       if (t.remark) tdDesc.appendChild(el("small", "row-remark-inline", t.remark));
       if (t.paidBy) {
         // Phones hide the Owner column, so who paid also reads here.

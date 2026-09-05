@@ -381,6 +381,64 @@ TRIP_DETAIL_FIELDS = (
 )
 
 
+def validate_klook(manual_data, output, final_by_id, errors):
+    """Every Klook order on a published row must exist in the manual file,
+    match the row's amount and direction, and be used no more often than it
+    exists; expired orders link to nothing."""
+    source = manual_data.get("orders") if isinstance(manual_data, dict) else None
+    rows = list(output.get("transactions", [])) + list((output.get("partnerTravel") or {}).get("charges", []))
+    carriers = [row for row in rows if isinstance(row, dict) and row.get("klookOrder")]
+    quality = output.get("quality", {}).get("klook")
+    if not source and not carriers and quality is None:
+        return
+    if not isinstance(source, list):
+        errors.append("manual Klook orders must be a list")
+        return
+
+    def key(order):
+        try:
+            amount = int(round(float(order.get("amount")) * 100))
+        except (TypeError, ValueError):
+            amount = None
+        return (str(order.get("name") or "").strip(), amount,
+                str(order.get("activityDate") or "").strip(),
+                str(order.get("status") or "").strip().lower())
+
+    available = {}
+    for order in source:
+        if isinstance(order, dict):
+            available[key(order)] = available.get(key(order), 0) + 1
+    used = {}
+    for row in carriers:
+        tx_id = row.get("id")
+        orders = row.get("klookOrders") or [row["klookOrder"]]
+        if "KLOOK" not in str(row.get("description") or "").upper():
+            errors.append("transaction %s carries a Klook order but is not a Klook charge" % tx_id)
+        refund = row.get("type") == "refund"
+        total = 0
+        for order in orders:
+            item = key(order)
+            if available.get(item, 0) == 0:
+                errors.append("transaction %s carries a Klook order that is not in manual/klook_orders.json" % tx_id)
+                continue
+            if item[3] == "expired":
+                errors.append("transaction %s is linked to an expired Klook order" % tx_id)
+            if refund and item[3] != "canceled":
+                errors.append("transaction %s refund is linked to a Klook order that was not cancelled" % tx_id)
+            bucket = (item, "refund" if refund else "charge")
+            used[bucket] = used.get(bucket, 0) + 1
+            if used[bucket] > available[item]:
+                errors.append("Klook order %r is linked to more %ss than exist" % (item[0], bucket[1]))
+            total += item[1] or 0
+        try:
+            if int(round(float(row.get("amount")) * 100)) != total:
+                errors.append("transaction %s amount does not equal its Klook order total" % tx_id)
+        except (TypeError, ValueError):
+            errors.append("transaction %s has an invalid amount" % tx_id)
+    if isinstance(quality, dict) and quality.get("orders") != len(source):
+        errors.append("Klook quality summary disagrees with the manual orders")
+
+
 def validate_partner_travel(manual_data, output, final_by_id, errors):
     """Copied partner charges must match their manual source and stay outside
     the transactions list, so nothing of the other person's leaks into totals."""
@@ -793,6 +851,8 @@ def main():
         os.path.join(MANUAL_DIR, "game_sales.json"), {"sales": []})
     partner_travel_data = load_optional(
         os.path.join(MANUAL_DIR, "partner_travel.json"), {})
+    klook_data = load_optional(
+        os.path.join(MANUAL_DIR, "klook_orders.json"), {"orders": []})
     owner_rules_data = load_optional(
         os.path.join(MANUAL_DIR, "owner_rules.json"), {"rules": {}, "confirmed": []})
     manual_settlements = load_optional(
@@ -924,6 +984,7 @@ def main():
     )
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
     validate_partner_travel(partner_travel_data, output, final_by_id, errors)
+    validate_klook(klook_data, output, final_by_id, errors)
     if (os.path.exists(insurance_path) or "insurance" in output) and \
             output.get("insurance") != prepare_insurance(insurance_data):
         errors.append("published insurance data does not match the manual source")

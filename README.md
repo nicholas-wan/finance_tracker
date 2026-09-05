@@ -248,6 +248,21 @@ review-status filters.
   own line in the summary and footer, outside your net cost; the grouped view
   leaves them out. Re-run the import after Nic's tracker rebuilds, then
   `python scripts/import_all.py`.
+- Klook orders: `manual/klook_orders.json` (Git-ignored) is captured by hand
+  from the account's bookings page at klook.com/bookings, one entry per order
+  with `name`, `package`, `activityDate`, `quantity`, `amount`, `currency` and
+  `status` (`confirmed`, `completed`, `canceled` or `expired`). The build links
+  a Klook statement charge to the one payable order with exactly its SGD
+  amount whose activity falls within 400 days after the charge, a refund to
+  the one cancelled order with its amount, and a charge equal to the sum of
+  two or three orders for the same activity day to all of them; expired
+  orders were never paid and link to nothing. A linked row is named after the
+  order (its own source, so an edited display name still wins), the drawer
+  shows the order, the ledger notes the booking status, the order's activity
+  day anchors the charge to its trip, and its name feeds the destination
+  inference. Orders on the other person's card link the same way. Paid orders
+  no statement explains yet are listed under the Trips panel on the Travel
+  tab. The validator checks every published link against the file.
 - Selecting the **Travel** category (or the Travel card on the Overview) adds a
   row of country/region pills with all-time counts, replaces the ordinary
   category and owner summary with a year-by-country/region breakdown, offers

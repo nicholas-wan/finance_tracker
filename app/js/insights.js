@@ -26,9 +26,9 @@ window.Insights = (function () {
     ["Hong Kong", /HONG KONG|\bHKG\b/i],
     ["Taiwan", /TAIWAN|TAIPEI|\bTPE\b|\bKHH\b/i],
     ["Macau", /MACAU|MACAO|\bMFM\b/i],
-    ["China", /\b(?:PVG|CAN|TFU)\b|SHANGHAI|BEIJING|SHENZHEN|GUANGZHOU|CHENGDU|ZHANGJIAJIE|HAIKOU|HANGZHOU|WUXI|ZHONGSHAN|CHIMELONG|TOY STORY HOTEL/i],
+    ["China", /\b(?:PVG|CAN|TFU)\b|SHANGHAI|BEIJING|SHENZHEN|GUANGZHOU|CHENGDU|ZHANGJIAJIE|HAIKOU|HANGZHOU|WUXI|ZHONGSHAN|CHIMELONG|TOY STORY HOTEL|JIUZHAIGOU|HUANGLONG|SICHUAN|TIANMEN/i],
     ["South Korea", /YEOUIDO|SEOUL|SOUTH KOREA|\b(?:ICN|GMP)\b/i],
-    ["Japan", /SARDONYX|\bUENO\b|MIYAJIMA|NARITA|SUNSHINE AQUARIUM|TOKYO|JAPAN|\b(?:NRT|HND|KIX|HIJ)\b/i],
+    ["Japan", /SARDONYX|\bUENO\b|MIYAJIMA|NARITA|SUNSHINE AQUARIUM|TOKYO|JAPAN|KYOTO|NAGOYA|OSAKA|HIROSHIMA|SHINKANSEN|NOZOMI|KAIYUKAN|SUICA|SKYLINER|MIRAIKAN|\b(?:NRT|HND|KIX|HIJ)\b/i],
     ["Canada", /NIAGARA|TORONTO|ONTARIO|RIPLEYSCANA|CANADA|\bYYZ\b/i],
     ["United States", /BOSTON|BUFFALO|WILMINGTON|UNITED STATES|\bUSA\b|\b(?:BOS|BUF)\b/i],
     ["Australia", /AUSTRALIANETA|SYDNEY|TARONGA|AUSTRALIA|\bSYD\b/i],
@@ -69,7 +69,9 @@ window.Insights = (function () {
     ["Zhongshan", /ZHONGSHAN/i],
     ["Seoul", /SEOUL|YEOUIDO|\b(?:ICN|GMP)\b/i],
     ["Tokyo", /TOKYO|NARITA|\bUENO\b|SUNSHINE AQUARIUM|\b(?:NRT|HND)\b/i],
-    ["Osaka", /OSAKA|\bKIX\b/i],
+    ["Osaka", /OSAKA|\bKIX\b|KAIYUKAN/i],
+    ["Kyoto", /KYOTO/i],
+    ["Nagoya", /NAGOYA/i],
     ["Hiroshima", /HIROSHIMA|MIYAJIMA|\bHIJ\b|SARDONYX/i],
     ["Toronto", /TORONTO|ONTARIO|\bYYZ\b/i],
     ["Niagara Falls", /NIAGARA|RIPLEYSCANA/i],
@@ -87,12 +89,20 @@ window.Insights = (function () {
     ["Bangkok", /BANGKOK|\b(?:BKK|DMK)\b/i],
     ["Bali", /\bBALI\b|DENPASAR|\bDPS\b/i]
   ];
+  function klookOrdersOf(transaction) {
+    if (Array.isArray(transaction.klookOrders) && transaction.klookOrders.length) {
+      return transaction.klookOrders;
+    }
+    return transaction.klookOrder ? [transaction.klookOrder] : [];
+  }
   function travelEvidence(transaction) {
     var bookings = Array.isArray(transaction.tripBookings) && transaction.tripBookings.length
       ? transaction.tripBookings : transaction.tripBooking ? [transaction.tripBooking] : [];
     return bookings.map(function (booking) {
       return [booking.productName, booking.productType].filter(Boolean).join(" ");
-    }).concat([
+    }).concat(klookOrdersOf(transaction).map(function (order) {
+      return [order.name, order.package].filter(Boolean).join(" ");
+    })).concat([
       transaction.displayName,
       transaction.description
     ]).filter(Boolean).join(" ");
@@ -228,8 +238,13 @@ window.Insights = (function () {
     });
     if (types.indexOf("Flights") !== -1) return "Flights";
     if (types.indexOf("Hotels") !== -1) return "Hotels";
-    if (types.length) return "Tickets & transfers";
+    if (types.length || klookOrdersOf(transaction).length) return "Tickets & transfers";
     return "On the ground";
+  }
+  // A Klook order names its activity day, which anchors the charge to the
+  // trip the way a Trip.com travel date does.
+  function klookWindow(order) {
+    return order && order.activityDate ? { start: order.activityDate, end: order.activityDate } : null;
   }
 
   // A "confirmed" charge is money that actually left: a debit that no
@@ -248,7 +263,10 @@ window.Insights = (function () {
     return transaction.type === "debit" && !hidden[transaction.id];
   }
   function hasConfirmedBooking(transaction) {
-    return bookingsOf(transaction).some(function (booking) { return !isCancelledBooking(booking); });
+    return bookingsOf(transaction).some(function (booking) { return !isCancelledBooking(booking); }) ||
+      klookOrdersOf(transaction).some(function (order) {
+        return order.status === "confirmed" || order.status === "completed";
+      });
   }
   function confirmedTravelCharges(transactions) {
     var hidden = reversedIds(transactions);
@@ -270,7 +288,8 @@ window.Insights = (function () {
     (transactions || []).forEach(function (transaction) {
       if (!transaction || !transaction.date) return;
       if (transaction.category === "Travel") {
-        var windows = bookingsOf(transaction).map(travelWindow).filter(Boolean);
+        var windows = bookingsOf(transaction).map(travelWindow)
+          .concat(klookOrdersOf(transaction).map(klookWindow)).filter(Boolean);
         var start = transaction.date, end = transaction.date;
         if (windows.length) {
           start = windows.map(function (w) { return w.start; }).sort()[0];

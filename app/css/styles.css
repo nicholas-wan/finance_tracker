@@ -914,6 +914,16 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .trip-split { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
 .trip-split .transaction-breakdown-row { grid-template-columns: 108px minmax(30px, 1fr) 60px; min-height: 18px; }
 .trips-more { margin: 10px 0 0; color: var(--text-3); font-size: var(--fs-caption); }
+.klook-awaiting {
+  margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px;
+  font-size: var(--fs-caption); color: var(--text-2);
+}
+.klook-awaiting > strong { display: block; margin-bottom: 4px; color: var(--text); }
+.klook-awaiting-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; padding: 3px 0;
+}
+.klook-awaiting-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.klook-awaiting-row .muted { color: var(--text-3); white-space: nowrap; }
 .cat-row.actionable { border-radius: 6px; padding: 2px 5px; margin: -2px -5px; }
 .cat-row.actionable:hover { background: var(--surface-2); }
 .travel-country-inline {

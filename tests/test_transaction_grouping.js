@@ -1267,6 +1267,13 @@ test("builds trips from booking travel dates and gathers the spend around them",
       description: "Klook Travel Singapore" }),
     travel({ id: "kkday", date: "2025-08-28", month: "2025-08", amount: 60,
       description: "KKDAY SINGAPORE" }),
+    // A Klook order charged a month early: the activity day anchors it to
+    // the trip, its name says where, and it counts as a booking.
+    travel({ id: "show", date: "2026-02-20", month: "2026-02", amount: 120,
+      description: "Klook Travel Singapore", klookOrder: {
+        name: "Shanghai Acrobatics Show", package: "Regular seat",
+        activityDate: "2026-03-20", amount: 120, currency: "SGD", status: "confirmed"
+      } }),
     // A separate journey later in the year.
     travel({ id: "tokyo", date: "2026-06-01", month: "2026-06", amount: 80,
       description: "TOKYO DISNEY RESORT" }),
@@ -1291,22 +1298,24 @@ test("builds trips from booking travel dates and gathers the spend around them",
   assert.equal(china.end, "2026-03-23");
   assert.equal(china.days, 9);
   assert.deepEqual(Array.from(china.ids).sort(),
-    ["cancelled", "dinner", "flight", "hotel", "klook", "metro", "nic_dinner", "nic_flight", "refund", "visa"]);
+    ["cancelled", "dinner", "flight", "hotel", "klook", "metro", "nic_dinner", "nic_flight", "refund", "show", "visa"]);
   assert.deepEqual(Array.from(china.guessedIds), ["klook"]);
-  assert.equal(china.rowCount, 8);
-  assert.equal(china.count, 6);
-  assert.equal(china.total, 1450);
-  assert.equal(china.bookings, 2);
+  assert.equal(china.rowCount, 9);
+  assert.equal(china.count, 7);
+  assert.equal(china.total, 1570);
+  assert.equal(china.bookings, 3);
+  assert.equal(insights.travelCountry(rows.find(function (r) { return r.id === "show"; })), "China");
+  assert.equal(insights.travelCity(rows.find(function (r) { return r.id === "show"; })), "Shanghai");
   assert.equal(china.partnerTotal, 515);
   assert.equal(china.partnerCount, 2);
   assert.equal(china.paidBy, "Nic");
   assert.equal(insights.confirmedTravelCharges(rows).map(function (t) { return t.id; }).sort().join(","),
-    "flight,hotel,kkday,klook,metro,narita,tokyo,visa");
+    "flight,hotel,kkday,klook,metro,narita,show,tokyo,visa");
   assert.equal(china.anchored, true);
-  assert.equal(china.total, 1450);
-  assert.equal(china.perDay, Math.round(1450 / 9 * 100) / 100);
+  assert.equal(china.total, 1570);
+  assert.equal(china.perDay, Math.round(1570 / 9 * 100) / 100);
   assert.deepEqual(JSON.parse(JSON.stringify(china.split)), {
-    "Flights": 1000, "Hotels": 300, "Tickets & transfers": 0, "On the ground": 150
+    "Flights": 1000, "Hotels": 300, "Tickets & transfers": 120, "On the ground": 150
   });
 });
 
