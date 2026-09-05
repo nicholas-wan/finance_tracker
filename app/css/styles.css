@@ -875,6 +875,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .partner-desc small { display: block; color: var(--text-3); font-size: var(--fs-micro); white-space: normal; }
 .partner-amt { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .partner-amt.credit { color: var(--green); }
+.travel-payer-pills { align-items: center; margin-bottom: 2px; }
+.pill-group-label { color: var(--text-3); font-size: var(--fs-small); margin-right: 2px; }
 .partner-owner {
   display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: var(--fs-micro);
   font-weight: 650; letter-spacing: 0.02em; color: var(--accent); background: var(--accent-soft);

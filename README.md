@@ -224,6 +224,11 @@ review-status filters.
   reversed, and a booking that was not cancelled. Each card and bar opens the
   Transactions tab already filtered; a country bar keeps the year the tab was
   showing.
+- A **Paid by** filter at the top of the Travel tab (Everyone, Yx, Nic;
+  shown once another person's charges exist) chooses whose money the tab
+  reads: Yx hides the other person's card, panel and annotations; Nic shows
+  only trips carrying Nic's charges, with his totals on the cards and his
+  charges in the bars.
 - Charges the other tracker paid for shared travel appear on the Travel tab
   too. `python scripts/import_partner_travel.py` copies every Travel row and
   every foreign-currency everyday row from the Nic tracker's published

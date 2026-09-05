@@ -76,6 +76,9 @@
     // Year pill on the Travel tab's trip list. Empty until the first render,
     // which picks the latest year; "All" lists every year.
     travelTripYear: "",
+    // Payer pill on the Travel tab: "All", the tracker's owner, or the other
+    // person whose charges were copied in.
+    travelPayer: "All",
     ledgerLimit: LEDGER_CAP,
     period: { mode: "month", year: null, month: null }
   };
@@ -1888,6 +1891,9 @@
     return window.Insights.travelCountry(t) === "Unknown" && Boolean(tripCatalogue().guesses[t.id]);
   }
 
+  // The name this tracker's own charges belong to, for the payer pills.
+  var OWN_NAME = "Yx";
+
   // Charges the other tracker paid for shared travel, each stamped with who
   // paid so the trip builder keeps their money apart from this tracker's.
   function partnerRows() {
@@ -1990,8 +1996,20 @@
     var year = options.year || "All";
     function inYear(trip) { return year === "All" || trip.start.slice(0, 4) === year; }
     function isOnly(trip) { return !options.only || trip.key === options.only; }
-    var listed = catalogue.listed.filter(inCountry).filter(inYear).filter(isOnly);
-    var rest = options.only ? [] : catalogue.rest.filter(inCountry).filter(inYear);
+    // With a payer chosen, a trip is listed only if that person's money is
+    // in it, and its figures are theirs.
+    var payer = options.payer || "All";
+    var partnerView = payer !== "All" && payer !== OWN_NAME;
+    function forPayer(trip) {
+      if (payer === "All") return true;
+      if (partnerView) return trip.partnerTotal >= 0.5 && trip.paidBy === payer;
+      return trip.total >= 0.5;
+    }
+    var pool = partnerView
+      ? catalogue.all.filter(function (trip) { return trip.partnerTotal >= 0.5; })
+      : catalogue.listed;
+    var listed = pool.filter(inCountry).filter(inYear).filter(isOnly).filter(forPayer);
+    var rest = options.only || partnerView ? [] : catalogue.rest.filter(inCountry).filter(inYear).filter(forPayer);
 
     if (!listed.length) {
       wrap.appendChild(emptyState("No trips yet",
@@ -2012,7 +2030,9 @@
       if (group !== shownGroup) {
         shownGroup = group;
         var groupTrips = listed.filter(function (other) { return groupOf(other) === group; });
-        var groupTotal = groupTrips.reduce(function (total, other) { return total + other.total; }, 0);
+        var groupTotal = groupTrips.reduce(function (total, other) {
+          return total + (partnerView ? other.partnerTotal : other.total);
+        }, 0);
         var divider = el("div", "trip-year-head");
         divider.appendChild(el("strong", "", group));
         divider.appendChild(el("span", "", groupTrips.length + " trip" + (groupTrips.length === 1 ? "" : "s") +
@@ -2027,6 +2047,20 @@
       title.appendChild(document.createTextNode(label));
       if (trip.countries.length > 1) title.title = trip.countries.join(", ");
       card.appendChild(title);
+      if (partnerView) {
+        // The other person's card: their total, no split (the split is the
+        // owner's money) and no comparison with the owner's median day.
+        card.appendChild(el("p", "value", fmt0(trip.partnerTotal)));
+        card.appendChild(el("p", "delta", tripDateRange(trip) + " \u00b7 " +
+          trip.days + (trip.days === 1 ? " day" : " days") + " \u00b7 paid by " + trip.paidBy));
+        card.appendChild(el("p", "delta sub", trip.partnerCount + " confirmed charge" +
+          (trip.partnerCount === 1 ? "" : "s") + " on " + trip.paidBy + "'s card" +
+          (trip.total >= 0.5 ? " \u00b7 you paid " + fmt0(trip.total) : " \u00b7 nothing on your card")));
+        makeActionable(card, "Show the charges for " + label + ", " + tripDateRange(trip),
+          function () { options.onSelect(trip, active); });
+        cards.appendChild(card);
+        return;
+      }
       card.appendChild(el("p", "value", fmt0(trip.total)));
       card.appendChild(el("p", "delta", tripDateRange(trip) + " \u00b7 " +
         trip.days + (trip.days === 1 ? " day" : " days") + " \u00b7 " + fmt0(trip.perDay) + "/day"));
@@ -2057,7 +2091,7 @@
         split.appendChild(row);
       });
       card.appendChild(split);
-      if (Math.abs(trip.partnerTotal) >= 0.5) {
+      if (Math.abs(trip.partnerTotal) >= 0.5 && payer === "All") {
         card.appendChild(el("p", "delta partner-paid", "+ " + fmt0(trip.partnerTotal) + " paid by " +
           trip.paidBy + " \u00b7 trip cost " + fmt0(trip.total + trip.partnerTotal)));
       }
@@ -5895,6 +5929,28 @@
     pills.classList.toggle("hidden", years.length < 2);
   }
 
+  // Whose money the Travel tab is showing. Hidden until another person's
+  // charges have been copied in, since until then there is only one answer.
+  function renderTravelPayerPills(partnerName) {
+    var wrap = document.getElementById("travel-payer-pills");
+    if (!wrap) return;
+    clear(wrap);
+    wrap.classList.toggle("hidden", !partnerName);
+    if (!partnerName) return;
+    wrap.appendChild(el("span", "pill-group-label", "Paid by"));
+    [["All", "Everyone"], [OWN_NAME, OWN_NAME], [partnerName, partnerName]].forEach(function (item) {
+      var active = state.travelPayer === item[0];
+      var pill = el("button", "pill" + (active ? " active" : ""), item[1]);
+      pill.type = "button";
+      setPressed(pill, active);
+      pill.addEventListener("click", function () {
+        state.travelPayer = item[0];
+        renderTravel();
+      });
+      wrap.appendChild(pill);
+    });
+  }
+
   function renderTravelTrips(catalogue) {
     catalogue = catalogue || tripCatalogue();
     renderTripYearPills(document.getElementById("travel-trip-years"), catalogue, function (year) {
@@ -5907,6 +5963,7 @@
     renderTripCards(tripsWrap, {
       country: "All",
       year: state.travelTripYear,
+      payer: state.travelPayer,
       onSelect: function (trip) { openTripInTransactions(trip); }
     });
   }
@@ -5915,8 +5972,22 @@
     var kpis = document.getElementById("travel-kpis");
     if (!kpis) return;
     clear(kpis);
-    var rows = travelRows();
     var catalogue = tripCatalogue();
+    var partner = data.partnerTravel;
+    var partnerName = partner && partner.paidBy && partner.charges.length ? partner.paidBy : "";
+    if (state.travelPayer !== "All" && state.travelPayer !== OWN_NAME &&
+        state.travelPayer !== partnerName) {
+      state.travelPayer = "All";
+    }
+    var payer = state.travelPayer;
+    renderTravelPayerPills(partnerName);
+    // The other person's charges that a trip claimed; the rest are their
+    // everyday spending abroad, not travel of yours.
+    var claimed = {};
+    catalogue.all.forEach(function (trip) { trip.ids.forEach(function (id) { claimed[id] = true; }); });
+    var partnerTravelRows = partnerRows().filter(function (row) { return claimed[row.id]; });
+    var partnerHidden = window.FinanceGrouping.reversedPairs(partnerRows()).hidden || {};
+    var rows = payer === partnerName ? partnerTravelRows : travelRows();
     var latestYear = data.months.length ? data.months[data.months.length - 1].slice(0, 4) : "";
     var byYear = {};
     var byCountry = {};
@@ -5931,7 +6002,9 @@
     });
     // Amounts net every refund; counts are of confirmed charges only, so a
     // cancelled booking and its refund add nothing to either.
-    var confirmed = window.Insights.confirmedTravelCharges(data.transactions);
+    var confirmed = payer === partnerName
+      ? partnerTravelRows.filter(function (t) { return t.type === "debit" && !partnerHidden[t.id]; })
+      : window.Insights.confirmedTravelCharges(data.transactions);
     confirmed.forEach(function (t) {
       var country = rowCountry(t) || "Unknown";
       countryRows[country] = (countryRows[country] || 0) + 1;
@@ -5939,6 +6012,7 @@
     var allTime = Object.keys(byYear).reduce(function (total, year) { return total + byYear[year]; }, 0);
     var known = Object.keys(byCountry).filter(function (c) { return c !== "Unknown"; });
 
+    if (payer !== partnerName) {
     // The current year is partial, so it is compared with the same months
     // of the year before rather than with that whole year.
     var thisYear = byYear[latestYear] || 0;
@@ -6004,18 +6078,35 @@
       });
       kpis.appendChild(nextCard);
     }
-    var partner = data.partnerTravel;
+    }
     var partnerPaid = catalogue.all.reduce(function (total, trip) { return total + trip.partnerTotal; }, 0);
     var partnerCharges = catalogue.all.reduce(function (total, trip) { return total + trip.partnerCount; }, 0);
-    if (partner && partner.paidBy && partner.charges.length) {
-      var partnerCard = metric("Paid by " + partner.paidBy, fmt0(partnerPaid),
+    if (partnerName && payer !== OWN_NAME) {
+      var partnerCard = metric("Paid by " + partnerName, fmt0(partnerPaid),
         partnerCharges + " confirmed charge" + (partnerCharges === 1 ? "" : "s") + " on " +
-        partner.paidBy + "'s card, across every trip", null, "users");
-      makeActionable(partnerCard, "Show what " + partner.paidBy + " paid", function () {
+        partnerName + "'s card, across every trip", null, "users");
+      makeActionable(partnerCard, "Show what " + partnerName + " paid", function () {
         var panel = document.getElementById("partner-travel-panel");
         if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: "smooth", block: "start" });
       });
       kpis.appendChild(partnerCard);
+    }
+    if (payer === partnerName) {
+      // The other person's view: how many of your trips carry their money,
+      // and the most recent one that does.
+      var partnerTrips = catalogue.all.filter(function (trip) { return trip.partnerTotal >= 0.5; });
+      var partnerTripsCard = metric("Trips " + partnerName + " paid into", String(partnerTrips.length),
+        known.length + " destination" + (known.length === 1 ? "" : "s"), null, "calendar");
+      kpis.appendChild(partnerTripsCard);
+      var partnerLatest = partnerTrips.filter(function (trip) { return trip.start <= todayKey(); })[0];
+      if (partnerLatest) {
+        var partnerLatestCard = metric("Latest", fmt0(partnerLatest.partnerTotal),
+          tripLabel(partnerLatest) + " \u00b7 " + tripDateRange(partnerLatest), null, "up");
+        makeActionable(partnerLatestCard, "Show the charges for that trip", function () {
+          openTripInTransactions(partnerLatest);
+        });
+        kpis.appendChild(partnerLatestCard);
+      }
     }
     kpis.classList.toggle("kpis-five", kpis.children.length === 5);
     kpis.classList.toggle("kpis-six", kpis.children.length === 6);
@@ -6107,7 +6198,7 @@
     if (!panel) return;
     var partner = data.partnerTravel;
     var rows = partnerRows();
-    var show = Boolean(partner && partner.paidBy && rows.length);
+    var show = Boolean(partner && partner.paidBy && rows.length) && state.travelPayer !== OWN_NAME;
     panel.classList.toggle("hidden", !show);
     if (!show) return;
     document.getElementById("partner-travel-name").textContent = partner.paidBy;
