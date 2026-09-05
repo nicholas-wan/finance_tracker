@@ -251,6 +251,12 @@ generated-data rebuilds are atomic and roll back if validation fails.
 
 - Merchant category rules: `CATEGORY_RULES` in `scripts/build_data.py`
 - Salary identity and account labels: `manual/identity.json`
+- Annual income and tax: `manual/salary.json` (Git-ignored). `years` rows hold
+  the employment income and tax payable from each IRAS Notice of Assessment,
+  filed under the income year (Year of Assessment minus one), with `growth` as
+  the ratio against the previous year's income; the validator checks that
+  ratio. Optional `steps` rows record monthly gross salary changes. Row order
+  does not matter, the dashboard sorts by year.
 - Insurance policies: `manual/insurance.json` (Git-ignored). Monthly premiums are
   annualised at 12 payments; one-off investments are excluded from recurring
   totals. Matured and lapsed records remain visible for history but are excluded

@@ -1220,6 +1220,28 @@ def main():
         checked_amount(year_row.get("income"), label + " income", minimum_exclusive=0)
         if year_row.get("tax") is not None:
             checked_amount(year_row.get("tax"), label + " tax", minimum_exclusive=-1)
+        if year_row.get("growth") is not None:
+            checked_amount(year_row.get("growth"), label + " growth", minimum_exclusive=0)
+
+    # growth is a hand-entered ratio against the previous year's income. A
+    # stale one after an income correction would misreport the headline KPI,
+    # so it must agree with the two income figures it summarises.
+    income_by_year = {}
+    for year_row in salary_years:
+        if isinstance(year_row, dict) and isinstance(year_row.get("year"), int):
+            income_by_year[year_row["year"]] = year_row.get("income")
+    for year_row in salary_years:
+        if not isinstance(year_row, dict) or not isinstance(year_row.get("year"), int):
+            continue
+        year, growth = year_row["year"], year_row.get("growth")
+        income, previous = year_row.get("income"), income_by_year.get(year - 1)
+        if not all(isinstance(value, (int, float)) and not isinstance(value, bool)
+                   for value in (growth, income, previous)):
+            continue
+        if previous > 0 and abs(growth - income / previous) > 0.001:
+            errors.append(
+                "salary year %d growth %.4f disagrees with income %.2f / %.2f = %.4f"
+                % (year, growth, income, previous, income / previous))
 
     sales = game_sales_data.get("sales")
     if not isinstance(sales, list):

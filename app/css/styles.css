@@ -640,6 +640,7 @@ table.mini th { text-align: left; font-size: var(--fs-caption); font-weight: 500
 table.mini td { padding: 8px 6px; border-bottom: 1px solid var(--border); }
 table.mini .num { text-align: right; font-variant-numeric: tabular-nums; }
 table.mini .pos { color: var(--green); }
+table.mini .neg { color: var(--red); }
 table.mini .strong { font-weight: 600; }
 table.mini tr.total-row td { border-bottom: none; border-top: 1px solid var(--text-3); font-weight: 600; }
 table.mini tr.settlement-opening-row td { background: var(--surface-2); color: var(--text-2); }
@@ -817,22 +818,20 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 }
 .travel-year-country-breakdown { min-width: 0; }
 .travel-year-block { margin-top: 8px; }
-.travel-year-head,
-.travel-country-row {
+.travel-year-head {
   display: flex; align-items: center; justify-content: space-between; gap: 10px;
   font-variant-numeric: tabular-nums;
-}
-.travel-year-head {
   padding-bottom: 4px; border-bottom: 1px solid var(--border);
   color: var(--text-2); font-size: var(--fs-small);
 }
-.travel-country-row {
-  min-height: 27px; padding: 3px 5px; margin: 1px -5px; border-radius: 6px;
-  color: var(--text-2); font-size: var(--fs-caption);
+.travel-year-block .transaction-breakdown-row {
+  min-height: 24px; padding: 2px 5px; margin: 0 -5px; border-radius: 6px;
 }
-.travel-country-row.actionable:hover { background: var(--surface); color: var(--text); }
-.travel-country-row strong { color: var(--text); }
-.travel-country-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.travel-year-block .transaction-breakdown-row.actionable:hover { background: var(--surface); }
+.travel-year-block .transaction-breakdown-row.active .transaction-breakdown-name {
+  color: var(--text); font-weight: 600;
+}
+.transaction-breakdown-fill.unknown { background: var(--text-3); }
 .travel-country-inline {
   display: block; margin-top: 3px; color: var(--text-3); font-size: var(--fs-micro);
   white-space: nowrap;

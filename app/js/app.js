@@ -2378,8 +2378,18 @@
     var wrap = document.getElementById("income-kpis");
     clear(wrap);
     var steps = data.salarySteps || [];
-    var years = data.salaryYears || [];
+    // The salary file is hand-maintained, so its order is not trusted: the KPI
+    // cards read the last row and the table lists the newest year first.
+    var years = (data.salaryYears || []).slice().sort(function (a, b) {
+      return a.year - b.year;
+    });
     var latest = steps[steps.length - 1];
+    function growthPercent(growth) {
+      return typeof growth === "number" && isFinite(growth) && growth > 0
+        ? (growth - 1) * 100 : null;
+    }
+    function growthLabel(pct) { return (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%"; }
+    function knownAmount(value) { return typeof value === "number" && isFinite(value); }
     var prev = steps[steps.length - 2];
     var stepPanel = document.getElementById("salary-steps-panel");
     var yearPanel = document.getElementById("salary-years-panel");
@@ -2404,11 +2414,17 @@
     }
     var lastYear = years[years.length - 1];
     if (lastYear) {
+      var lastGrowth = growthPercent(lastYear.growth);
       wrap.appendChild(metric(lastYear.year + " income", fmt0(lastYear.income),
-        lastYear.growth ? "+" + ((lastYear.growth - 1) * 100).toFixed(1) + "% on " + (lastYear.year - 1) : null,
-        null, "up"));
-      wrap.appendChild(metric(lastYear.year + " tax", fmt0(lastYear.tax),
-        ((lastYear.tax / lastYear.income) * 100).toFixed(1) + "% effective rate", null, "receipt"));
+        lastGrowth === null ? null : growthLabel(lastGrowth) + " on " + (lastYear.year - 1),
+        lastGrowth !== null && lastGrowth < 0 ? "bad" : null, "up"));
+      if (knownAmount(lastYear.tax)) {
+        wrap.appendChild(metric(lastYear.year + " tax", fmt0(lastYear.tax),
+          ((lastYear.tax / lastYear.income) * 100).toFixed(1) + "% effective rate", null, "receipt"));
+      } else {
+        wrap.appendChild(metric(lastYear.year + " tax", "—",
+          "not on the salary sheet yet", null, "receipt"));
+      }
     }
 
     // Salary step timeline
@@ -2448,9 +2464,10 @@
       var tr = document.createElement("tr");
       tr.appendChild(el("td", "", String(y.year)));
       tr.appendChild(el("td", "num", fmt0(y.income)));
-      tr.appendChild(el("td", "num " + (y.growth ? "pos" : ""),
-        y.growth ? "+" + ((y.growth - 1) * 100).toFixed(1) + "%" : "—"));
-      tr.appendChild(el("td", "num", y.tax ? fmt0(y.tax) : "—"));
+      var pct = growthPercent(y.growth);
+      tr.appendChild(el("td", "num " + (pct === null ? "" : pct >= 0 ? "pos" : "neg"),
+        pct === null ? "—" : growthLabel(pct)));
+      tr.appendChild(el("td", "num", knownAmount(y.tax) ? fmt0(y.tax) : "—"));
       table.appendChild(tr);
     });
     yearWrap.appendChild(table);
@@ -4901,36 +4918,60 @@
       byYear[year][country] = roundMoney((byYear[year][country] || 0) + signed(transaction));
     });
     var section = el("div", "transaction-breakdown travel-year-country-breakdown");
-    section.appendChild(el("span", "transaction-summary-label", "Travel by year and country / region"));
+    // The rows are already narrowed to the selected period, so say so: the
+    // default period is one statement month, not a multi-year history.
+    section.appendChild(el("span", "transaction-summary-label",
+      "Travel by country / region \u00b7 " + periodControlLabel()));
     Object.keys(byYear).sort().reverse().forEach(function (year) {
       var yearBlock = el("div", "travel-year-block");
-      var yearTotal = Object.keys(byYear[year]).reduce(function (total, country) {
-        return total + byYear[year][country];
-      }, 0);
-      var yearHead = el("div", "travel-year-head");
-      yearHead.appendChild(el("strong", "", year));
-      yearHead.appendChild(el("span", yearTotal < 0 ? "credit" : "", fmt(yearTotal)));
-      yearBlock.appendChild(yearHead);
-      Object.keys(byYear[year]).map(function (country) {
+      yearBlock.setAttribute("role", "group");
+      yearBlock.setAttribute("aria-label", "Travel in " + year);
+      var entries = Object.keys(byYear[year]).map(function (country) {
         return { country: country, amount: byYear[year][country] };
-      }).filter(function (entry) {
-        return Math.abs(entry.amount) >= 0.01;
       }).sort(function (left, right) {
         if (left.country === "Unknown") return 1;
         if (right.country === "Unknown") return -1;
         return Math.abs(right.amount) - Math.abs(left.amount);
-      }).forEach(function (entry) {
-        var row = el("div", "travel-country-row");
-        row.appendChild(el("span", "travel-country-name", entry.country));
-        row.appendChild(el("strong", entry.amount < 0 ? "credit" : "", fmt(entry.amount)));
+      });
+      var yearTotal = entries.reduce(function (total, entry) {
+        return total + entry.amount;
+      }, 0);
+      var maxAmount = entries.reduce(function (largest, entry) {
+        return Math.max(largest, Math.abs(entry.amount));
+      }, 0.01);
+      var yearHead = el("div", "travel-year-head");
+      yearHead.appendChild(el("strong", "", year));
+      yearHead.appendChild(el("span", yearTotal < 0 ? "credit" : "", fmt(yearTotal)));
+      yearBlock.appendChild(yearHead);
+      // Same bar rows as the category breakdown, so a glance shows the shares.
+      // A destination that netted to zero stays listed: it is still offered
+      // in the country filter, and hiding it here made the two disagree.
+      entries.forEach(function (entry) {
+        var active = state.travelCountry === entry.country;
+        var refunded = Math.abs(entry.amount) < 0.01;
+        var row = el("div", "transaction-breakdown-row" + (active ? " active" : ""));
+        row.appendChild(el("span", "transaction-breakdown-name", entry.country));
+        var track = el("span", "transaction-breakdown-track");
+        var fill = el("span", "transaction-breakdown-fill" +
+          (entry.amount < 0 ? " refund" : "") +
+          (entry.country === "Unknown" ? " unknown" : ""));
+        fill.style.width = Math.max(3, Math.abs(entry.amount) / maxAmount * 100) + "%";
+        track.appendChild(fill);
+        row.appendChild(track);
+        var amountNode = el("strong", entry.amount < 0 ? "credit" : "",
+          refunded ? "S$0" : fmt(entry.amount));
+        if (refunded) amountNode.title = "Charges fully refunded";
+        row.appendChild(amountNode);
         makeActionable(row, "Filter travel to " + entry.country, function () {
           state.category = "Travel";
           state.travelCountry = entry.country;
+          if (state.reviewMode !== "suspicious") state.reviewMode = null;
           state.ledgerLimit = LEDGER_CAP;
           populateTransactionCategoryFilter();
           populateTravelCountryFilter();
           renderLedger();
         });
+        setPressed(row, active);
         yearBlock.appendChild(row);
       });
       section.appendChild(yearBlock);
@@ -5429,10 +5470,11 @@
     setPressed(button, active);
     // While a review filter narrows the ledger to one statement month, offer
     // the whole history in a click: suspicious rows are rare, so the natural
-    // next question is "and across all time?".
+    // next question is "and across all time?". Travel gets the same offer,
+    // because its by-year breakdown only means something over the history.
     var filtered = state.transactionSource === "bank"
       ? state.bankReview !== "all"
-      : state.reviewMode === "suspicious";
+      : state.reviewMode === "suspicious" || state.category === "Travel";
     var viewAll = document.getElementById("view-all-filter");
     if (!viewAll) return;
     var show = filtered && state.period.mode === "month";
@@ -5573,7 +5615,11 @@
       var tdCat = el("td", "col-cat");
       tdCat.appendChild(el("span", "cat-pill " + catClass(t.category), t.category));
       var rowCountry = window.Insights.travelCountry(t);
-      if (rowCountry) tdCat.appendChild(el("small", "travel-country-inline", rowCountry));
+      // "Unknown" under every platform charge is noise; the details row and
+      // the breakdown still say so where it matters.
+      if (rowCountry && rowCountry !== "Unknown") {
+        tdCat.appendChild(el("small", "travel-country-inline", rowCountry));
+      }
       tr.appendChild(tdCat);
       var tdOwner = el("td", "col-owner");
       tdOwner.appendChild(buildOwnerPicker([t.id], t.owner, transactionName(t)));
@@ -5713,6 +5759,10 @@
     // Transactions has its own period picker, so the header month nav steps aside.
     var monthTabs = { overview: 1 };
     document.getElementById("month-nav").classList.toggle("hidden", !monthTabs[name]);
+    if (name === "overview" && state.chartStale) {
+      state.chartStale = false;
+      renderStacked();
+    }
   }
 
   function applyTheme(theme) {
@@ -5839,6 +5889,19 @@
       state.ledgerLimit = LEDGER_CAP;
       renderPeriod();
       renderLedger();
+    });
+
+    // The month chart sizes itself from the viewport when it draws, so redraw
+    // it once the window settles into a new shape rather than leaving a
+    // phone-sized drawing stretched across a desktop. A hidden Overview has
+    // no width to measure, so it redraws when the tab comes back instead.
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        if (state.tab === "overview") renderStacked();
+        else state.chartStale = true;
+      }, 150);
     });
 
     var pills = document.getElementById("owner-pills");

@@ -762,6 +762,37 @@ class ManualInputTests(unittest.TestCase):
         self.assertTrue(failed)
         self.assertIn("lists 2025 twice", output)
 
+    def test_salary_growth_must_match_incomes(self):
+        def mutate(data):
+            data["salary"] = {
+                "steps": [],
+                "years": [{"year": 2024, "income": 100000},
+                          {"year": 2025, "income": 110000, "growth": 1.25}],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("growth 1.2500 disagrees", output)
+
+    def test_salary_growth_matching_incomes_passes(self):
+        def mutate(data):
+            data["salary"] = {
+                "steps": [],
+                "years": [{"year": 2025, "income": 110000, "growth": 1.1,
+                           "tax": 2000.5, "note": "YA2026"},
+                          {"year": 2024, "income": 100000, "growth": None}],
+            }
+        failed, output = run(mutate)
+        self.assertFalse(failed, output)
+
+    def test_non_positive_salary_growth_fails(self):
+        def mutate(data):
+            data["salary"] = {
+                "steps": [], "years": [{"year": 2025, "income": 1, "growth": 0}],
+            }
+        failed, output = run(mutate)
+        self.assertTrue(failed)
+        self.assertIn("growth", output)
+
     def test_non_positive_game_sale_fails(self):
         def mutate(data):
             data["game_sales"] = {

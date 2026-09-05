@@ -61,6 +61,16 @@ window.Charts = (function () {
       return;
     }
 
+    // A missing or non-finite amount must not poison the whole scale, so it
+    // counts as zero for both the axis and its bar.
+    function amount(value) {
+      return typeof value === "number" && isFinite(value) && value > 0 ? value : 0;
+    }
+    rows = rows.map(function (r) {
+      return { month: r.month, income: amount(r.income), spent: amount(r.spent),
+               invested: amount(r.invested) };
+    });
+
     var narrow = window.matchMedia && window.matchMedia("(max-width: 760px)").matches;
     var H = 246, plotTop = 18, plotBottom = 178, axisL = 40;
     // On phones the chart fills the panel when every month can keep a bar
@@ -97,15 +107,18 @@ window.Charts = (function () {
     s.setAttribute("aria-label",
       "Monthly chart with income and outflows above the axis and investments below");
 
-    var step = niceStep(Math.max(displayMaxUp, maxDown) || 1);
-    for (var v = step; v <= displayMaxUp + 0.01; v += step) {
+    // Each half of the axis gets its own gridline step, so a bonus month above
+    // the line does not leave the investment half below it without a reference.
+    var stepUp = niceStep(displayMaxUp || 1);
+    var stepDown = niceStep(maxDown || 1);
+    for (var v = stepUp; v <= displayMaxUp + 0.01; v += stepUp) {
       s.appendChild(node("line", {
         x1: axisL, y1: axisY - v * scale, x2: W - 12, y2: axisY - v * scale,
         stroke: "var(--border)", "stroke-width": 1, opacity: 0.55
       }));
       s.appendChild(label(axisL - 7, axisY - v * scale + 4, compact(v), { anchor: "end" }));
     }
-    for (var d = step; d <= maxDown + 0.01; d += step) {
+    for (var d = stepDown; d <= maxDown + 0.01; d += stepDown) {
       s.appendChild(node("line", {
         x1: axisL, y1: axisY + d * scale, x2: W - 12, y2: axisY + d * scale,
         stroke: "var(--border)", "stroke-width": 1, opacity: 0.55
@@ -117,7 +130,7 @@ window.Charts = (function () {
     // Value labels crowd each other once bars get thin, so below that width they
     // stay hidden until the column is hovered. Phones have no hover, so there
     // the larger of income and outflows keeps its label: one number per month
-    // fits, and the smaller bar is still readable against the gridlines.
+    // fits, and the smaller bar is still readable against its own gridlines.
     var denseLabels = slot < 40;
     var phoneCompact = narrow && slot < 52;
 
@@ -128,8 +141,8 @@ window.Charts = (function () {
       var dominant = r.income >= r.spent ? "income" : "spent";
 
       col.appendChild(node("rect", {
-        class: "hover-band", x: axisL + slot * i + 1, y: plotTop - 8,
-        width: slot - 2, height: plotH + 8, rx: 5, fill: "var(--text-3)",
+        class: "hover-band", x: axisL + slot * i + 1, y: plotTop - 14,
+        width: slot - 2, height: plotH + 14, rx: 5, fill: "var(--text-3)",
         opacity: r.month === opts.activeMonth ? 0.12 : 0
       }));
 
@@ -146,7 +159,7 @@ window.Charts = (function () {
         var hI = r.income * scale;
         col.appendChild(node("rect", {
           class: "chart-bar chart-bar-up",
-          x: cx - pairW - 1, y: axisY - hI, width: pairW, height: Math.max(1, hI),
+          x: cx - pairW - 1, y: axisY - Math.max(1, hI), width: pairW, height: Math.max(1, hI),
           rx: 2, fill: "var(--series-income)"
         }));
         value(phoneCompact ? cx : cx - pairW / 2 - 1, axisY - hI - 4, r.income, "middle", "income");
@@ -155,7 +168,7 @@ window.Charts = (function () {
         var hS = r.spent * scale;
         col.appendChild(node("rect", {
           class: "chart-bar chart-bar-up",
-          x: cx + 1, y: axisY - hS, width: pairW, height: Math.max(1, hS),
+          x: cx + 1, y: axisY - Math.max(1, hS), width: pairW, height: Math.max(1, hS),
           rx: 2, fill: "var(--series-spent)"
         }));
         value(phoneCompact ? cx : cx + pairW / 2 + 1, axisY - hS - 4, r.spent, "middle", "spent");
@@ -174,7 +187,7 @@ window.Charts = (function () {
       // The transparent target provides both the detailed tooltip and a
       // keyboard-accessible month drilldown.
       var hit = node("rect", {
-        x: axisL + slot * i, y: plotTop - 8, width: slot, height: plotH + 8, fill: "transparent"
+        x: axisL + slot * i, y: plotTop - 14, width: slot, height: plotH + 14, fill: "transparent"
       });
       if (opts.onMonth) {
         hit.setAttribute("role", "button");
