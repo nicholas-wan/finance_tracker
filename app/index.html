@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260905-37">
+<link rel="stylesheet" href="css/styles.css?v=20260905-42">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -73,6 +73,7 @@
       <button class="tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="pane-overview" data-tab="overview"><svg class="icon"><use href="#i-dashboard"/></svg>Overview</button>
       <button class="tab" id="tab-income" role="tab" aria-selected="false" aria-controls="pane-income" data-tab="income"><svg class="icon"><use href="#i-wallet"/></svg>Income</button>
       <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
+      <button class="tab" id="tab-travel" role="tab" aria-selected="false" aria-controls="pane-travel" data-tab="travel"><svg class="icon"><use href="#i-plane"/></svg>Travel</button>
       <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
     </nav>
     <div class="top-right">
@@ -216,6 +217,33 @@
     </section>
   </section>
 
+  <section class="pane hidden" id="pane-travel" role="tabpanel" aria-labelledby="tab-travel">
+    <div class="kpis" id="travel-kpis"></div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-plane"/></svg>Trips</h2>
+        <div class="year-pills" id="travel-trip-years" aria-label="Filter trips by year"></div>
+      </div>
+      <p class="hint trips-hint">grouped by booking travel dates, otherwise by charges within 5 days of each other</p>
+      <div id="travel-trips"></div>
+    </section>
+    <div class="two-col">
+      <section class="panel">
+        <div class="panel-head">
+          <h2><svg class="icon"><use href="#i-pie"/></svg>By country / region</h2>
+          <span class="hint">all time, after refunds; charges and share</span>
+        </div>
+        <div id="travel-countries" class="cat-bars"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head">
+          <h2><svg class="icon"><use href="#i-calendar"/></svg>By year</h2>
+          <span class="hint">every travel charge, by statement year</span>
+        </div>
+        <div id="travel-years" class="cat-bars"></div>
+      </section>
+    </div>
+  </section>
   <section class="pane hidden" id="pane-insurance" role="tabpanel" aria-labelledby="tab-insurance">
     <section class="insurance-portfolio-bar" aria-labelledby="insurance-portfolio-title">
       <div class="insurance-portfolio-identity">
@@ -474,6 +502,6 @@
 <script src="js/charts.js?v=20260905-2"></script>
 <script src="js/insights.js?v=20260905-6"></script>
 <script src="js/transaction-grouping.js?v=20260812-1"></script>
-<script src="js/app.js?v=20260905-56"></script>
+<script src="js/app.js?v=20260905-64"></script>
 </body>
 </html>

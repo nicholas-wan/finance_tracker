@@ -212,10 +212,19 @@ review-status filters.
   Trip.com row. The quality summary counts matched bookings, charges, refunds,
   cancellations, ambiguous charges, and unmatched rows; the validator
   re-derives every published link.
+- The **Travel** tab shows the whole travel history: this year so far against
+  the same months of last year, the all-time total, the trip count with the
+  median cost per day, the latest trip taken and the next one booked, every
+  trip as a card under a divider per year (trips that have not started yet sit
+  under **Upcoming**) with year pills to narrow the list (the latest year is
+  selected by default), and bars by country/region with charge counts and
+  shares and by statement year. Each card and bar opens the Transactions tab
+  already filtered; a country bar keeps the year the tab was showing.
 - Selecting the **Travel** category (or the Travel card on the Overview) adds a
   row of country/region pills with all-time counts, replaces the ordinary
-  category summary with a year-by-country/region breakdown, offers **All time**
-  in one click, and lists **Trips**. A trip is the cluster of travel charges
+  category and owner summary with a year-by-country/region breakdown, offers
+  **All time** in one click, and lists **Trips** with year pills that set the
+  period, so the breakdown, net cost, ledger and trips show the same year. A trip is the cluster of travel charges
   belonging to one journey: a charge matched to a Trip.com booking is anchored
   at the booking's travel dates rather than the statement date, so a flight
   charged months ahead lands on the trip it belongs to; bookingless charges use

@@ -73,6 +73,9 @@
     idFilterCount: 0,
     // Key of the trip card whose charges the id filter is showing.
     tripFocus: null,
+    // Year pill on the Travel tab's trip list. Empty until the first render,
+    // which picks the latest year; "All" lists every year.
+    travelTripYear: "",
     ledgerLimit: LEDGER_CAP,
     period: { mode: "month", year: null, month: null }
   };
@@ -1731,8 +1734,41 @@
     return trip.primary + (trip.countries.length > 1 ? " +" + (trip.countries.length - 1) : "");
   }
 
-  // One card per trip, newest first, over the whole history: a trip is a
-  // fact about the past, not about the statement month in view.
+  // Every trip in the history, split into the ones that stand on their own
+  // (a booking, or at least two charges) and the leftovers, plus the median
+  // cost per day across the standing trips.
+  var tripCatalogueCache = null;
+  function tripCatalogue() {
+    // Clustering walks every row, and the ledger re-renders on each filter
+    // change, so the result is kept until a new data set is loaded.
+    if (tripCatalogueCache && tripCatalogueCache.source === data.transactions) {
+      return tripCatalogueCache.value;
+    }
+    var all = window.Insights.buildTrips(data.transactions);
+    function standsAlone(trip) { return trip.total >= 0.5 && (trip.anchored || trip.count >= 2); }
+    var listed = all.filter(standsAlone);
+    var value = {
+      all: all,
+      listed: listed,
+      rest: all.filter(function (trip) { return !standsAlone(trip); }),
+      medianPerDay: median(listed.filter(function (trip) {
+        return trip.days >= 2 && trip.perDay > 0;
+      }).map(function (trip) { return trip.perDay; }))
+    };
+    tripCatalogueCache = { source: data.transactions, value: value };
+    return value;
+  }
+
+  // Today's local date as a "YYYY-MM-DD" key comparable with row dates.
+  function todayKey() {
+    var now = new Date();
+    return now.getFullYear() + "-" + String(now.getMonth() + 1).padStart(2, "0") + "-" +
+      String(now.getDate()).padStart(2, "0");
+  }
+
+  // Shows the trips as cards in the transactions pane, narrowed to the
+  // selected country. A trip is a fact about the past, not about the
+  // statement month in view, so the list always spans the whole history.
   function renderTrips() {
     var wrap = document.getElementById("trips");
     clear(wrap);
@@ -1741,25 +1777,72 @@
     wrap.classList.toggle("hidden", !show);
     if (!show) return;
 
-    var allTrips = window.Insights.buildTrips(data.transactions);
-    function standsAlone(trip) { return trip.total >= 0.5 && (trip.anchored || trip.count >= 2); }
+    var catalogue = tripCatalogue();
+    // A year or all-time period chosen in the picker is the same choice as
+    // a pill, so the pills follow it. A single statement month leaves the
+    // remembered year alone, and so does a focused trip.
+    if (!state.tripFocus) {
+      if (state.period.mode === "year") state.travelTripYear = state.period.year;
+      else if (state.period.mode === "all") state.travelTripYear = "All";
+    }
+    var head = el("div", "trips-head");
+    head.appendChild(el("span", "transaction-summary-label", "Trips" +
+      (state.travelCountry !== "All" ? " \u00b7 " + state.travelCountry : "")));
+    var pills = el("div", "year-pills");
+    renderTripYearPills(pills, catalogue, applyTripYearToLedger);
+    // A focused trip stands alone; its year pills would only be a distraction.
+    if (state.tripFocus) pills.classList.add("hidden");
+    head.appendChild(pills);
+    wrap.appendChild(head);
+    wrap.appendChild(el("p", "hint trips-hint",
+      "grouped by booking travel dates, otherwise by charges within 5 days of each other"));
+
+    renderTripCards(wrap, {
+      country: state.travelCountry,
+      year: state.travelTripYear,
+      // With one trip's charges in the ledger, only that trip's card belongs
+      // above them; the rest come back when the focus is cleared.
+      only: state.tripFocus,
+      isActive: function (trip) { return state.tripFocus === trip.key; },
+      onSelect: function (trip, active) {
+        if (active) {
+          setIdFilter(null);
+          state.category = "Travel";
+          state.period = tripYearPeriod(state.travelTripYear);
+          renderPeriod();
+        } else {
+          setIdFilter(trip.ids, "Trip \u00b7 " + tripLabel(trip) + " \u00b7 " + tripDateRange(trip));
+          state.tripFocus = trip.key;
+          state.category = "All";
+          state.travelCountry = "All";
+          state.search = "";
+          document.getElementById("search").value = "";
+          state.period = { mode: "all", year: state.period.year, month: state.period.month };
+          renderPeriod();
+        }
+        if (state.reviewMode !== "suspicious") state.reviewMode = null;
+        state.ledgerLimit = LEDGER_CAP;
+        populateTransactionCategoryFilter();
+        populateTravelCountryFilter();
+        renderLedger();
+      }
+    });
+  }
+
+  function renderTripCards(wrap, options) {
+    var catalogue = tripCatalogue();
+    var country = options.country || "All";
     // The median is over every trip, so a country filter compares its trips
     // against the whole history rather than against each other.
-    var medianPerDay = median(allTrips.filter(function (trip) {
-      return standsAlone(trip) && trip.days >= 2 && trip.perDay > 0;
-    }).map(function (trip) { return trip.perDay; }));
-    var trips = allTrips.filter(function (trip) {
-      return state.travelCountry === "All" || trip.countries.indexOf(state.travelCountry) !== -1;
-    });
-    var listed = trips.filter(standsAlone);
-    var rest = trips.filter(function (trip) { return listed.indexOf(trip) === -1; });
-
-    var head = el("div", "trips-head");
-    head.appendChild(el("span", "transaction-summary-label", "Trips \u00b7 all time" +
-      (state.travelCountry !== "All" ? " \u00b7 " + state.travelCountry : "")));
-    head.appendChild(el("span", "hint",
-      "grouped by booking travel dates, otherwise by charges within 5 days of each other"));
-    wrap.appendChild(head);
+    var medianPerDay = catalogue.medianPerDay;
+    function inCountry(trip) {
+      return country === "All" || trip.countries.indexOf(country) !== -1;
+    }
+    var year = options.year || "All";
+    function inYear(trip) { return year === "All" || trip.start.slice(0, 4) === year; }
+    function isOnly(trip) { return !options.only || trip.key === options.only; }
+    var listed = catalogue.listed.filter(inCountry).filter(inYear).filter(isOnly);
+    var rest = options.only ? [] : catalogue.rest.filter(inCountry).filter(inYear);
 
     if (!listed.length) {
       wrap.appendChild(emptyState("No trips yet",
@@ -1768,10 +1851,27 @@
       return;
     }
 
+    // Cards arrive newest first; a divider opens each year with its count
+    // and total, so the grid reads as a timeline rather than a heap. Trips
+    // that have not started yet sit under "Upcoming" ahead of the years.
+    var today = todayKey();
+    function groupOf(trip) { return trip.start > today ? "Upcoming" : trip.start.slice(0, 4); }
     var cards = el("div", "trip-cards");
+    var shownGroup = null;
     listed.forEach(function (trip) {
+      var group = groupOf(trip);
+      if (group !== shownGroup) {
+        shownGroup = group;
+        var groupTrips = listed.filter(function (other) { return groupOf(other) === group; });
+        var groupTotal = groupTrips.reduce(function (total, other) { return total + other.total; }, 0);
+        var divider = el("div", "trip-year-head");
+        divider.appendChild(el("strong", "", group));
+        divider.appendChild(el("span", "", groupTrips.length + " trip" + (groupTrips.length === 1 ? "" : "s") +
+          " \u00b7 " + fmt0(groupTotal) + (group === "Upcoming" ? " booked so far" : "")));
+        cards.appendChild(divider);
+      }
       var label = tripLabel(trip);
-      var active = state.tripFocus === trip.key;
+      var active = options.isActive ? options.isActive(trip) : false;
       var card = el("div", "kpi trip-card" + (active ? " active" : ""));
       var title = el("p", "label");
       title.appendChild(icon("plane"));
@@ -1781,13 +1881,13 @@
       card.appendChild(el("p", "value", fmt0(trip.total)));
       card.appendChild(el("p", "delta", tripDateRange(trip) + " \u00b7 " +
         trip.days + (trip.days === 1 ? " day" : " days") + " \u00b7 " + fmt0(trip.perDay) + "/day"));
+      // A dearer day is not a fault, so the comparison stays neutral in
+      // colour; the median itself is stated once, on the Trips card.
       if (medianPerDay > 0 && trip.days >= 2 && trip.perDay > 0) {
         var pc = ((trip.perDay - medianPerDay) / medianPerDay) * 100;
-        var tone = Math.abs(pc) < 5 ? "" : pc > 0 ? "up" : "down";
-        card.appendChild(el("p", "delta " + tone, Math.abs(pc) < 5
-          ? "in line with your trip median"
-          : Math.abs(pc).toFixed(0) + "% " + (pc > 0 ? "above" : "below") +
-            " your trip median of " + fmt0(medianPerDay) + "/day"));
+        card.appendChild(el("p", "delta", Math.abs(pc) < 5
+          ? "in line with your median day"
+          : Math.abs(pc).toFixed(0) + "% " + (pc > 0 ? "above" : "below") + " your median day"));
       }
       var split = el("div", "trip-split");
       var maxPart = TRIP_SPLIT.reduce(function (largest, part) {
@@ -1811,37 +1911,28 @@
       card.appendChild(el("p", "delta sub", trip.count + " charge" + (trip.count === 1 ? "" : "s") +
         (trip.bookings ? " \u00b7 " + trip.bookings + " Trip.com booking" + (trip.bookings === 1 ? "" : "s") : "")));
       makeActionable(card, "Show the " + trip.count + " charges for " + label + ", " + tripDateRange(trip),
-        function () {
-          if (active) {
-            setIdFilter(null);
-            state.category = "Travel";
-          } else {
-            setIdFilter(trip.ids, "Trip \u00b7 " + label + " \u00b7 " + tripDateRange(trip));
-            state.tripFocus = trip.key;
-            state.category = "All";
-            state.travelCountry = "All";
-            state.search = "";
-            document.getElementById("search").value = "";
-            state.period = { mode: "all", year: state.period.year, month: state.period.month };
-            renderPeriod();
-          }
-          if (state.reviewMode !== "suspicious") state.reviewMode = null;
-          state.ledgerLimit = LEDGER_CAP;
-          populateTransactionCategoryFilter();
-          populateTravelCountryFilter();
-          renderLedger();
-        });
-      setPressed(card, active);
+        function () { options.onSelect(trip, active); });
+      // Only a card that toggles a focus is a pressed control; on the Travel
+      // tab a click navigates, so no pressed state is announced there.
+      if (options.isActive) setPressed(card, active);
       cards.appendChild(card);
     });
     wrap.appendChild(cards);
 
     if (rest.length) {
-      var restTotal = rest.reduce(function (total, trip) { return total + trip.total; }, 0);
-      var restCount = rest.reduce(function (total, trip) { return total + trip.count; }, 0);
-      wrap.appendChild(el("p", "trips-more", restCount + " other travel charge" +
-        (restCount === 1 ? "" : "s") + " not tied to a trip \u00b7 " + fmt(restTotal) +
-        " \u00b7 single charges without a booking, or trips that were fully refunded"));
+      var refunded = rest.filter(function (trip) { return trip.total < 0.5; });
+      var lone = rest.filter(function (trip) { return trip.total >= 0.5; });
+      var loneCount = lone.reduce(function (total, trip) { return total + trip.count; }, 0);
+      var loneTotal = lone.reduce(function (total, trip) { return total + trip.total; }, 0);
+      var parts = [];
+      if (loneCount) {
+        parts.push(loneCount + " single charge" + (loneCount === 1 ? "" : "s") +
+          " without a booking, not tied to a trip \u00b7 " + fmt(loneTotal));
+      }
+      if (refunded.length) {
+        parts.push(refunded.length + " fully refunded trip" + (refunded.length === 1 ? "" : "s"));
+      }
+      wrap.appendChild(el("p", "trips-more", parts.join(" \u00b7 ")));
     }
   }
 
@@ -5146,6 +5237,8 @@
     var summary = document.getElementById("transaction-summary");
     clear(summary);
     summary.classList.remove("bank-summary");
+    var travelView = state.category === "Travel" || state.tripOnly || state.travelCountry !== "All";
+    summary.classList.toggle("travel-summary", travelView);
     var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
     if (!totals.count) {
       summary.appendChild(el("div", "transaction-summary-empty",
@@ -5211,12 +5304,14 @@
       summary.appendChild(section);
     }
 
-    if (state.category === "Travel" || state.tripOnly || state.travelCountry !== "All") {
+    if (travelView) {
+      // Travel here is one person's spending, so an owner column would only
+      // repeat the total; the country breakdown takes the room instead.
       renderTravelYearCountryBreakdown(summary, rows);
     } else {
       appendBreakdown("By category", totals.categoryTotals, null, 4, "category");
+      appendBreakdown("By owner", totals.ownerTotals, OWNER_ORDER, null, "owner");
     }
-    appendBreakdown("By owner", totals.ownerTotals, OWNER_ORDER, null, "owner");
   }
 
   function appendBankAverageComparison(headline, currentSpending) {
@@ -5551,6 +5646,249 @@
   // table. Resolve the transactions ledger from its body instead.
   function ledgerTable() {
     return document.getElementById("ledger-body").closest("table");
+  }
+
+  // ---------- Travel tab ----------
+  //
+  // The whole travel history in one place: the trips, where the money went,
+  // and how each year compares. Everything here opens the Transactions tab
+  // already filtered, so the ledger is one click away.
+
+  function travelRows() {
+    return data.transactions.filter(function (t) { return t.category === "Travel"; });
+  }
+
+  function openTripInTransactions(trip) {
+    state.tripFocus = trip.key;
+    openTransactions({
+      ids: trip.ids,
+      filterLabel: "Trip \u00b7 " + tripLabel(trip) + " \u00b7 " + tripDateRange(trip),
+      period: { mode: "all", year: state.period.year, month: state.period.month }
+    });
+  }
+
+  // The trip list with its year pills. Re-rendered on its own when a pill
+  // is clicked, so the rest of the tab does not flicker.
+  // Year pills for a trip list. One year lives in state.travelTripYear and
+  // both panes read it, so the year chosen on the Travel tab still applies
+  // after a trip has been opened and cleared in Transactions.
+  // In the Transactions pane the trip year is the period: choosing 2024
+  // shows that year's country chart, net cost, ledger and trips together,
+  // and the period picker reads "All of 2024". "All years" is all time.
+  function tripYearPeriod(year) {
+    return year === "All"
+      ? { mode: "all", year: state.period.year, month: state.period.month }
+      : { mode: "year", year: year, month: state.period.month };
+  }
+
+  function applyTripYearToLedger(year) {
+    state.travelTripYear = year;
+    state.period = tripYearPeriod(year);
+    state.ledgerLimit = LEDGER_CAP;
+    renderPeriod();
+    renderLedger();
+  }
+
+  function renderTripYearPills(pills, catalogue, onChange) {
+    var years = [];
+    catalogue.listed.forEach(function (trip) {
+      var year = trip.start.slice(0, 4);
+      if (years.indexOf(year) === -1) years.push(year);
+    });
+    years.sort().reverse();
+    if (!state.travelTripYear ||
+        (state.travelTripYear !== "All" && years.indexOf(state.travelTripYear) === -1)) {
+      state.travelTripYear = years[0] || "All";
+    }
+    clear(pills);
+    ["All"].concat(years).forEach(function (year) {
+      var active = year === state.travelTripYear;
+      var pill = el("button", "pill" + (active ? " active" : ""), year === "All" ? "All years" : year);
+      pill.type = "button";
+      setPressed(pill, active);
+      pill.addEventListener("click", function () { onChange(year); });
+      pills.appendChild(pill);
+    });
+    pills.classList.toggle("hidden", years.length < 2);
+  }
+
+  function renderTravelTrips(catalogue) {
+    catalogue = catalogue || tripCatalogue();
+    renderTripYearPills(document.getElementById("travel-trip-years"), catalogue, function (year) {
+      state.travelTripYear = year;
+      renderTravelTrips(catalogue);
+    });
+
+    var tripsWrap = document.getElementById("travel-trips");
+    clear(tripsWrap);
+    renderTripCards(tripsWrap, {
+      country: "All",
+      year: state.travelTripYear,
+      onSelect: function (trip) { openTripInTransactions(trip); }
+    });
+  }
+
+  function renderTravel() {
+    var kpis = document.getElementById("travel-kpis");
+    if (!kpis) return;
+    clear(kpis);
+    var rows = travelRows();
+    var catalogue = tripCatalogue();
+    var latestYear = data.months.length ? data.months[data.months.length - 1].slice(0, 4) : "";
+    var byYear = {};
+    var byCountry = {};
+    var countryRows = {};
+    rows.forEach(function (t) {
+      // Statement-month year, the same key the ledger's year period uses,
+      // so a click on a year lands on exactly this figure.
+      var year = String(t.month).slice(0, 4);
+      byYear[year] = roundMoney((byYear[year] || 0) + signed(t));
+      var country = window.Insights.travelCountry(t) || "Unknown";
+      byCountry[country] = roundMoney((byCountry[country] || 0) + signed(t));
+      countryRows[country] = (countryRows[country] || 0) + 1;
+    });
+    var allTime = Object.keys(byYear).reduce(function (total, year) { return total + byYear[year]; }, 0);
+    var known = Object.keys(byCountry).filter(function (c) { return c !== "Unknown"; });
+
+    // The current year is partial, so it is compared with the same months
+    // of the year before rather than with that whole year.
+    var thisYear = byYear[latestYear] || 0;
+    var previousYear = String(parseInt(latestYear, 10) - 1);
+    var latestMonth = data.months.length ? data.months[data.months.length - 1].slice(5) : "12";
+    var samePeriod = rows.reduce(function (total, t) {
+      var month = String(t.month);
+      return month.slice(0, 4) === previousYear && month.slice(5) <= latestMonth
+        ? total + signed(t) : total;
+    }, 0);
+    var yearNote = samePeriod > 0
+      ? ((thisYear - samePeriod) / samePeriod * 100 >= 0 ? "+" : "") +
+        ((thisYear - samePeriod) / samePeriod * 100).toFixed(0) + "% vs same period " + previousYear
+      : "no travel by this point in " + previousYear;
+    var yearCard = metric(latestYear + " so far", fmt0(thisYear), yearNote, null, "plane");
+    makeActionable(yearCard, "View " + latestYear + " travel transactions", function () {
+      openTransactions({ category: "Travel",
+        period: { mode: "year", year: latestYear, month: state.period.month } });
+    });
+    kpis.appendChild(yearCard);
+
+    var allCard = metric("All time", fmt0(allTime),
+      rows.length + " travel charges \u00b7 " + known.length + " destination" + (known.length === 1 ? "" : "s"),
+      null, "coins");
+    makeActionable(allCard, "View every travel transaction", function () {
+      openTransactions({ category: "Travel",
+        period: { mode: "all", year: state.period.year, month: state.period.month } });
+    });
+    kpis.appendChild(allCard);
+
+    var tripsCard = metric("Trips", String(catalogue.listed.length),
+      catalogue.medianPerDay > 0 ? "median " + fmt0(catalogue.medianPerDay) + " a day" : "no multi-day trips yet",
+      null, "calendar");
+    makeActionable(tripsCard, "Show every trip", function () {
+      state.travelTripYear = "All";
+      renderTravelTrips(catalogue);
+      var panel = document.getElementById("travel-trips");
+      if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+    });
+    kpis.appendChild(tripsCard);
+
+    // A flight booked for next month is not the latest trip taken. Past
+    // trips supply "Latest trip"; the nearest future one gets "Next trip".
+    var today = todayKey();
+    var past = catalogue.listed.filter(function (trip) { return trip.start <= today; });
+    var upcoming = catalogue.listed.filter(function (trip) { return trip.start > today; });
+    var last = past[0];
+    if (last) {
+      var lastCard = metric("Latest trip", fmt0(last.total),
+        tripLabel(last) + " \u00b7 " + tripDateRange(last), null, "up");
+      makeActionable(lastCard, "Show the charges for the latest trip", function () {
+        openTripInTransactions(last);
+      });
+      kpis.appendChild(lastCard);
+    }
+    var next = upcoming[upcoming.length - 1];
+    if (next) {
+      var nextCard = metric("Next trip", fmt0(next.total),
+        tripLabel(next) + " \u00b7 " + tripDateRange(next) + " \u00b7 booked so far", null, "plane");
+      makeActionable(nextCard, "Show the charges booked for the next trip", function () {
+        openTripInTransactions(next);
+      });
+      kpis.appendChild(nextCard);
+    }
+    kpis.classList.toggle("kpis-five", kpis.children.length === 5);
+
+    renderTravelTrips(catalogue);
+
+    // Country bars, biggest first, Unknown last and grey. A click opens the
+    // ledger already filtered to that destination over the whole history.
+    var countriesWrap = document.getElementById("travel-countries");
+    clear(countriesWrap);
+    var countries = Object.keys(byCountry).sort(function (a, b) {
+      if (a === "Unknown") return 1;
+      if (b === "Unknown") return -1;
+      return Math.abs(byCountry[b]) - Math.abs(byCountry[a]);
+    });
+    var maxCountry = countries.reduce(function (largest, c) {
+      return Math.max(largest, Math.abs(byCountry[c]));
+    }, 0.01);
+    var countrySum = countries.reduce(function (total, c) {
+      return total + Math.abs(byCountry[c]);
+    }, 0);
+    if (!countries.length) {
+      countriesWrap.appendChild(emptyState("No travel yet",
+        "Travel charges appear here once a statement has them.", "plane"));
+    }
+    countries.forEach(function (country) {
+      var amount = byCountry[country];
+      var refunded = Math.abs(amount) < 0.5;
+      var row = el("div", "cat-row");
+      row.appendChild(el("span", "name", country));
+      var track = el("div", "track");
+      if (!refunded) {
+        var fill = el("div", "fill");
+        fill.style.width = Math.max(1, Math.abs(amount) / maxCountry * 100) + "%";
+        fill.style.background = country === "Unknown" ? "var(--text-3)"
+          : amount < 0 ? "var(--green)" : "var(--accent)";
+        track.appendChild(fill);
+      }
+      row.appendChild(track);
+      // Count and share sit under the amount, so a phone gets the detail a
+      // desktop tooltip used to hold.
+      var amountNode = el("span", "amt" + (refunded ? " muted" : ""), refunded ? "refunded" : fmt0(amount));
+      var share = countrySum > 0 ? Math.round(Math.abs(amount) / countrySum * 100) : 0;
+      amountNode.appendChild(el("small", "", countryRows[country] + (refunded ? "" : " \u00b7 " + share + "%")));
+      row.appendChild(amountNode);
+      // The remembered trip year travels with the click, so the ledger opens
+      // on the same year the Travel tab was showing.
+      makeActionable(row, "View travel transactions for " + country, function () {
+        openTransactions({ category: "Travel", travelCountry: country,
+          period: tripYearPeriod(state.travelTripYear || "All") });
+      });
+      countriesWrap.appendChild(row);
+    });
+
+    var yearsWrap = document.getElementById("travel-years");
+    clear(yearsWrap);
+    var years = Object.keys(byYear).sort().reverse();
+    var maxYear = years.reduce(function (largest, y) {
+      return Math.max(largest, Math.abs(byYear[y]));
+    }, 0.01);
+    years.forEach(function (year) {
+      var row = el("div", "cat-row");
+      row.appendChild(el("span", "name", year));
+      var track = el("div", "track");
+      var fill = el("div", "fill");
+      fill.style.width = Math.max(1, Math.abs(byYear[year]) / maxYear * 100) + "%";
+      fill.style.background = byYear[year] < 0 ? "var(--green)"
+        : year === latestYear ? "var(--bar-1)" : "var(--bar-3)";
+      track.appendChild(fill);
+      row.appendChild(track);
+      row.appendChild(el("span", "amt", fmt0(byYear[year])));
+      makeActionable(row, "View " + year + " travel transactions", function () {
+        openTransactions({ category: "Travel",
+          period: { mode: "year", year: year, month: state.period.month } });
+      });
+      yearsWrap.appendChild(row);
+    });
   }
 
   function renderGroupedLedger(body, rows, showYear) {
@@ -5901,6 +6239,7 @@
     renderLedger();
     renderIncome();
     renderInsurance();
+    renderTravel();
     var idx = data.months.indexOf(state.month);
     document.getElementById("prev-month").disabled = idx <= 0;
     document.getElementById("next-month").disabled = idx >= data.months.length - 1;
@@ -5943,6 +6282,9 @@
       state.chartStale = false;
       renderStacked();
     }
+    // The trip year is shared with the Transactions pane, so the list here
+    // is redrawn on arrival in case it was changed over there.
+    if (name === "travel") renderTravelTrips();
   }
 
   function applyTheme(theme) {

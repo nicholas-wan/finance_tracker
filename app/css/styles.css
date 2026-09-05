@@ -707,6 +707,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .cat-row .track { height: 14px; }
 .cat-row .fill { height: 14px; border-radius: 0 3px 3px 0; min-width: 2px; }
 .cat-row .amt { text-align: right; font-variant-numeric: tabular-nums; }
+.cat-row .amt small { display: block; color: var(--text-3); font-size: var(--fs-micro); font-weight: 400; }
+.cat-row .amt.muted { color: var(--text-3); font-size: var(--fs-caption); }
 #sales-list .cat-row { grid-template-columns: 152px minmax(0, 1fr) 62px 74px; }
 .sale-when { font-size: var(--fs-small); color: var(--text-3); text-align: right; white-space: nowrap; }
 
@@ -846,9 +848,22 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .trips-head .transaction-summary-label { margin-bottom: 0; }
 .trip-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
 .trip-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.trip-year-head {
+  grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-top: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  color: var(--text-2); font-size: var(--fs-small); font-variant-numeric: tabular-nums;
+}
+.trip-year-head:first-child { margin-top: 0; }
+.trip-year-head strong { color: var(--text); font-weight: 650; }
+.trips-hint { margin: -6px 0 10px; }
+/* Panel titles keep to one line; the hint beside them wraps instead. */
+#pane-travel .panel-head h2 { flex: 0 0 auto; white-space: nowrap; }
+#pane-travel .panel-head .hint { text-align: right; }
 .trip-split { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
 .trip-split .transaction-breakdown-row { grid-template-columns: 108px minmax(30px, 1fr) 60px; min-height: 18px; }
 .trips-more { margin: 10px 0 0; color: var(--text-3); font-size: var(--fs-caption); }
+.cat-row.actionable { border-radius: 6px; padding: 2px 5px; margin: -2px -5px; }
+.cat-row.actionable:hover { background: var(--surface-2); }
 .travel-country-inline {
   display: block; margin-top: 3px; color: var(--text-3); font-size: var(--fs-micro);
   white-space: nowrap;
@@ -856,6 +871,9 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .transaction-summary.bank-summary {
   grid-template-columns: minmax(170px, 0.85fr) minmax(210px, 1fr)
     minmax(220px, 1.05fr) minmax(170px, 0.8fr);
+}
+.transaction-summary.travel-summary {
+  grid-template-columns: minmax(150px, 0.72fr) minmax(250px, 2.35fr);
 }
 .transaction-summary-total,
 .transaction-breakdown { min-width: 0; }
@@ -2179,4 +2197,31 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .insurance-month-cell { width: 26px; height: 17px; border-radius: 3px; font-size: 8px; }
   .insurance-charge-item { grid-template-columns: 58px minmax(0, 1fr) 86px; gap: 7px; }
   .insurance-charge-detail { padding-left: 12px; padding-right: 12px; }
+}
+
+/* Travel tab and header fit, from tablet down. Five tabs no longer share a
+   line with the share button's label between the wide layout and the phone
+   strip, and the KPI grid stops leaving a card stranded on its own row. */
+@media (max-width: 960px) {
+  .share-button span { display: none; }
+  .share-button { padding: 0 9px; }
+  .tab { padding: 7px 9px; }
+  .tab .icon { display: none; }
+  .tabs { gap: 2px; }
+  #travel-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #travel-kpis.kpis-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .pill { min-height: 34px; }
+  .cat-row.actionable { min-height: 36px; padding: 6px 5px; margin: -6px -5px; }
+  .transaction-breakdown-row strong { font-size: var(--fs-caption); }
+}
+@media (max-width: 430px) {
+  .tabs { gap: 4px; }
+  .tab { padding: 7px 8px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpi { padding: 12px 12px; }
+  .kpi .value { font-size: var(--fs-stat-sm); }
+  #travel-kpis, #travel-kpis.kpis-five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #travel-kpis.kpis-five .kpi:last-child { grid-column: 1 / -1; }
 }
