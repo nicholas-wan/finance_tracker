@@ -111,8 +111,15 @@ preserved.
 The **Home** tab keeps appliances/furnishings, home and fire policies, mortgage
 details, and maintenance in a local household register. The collection uses
 compact, dark-mode-compatible cards and locally bundled product thumbnails;
-selecting a card opens its costs, dates, warranty coverage, document link, and
-notes, and selecting the backdrop closes it. Appliance records are maintained in
+selecting a card opens its costs, a key-dates timeline (purchase, delivery,
+installation, warranty start and end), warranty coverage, document link, and
+notes, and selecting the backdrop closes it. Each card names the first thing
+still missing (receipt, cost, date, or document) instead of a generic
+"needs info" label; model and serial numbers have Copy buttons in the detail
+view. The tab has its own visual treatment (a serif title on a tinted band) on
+top of the shared tokens, drawn icons rather than text glyphs, and no coloured
+edge borders or kicker labels, following the Impeccable craft rules in
+`app/css/home.css`. Appliance records are maintained in
 the private data file rather than edited in the browser. Insurance, mortgage, and
 maintenance records remain editable. Existing payments can be linked to those
 records by searching card or bank transactions, without creating spending or
@@ -126,7 +133,10 @@ only priced, non-archived appliances and are not estimates of current value.
 
 **Needs attention** lists past or upcoming policy, mortgage-review, and service
 dates through the next 90 days, plus a collapsible list of unverified records.
-Verified appliance warranties appear when they expire within 90 days. A policy
+Verified appliance warranties appear when they expire within 90 days. A verified
+item with no delivery or installation date is asked for one only while its cover
+could still depend on it; once the warranty has expired or is not tracked, the
+missing date no longer counts against the record. A policy
 date from an unverified document prompts a renewal check, not a coverage claim.
 Mortgage reminders use the explicit review date, or suggest the earlier of 90
 days or the recorded notice period before lock-in ends. Maintenance uses an
@@ -142,6 +152,20 @@ inputs. The Wi-Fi copy can read records but cannot edit them. Set status to
 **Archived** to retain an old record while excluding it from totals and reminders.
 Keep personal insurance in the existing Insurance register and home policies in
 Home to avoid entering the same policy twice.
+
+The collection has three views, remembered in the browser: **List** (the
+default, one row per item grouped by category with sortable Item, Cost,
+Warranty and To-do columns), **Grid** (the cards), and **Coverage** (a timeline
+of every dated warranty on one year axis with a Today marker; dashed bars come
+from unverified documents). The left rail lists each category and, where it
+earns it, zones underneath (Kitchen & laundry, Living & bedrooms, Bathrooms,
+Whole home, mapped from the exact `room` on each record; longer location notes
+live in `roomDetail`). A category splits into zones only when it holds at
+least eight items and no zone would be left with a single item, so smaller
+categories stay flat with the room shown in each row. The rail filters by
+category or zone and follows the section in view while scrolling. Each item
+carries one primary warranty state (Covered, Expiring within 90 days, Expired,
+Unverified, No warranty, Not tracked); finer detail stays in the item view.
 
 Items can be filtered into **Appliances**, **Fixtures**, and **Furniture**, with
 separate cost-source and funding fields. Warranty filters distinguish **Covered**,
@@ -165,7 +189,11 @@ assistant to maintain these records. Insurance, loan, and maintenance records
 retain their forms. Thumbnail attribution and source URLs are recorded in
 `app/assets/home/sources.json`. The downloaded warranty archive was rechecked on
 5 September 2026; the private file inventory and review findings are in
-`manual/warranty_review_20260905.json`.
+`manual/warranty_review_20260905.json`, and new certificates (such as the
+Bosch washer's MyBosch extended-warranty certificate) are logged in
+`manual/warranty_upload_20260905.json` with their Drive status. Files follow
+the `[Category] Brand Model - Document - YYYY-MM-DD.pdf` naming used in the
+Drive Warranty folder.
 
 The Transactions page supports period, search, category/flow, owner, direction, and
 review-status filters.

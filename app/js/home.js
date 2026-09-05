@@ -7,7 +7,15 @@
     var remaining=days(end,now);
     return remaining<0?'expired':remaining===0?'today':'active';
   }
-  function needsInformation(r) { return r.status!=='Verified'||(r.kind==='appliance'&&!r.installed&&!r.delivered); }
+  // A delivery or installation date only matters while it can still anchor a warranty.
+  function coverEnded(r, now) {
+    if (r.warrantyStatus === 'expired' || r.warrantyStatus === 'not_applicable') return true;
+    if (!r.expires) return false;
+    var later = r.secondaryExpiry && r.secondaryExpiry > r.expires ? r.secondaryExpiry : r.expires;
+    return days(later, now || today()) < 0;
+  }
+  function dateNeeded(r, now) { return r.kind === 'appliance' && !r.installed && !r.delivered && !coverEnded(r, now); }
+  function needsInformation(r, now) { return r.status !== 'Verified' || dateNeeded(r, now); }
   function nextService(r) {
     if (r.nextService) return r.nextService;
     if (!r.lastService || !r.frequencyMonths) return '';
@@ -20,7 +28,7 @@
     var out = [];
     records.filter(function (r) { return r.status !== 'Archived'; }).forEach(function (r) {
       if (r.status !== 'Verified') out.push({ record: r, label: r.action || (r.status === 'Document missing' ? 'Add supporting document' : 'Check record details'), date: '', tone: 'check' });
-      else if(r.kind==='appliance'&&!r.installed&&!r.delivered)out.push({record:r,label:'Add delivery or installation date',date:'',tone:'check'});
+      else if(dateNeeded(r, now))out.push({record:r,label:'Add delivery or installation date',date:'',tone:'check'});
       var dates = [];
       if (r.kind === 'insurance' && r.expires) dates.push([r.expires, r.status === 'Verified' ? 'Review policy renewal' : 'Check latest renewal']);
       if (r.kind === 'appliance' && r.secondaryExpiry && r.status === 'Verified' && days(r.secondaryExpiry, now) >= 0) dates.push([r.secondaryExpiry, (r.secondaryWarranty || 'Additional warranty') + ' ends']);
@@ -44,11 +52,13 @@
 
   var root = document.getElementById('pane-home'), store = { revision: 0, records: [] }, editable = false;
   var category = 'All';
+  var view = 'list', sortDir = 'asc', spyHandler = null, room = 'All';
+  try { view = ['list','grid','coverage'].includes(localStorage.getItem('home-view')) ? localStorage.getItem('home-view') : 'list'; } catch (e) { /* storage unavailable */ }
   var section = 'appliance', query = '', infoFilter = 'all', warrantyFilter = 'all', sortBy = 'attention', showArchived = false, txs = [], lastFocus, busy = false;
   var titles = { appliance: 'Items & fixtures', insurance: 'Home & fire insurance', mortgage: 'Mortgage', maintenance: 'Maintenance' };
   var labels = { appliance: 'appliance or furnishing', insurance: 'home policy', mortgage: 'mortgage', maintenance: 'maintenance task' };
   var fields = {
-    appliance: [['category','Category','select','Appliances,Fixtures,Furniture'],['provider','Retailer / supplier'],['room','Room'],['brand','Brand'],['model','Model'],['serial','Serial number'],['cost','Recorded cost (S$)','number'],['itemCost','Original item cost (S$)','number'],['warrantyCost','Extended warranty cost (S$)','number'],['deliveryCost','Delivery cost (S$)','number'],['costBasis','Cost source','select','Receipt / sales order,House sheet,Sheet allocation,Gift,Mixed sources'],['funding','Paid / gifted by'],['delivered','Delivery date','date'],['deliveryDetails','Delivery details'],['deliverySource','Delivery date source'],['installed','Installation date','date'],['installationType','Installation event'],['installationSource','Installation date source'],['warrantyStart','Warranty start','date'],['warrantyStartBasis','Warranty start basis'],['expires','Warranty end','date'],['warrantyTerms','Warranty terms'],['warrantyCertificate','Warranty certificate'],['warrantySourceUrl','Warranty terms URL'],['coverage','Coverage & exclusions'],['secondaryWarranty','Additional cover (e.g. compressor)'],['secondaryExpiry','Additional cover ends','date']],
+    appliance: [['category','Category','select','Appliances,Fixtures,Furniture'],['provider','Retailer / supplier'],['room','Room'],['roomDetail','Location detail'],['brand','Brand'],['model','Model'],['serial','Serial number'],['cost','Recorded cost (S$)','number'],['itemCost','Original item cost (S$)','number'],['warrantyCost','Extended warranty cost (S$)','number'],['deliveryCost','Delivery cost (S$)','number'],['costBasis','Cost source','select','Receipt / sales order,House sheet,Sheet allocation,Gift,Mixed sources'],['funding','Paid / gifted by'],['delivered','Delivery date','date'],['deliveryDetails','Delivery details'],['deliverySource','Delivery date source'],['installed','Installation date','date'],['installationType','Installation event'],['installationSource','Installation date source'],['warrantyStart','Warranty start','date'],['warrantyStartBasis','Warranty start basis'],['expires','Warranty end','date'],['warrantyTerms','Warranty terms'],['warrantyCertificate','Warranty certificate'],['warrantySourceUrl','Warranty terms URL'],['coverage','Coverage & exclusions'],['secondaryWarranty','Additional cover (e.g. compressor)'],['secondaryExpiry','Additional cover ends','date']],
     insurance: [['provider','Insurer'],['coverage','Coverage summary'],['premium','Premium per payment (S$)','number'],['cadence','Payment frequency','select','Yearly,Monthly,One-off'],['starts','Policy start','date'],['expires','Policy end','date']],
     mortgage: [['provider','Bank'],['balance','Outstanding balance (S$)','number'],['balanceDate','Balance as of','date'],['instalment','Monthly instalment (S$)','number'],['rate','Current annual rate (%)','number'],['rateSchedule','Rate schedule'],['lockInEnd','Lock-in ends','date'],['noticeDays','Notice period (days)','integer'],['reviewDate','Review date','date']],
     maintenance: [['room','Room / area'],['provider','Service provider'],['cost','Cost per service (S$)','number'],['installed','Setup / installation date','date'],['installationType','Event type'],['installationSource','Date source'],['lastService','Last serviced','date'],['frequencyMonths','Repeat every (months)','integer'],['nextService','Next service (optional override)','date']]
@@ -56,9 +66,16 @@
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function money(v) { return v == null || v === '' ? 'Not recorded' : 'S$' + Number(v).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
   function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-SG', { day:'numeric', month:'short', year:'numeric' }) : 'Not recorded'; }
-  function badge(r) { var item=r.kind==='appliance', complete=item&&!needsInformation(r);return '<span class="home-badge '+((item?complete:r.status==='Verified')?'verified':'')+'">'+esc(item?(complete?'Info complete':'Needs info'):r.status)+'</span>'; }
-  function source(r) { return r.sourceUrl && /^https:\/\//.test(r.sourceUrl) ? '<a href="'+esc(r.sourceUrl)+'" target="_blank" rel="noopener noreferrer">'+esc(r.sourceName || 'Open document')+' ↗</a>' : '<span class="home-muted">'+esc(r.sourceName || 'No document linked')+'</span>'; }
-  function age(r) { if (!r.purchased) return 'Age unknown'; var n = days(today(), r.purchased); return n < 0 ? 'Purchase planned' : (n < 365 ? Math.floor(n / 30.44) + ' months old' : (n / 365.25).toFixed(1) + ' years old'); }
+  // Short, specific reasons a record still needs attention; the first one labels the card.
+  function attention(r) {
+    var out=[];
+    if(r.status==='Document missing')out.push('Document missing');
+    else if(r.status==='Needs checking')out.push(r.cost==null&&r.costBasis!=='Gift'?'Cost to confirm':['House sheet','Sheet allocation'].includes(r.costBasis)?'Receipt needed':'Needs checking');
+    if(dateNeeded(r))out.push('Date needed');
+    return out;
+  }
+  function badge(r) { var item=r.kind==='appliance', complete=item&&!needsInformation(r), reasons=attention(r);return '<span class="home-badge '+((item?complete:r.status==='Verified')?'verified':'')+'" title="'+esc(reasons.join(' · '))+'">'+esc(item?(complete?'Complete':reasons[0]||'Needs info'):r.status)+'</span>'; }
+  function source(r) { return r.sourceUrl && /^https:\/\//.test(r.sourceUrl) ? '<a href="'+esc(r.sourceUrl)+'" target="_blank" rel="noopener noreferrer">'+esc(r.sourceName || 'Open document')+icon('external')+'</a>' : '<span class="home-muted">'+esc(r.sourceName || 'No document linked')+'</span>'; }
   function coverDate(r,key) {
     var state=warrantyState(r[key],today());
     if(state==='unknown')return 'End date unknown';
@@ -66,20 +83,6 @@
     return (state==='expired'?'Expired · ':state==='today'?'Ends today · ':'Ends ')+date(r[key]);
   }
   function warranty(r) { return r.expires?coverDate(r,'expires'):esc(r.warrantyTerms || 'End date unknown'); }
-  function cardCover(r) {
-    if(r.warrantyStatus==='not_applicable')return '<span class="home-cover-row"><strong class="home-cover-chip not-applicable">Not tracked</strong><span>'+esc(r.warrantyLabel||'Warranty not applicable')+'</span></span>';
-    var manual=r.warrantyStatus&&!r.expires?'<span class="home-cover-row"><strong class="home-cover-chip '+esc(r.warrantyStatus)+'">'+(r.warrantyStatus==='covered'?'Covered':r.warrantyStatus==='expired'?'Expired':'Unconfirmed')+'</strong><span>'+esc(r.warrantyLabel||'End date unknown')+'</span></span>':'';
-    var dated=[['expires','Warranty'],['secondaryExpiry',r.secondaryWarranty||'Additional cover']].filter(function(pair){return r[pair[0]];}).map(function(pair){
-      var state=warrantyState(r[pair[0]],today()), tone=state==='expired'?'expired':'covered';
-      var label=state==='expired'?'Expired':state==='today'?'Ends today':'Covered';
-      return '<span class="home-cover-row"><strong class="home-cover-chip '+tone+'">'+label+'</strong><span>'+esc(pair[1])+' · '+date(r[pair[0]])+(r.status!=='Verified'&&r.warrantyStatus!=='covered'?' · unverified':'')+'</span></span>';
-    }).join('');
-    if(dated)return manual+dated;
-    var tone=r.warrantyStatus||(r.warrantyTerms?'unconfirmed':'missing');
-    var label=tone==='covered'?'Covered':tone==='expired'?'Expired':tone==='unconfirmed'?'Unconfirmed':'No warranty details';
-    var detail=r.warrantyLabel||(r.warrantyTerms?'End date unknown':'Receipt or terms needed');
-    return '<span class="home-cover-row"><strong class="home-cover-chip '+esc(tone)+'">'+label+'</strong><span>'+esc(detail)+'</span></span>';
-  }
   function warrantyTone(r) {
     if(r.warrantyStatus==='not_applicable')return 'not_applicable';
     if(r.warrantyStatus==='covered'&&!r.expires)return 'covered';
@@ -94,39 +97,67 @@
     var missing=assets.filter(function(r){return warrantyTone(r)==='missing';}).length;
     var notTracked=assets.filter(function(r){return warrantyTone(r)==='not_applicable';}).length;
     var active=infoFilter==='needs'?'needs':warrantyFilter!=='all'?warrantyFilter:'all';
-    return '<nav class="home-overview" aria-label="Collection overview"><button data-quick="all" aria-pressed="'+(active==='all')+'"><span>All items</span><strong>'+assets.length+'</strong></button><button data-quick="needs" aria-pressed="'+(active==='needs')+'"><span>Needs info</span><strong>'+needs+'</strong></button><button data-quick="covered" aria-pressed="'+(active==='covered')+'"><span>Covered</span><strong>'+covered+'</strong></button><button data-quick="expired" aria-pressed="'+(active==='expired')+'"><span>Expired</span><strong>'+expired+'</strong></button><button data-quick="missing" aria-pressed="'+(active==='missing')+'"><span>No warranty details</span><strong>'+missing+'</strong></button><button data-quick="not_applicable" aria-pressed="'+(active==='not_applicable')+'"><span>Not tracked</span><strong>'+notTracked+'</strong></button></nav>';
+    return '<nav class="home-overview" aria-label="Collection overview">'+[['all','All items',assets.length],['needs','Needs info',needs],['covered','Covered',covered],['expired','Expired',expired],['missing','No warranty details',missing],['not_applicable','Not tracked',notTracked]].map(function(q){
+      return '<button data-quick="'+q[0]+'" aria-pressed="'+(active===q[0])+'"><i class="home-dot '+q[0]+'" aria-hidden="true"></i><span>'+q[1]+'</span><strong>'+q[2]+'</strong></button>';
+    }).join('')+'</nav>';
   }
   function txLabel(t) { return t.date + ' · ' + (t.displayName || t.description || 'Transaction') + ' · ' + money(Math.abs(t.amount)) + ' · ' + t.source; }
   async function json(url) { var r = await fetch(url, {cache:'no-store'}); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
+  var ICONS={grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',external:'<path d="M14 4h6v6M20 4l-9 9M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"/>',chevronRight:'<path d="m9 5 7 7-7 7"/>',close:'<path d="M6 6l12 12M18 6 6 18"/>',check:'<path d="m5 12 4 4L19 7"/>',up:'<path d="m6 14 6-6 6 6"/>',down:'<path d="m6 10 6 6 6-6"/>',room:'<path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6"/>'};
+  function icon(name, cls) { return '<svg class="home-icon '+(cls||'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ICONS[name]+'</svg>'; }
   function homeIcon(category) {
     var paths = category === 'Furniture' ? '<path d="M5 11V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4M5 16v3m14-3v3M4 11a2 2 0 0 0-2 2v3h20v-3a2 2 0 0 0-4 0H6a2 2 0 0 0-2-2Z"/>' : category === 'Fixtures' ? '<path d="M9 18h6m-5 3h4M8 13a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/>' : '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 8h14m-10-3h2"/><circle cx="12" cy="15" r="4"/>';
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+paths+'</svg>';
   }
+  function roomOf(r) { return r.room||'Unassigned'; }
+  // Rooms stay exact on each record; the page groups by coarser zones so no section holds one item.
+  var ZONES={'Kitchen':'Kitchen & laundry','Laundry':'Kitchen & laundry','Living room':'Living & bedrooms','Entrance':'Living & bedrooms','Bedroom':'Living & bedrooms','Study':'Living & bedrooms','Bathroom':'Bathrooms','Whole home':'Whole home','Storeroom':'Whole home'};
+  function zoneOf(r) { return ZONES[roomOf(r)]||roomOf(r); }
+  // A category splits into zones only when it has at least eight items and every zone keeps two or more.
+  function zonesFor(items) {
+    if(items.length<8)return [];
+    var counts={};items.forEach(function(r){counts[zoneOf(r)]=(counts[zoneOf(r)]||0)+1;});
+    var names=Object.keys(counts);
+    if(names.length<2||names.some(function(n){return counts[n]<2;}))return [];
+    return names.sort(function(a,b){if(a==='Unassigned')return 1;if(b==='Unassigned')return -1;return counts[b]-counts[a]||a.localeCompare(b);}).map(function(n){return {name:n,count:counts[n]};});
+  }
   function categoryNav(assets) {
     return '<nav class="home-category-nav" aria-label="Item categories">'+['All','Appliances','Fixtures','Furniture'].map(function(c) {
       var items=assets.filter(function(r){return c==='All'||r.category===c;});
-      return '<button data-category="'+c+'" aria-pressed="'+(c===category)+'"><span class="home-category-label">'+(c==='All'?'<span class="home-all-icon">▦</span>':homeIcon(c))+'<strong>'+(c==='All'?'All items':c)+'</strong><span>'+items.length+'</span></span><small>'+money(items.reduce(function(n,r){return n+(r.cost||0);},0))+'</small></button>';
+      var zones=c==='All'?[]:zonesFor(items);
+      var open=c===category;
+      var roomList=!zones.length?'':'<div class="home-rail-rooms" data-for="'+esc(c)+'" '+(open?'':'hidden')+'>'+zones.map(function(z){
+        return '<button type="button" data-room="'+esc(z.name)+'" data-room-category="'+esc(c)+'" aria-pressed="'+(open&&room===z.name)+'"><span>'+esc(z.name)+'</span><span>'+z.count+'</span></button>';
+      }).join('')+'</div>';
+      return '<div class="home-rail-group"><button data-category="'+c+'" aria-pressed="'+(c===category)+'"><span class="home-category-label">'+(c==='All'?icon('grid'):homeIcon(c))+'<strong>'+(c==='All'?'All items':c)+'</strong><span>'+items.length+'</span></span><small>'+money(items.reduce(function(n,r){return n+(r.cost||0);},0))+'</small></button>'+roomList+'</div>';
     }).join('')+'</nav>';
+  }
+  function syncRail() {
+    root.querySelectorAll('[data-category]').forEach(function(n){n.setAttribute('aria-pressed',String(n.dataset.category===category));});
+    root.querySelectorAll('.home-rail-rooms').forEach(function(list){list.hidden=list.dataset.for!==category;});
+    root.querySelectorAll('[data-room]').forEach(function(n){n.setAttribute('aria-pressed',String(n.dataset.roomCategory===category&&n.dataset.room===room));});
   }
   function render() {
     var active=store.records.filter(function(r){return r.status!=='Archived';}), assets=active.filter(function(r){return r.kind==='appliance';});
     var known=assets.filter(function(r){return r.cost!=null;}), todo=actions(active,today()), due=todo.filter(function(a){return a.date&&a.record.kind===section;}), checks=active.filter(needsInformation);
     var infoRows=active.filter(function(r){return r.kind===section;}), needsInfo=infoRows.filter(needsInformation).length, completeInfo=infoRows.length-needsInfo;
-    root.innerHTML='<header class="home-heading"><div><span class="home-eyebrow">HOME COLLECTION</span><h2>Your home</h2><p>'+assets.length+' items · Purchases, warranties & care</p></div><div class="home-total"><span>Recorded home purchases</span><strong>'+money(known.reduce(function(n,r){return n+r.cost;},0))+'</strong><small>'+known.length+' priced · '+(assets.length-known.length)+' unpriced</small></div></header>'+
+    root.innerHTML='<header class="home-heading"><div><h2>Your home</h2><p>'+assets.length+' items · Purchases, warranties & care</p></div><div class="home-total"><span>Recorded home purchases</span><strong>'+money(known.reduce(function(n,r){return n+r.cost;},0))+'</strong><small>'+known.length+' priced · '+(assets.length-known.length)+' unpriced</small></div></header>'+
       '<div class="home-sections" role="group" aria-label="Home sections">'+Object.keys(titles).map(function(k){return '<button data-section="'+k+'" aria-pressed="'+(k===section)+'">'+({appliance:'Collection',insurance:'Insurance',mortgage:'Home loan',maintenance:'Care & maintenance'}[k])+'</button>';}).join('')+'</div>'+
       (due.length?'<div class="home-due-strip">'+due.map(actionHTML).join('')+'</div>':'')+(section==='appliance'?overviewHTML(assets):'')+
-      '<div class="home-workspace '+(section!=='appliance'?'home-workspace-wide':'')+'">'+(section==='appliance'?categoryNav(assets):'')+'<section class="home-collection"><div class="home-panel-head"><div><h3>'+(section==='appliance'?'Your collection':titles[section])+'</h3><p class="home-muted">'+(section==='appliance'?'Purchases grouped by category.':section==='insurance'?'Policies, cover and renewal dates.':section==='mortgage'?'Your loan and next refinancing review.':'Services and upkeep, in one place.')+'</p></div>'+(section==='appliance'?'':'<button class="home-button primary" id="home-add" '+(!editable?'disabled':'')+'>+ Add '+labels[section]+'</button>')+'</div><div class="home-filters"><input id="home-search" type="search" aria-label="Search Home records" placeholder="Search your collection…" value="'+esc(query)+'"><label class="home-info-filter"><span>Information</span><select id="home-info-filter" aria-label="Information status"><option value="all" '+(infoFilter==='all'?'selected':'')+'>All ('+infoRows.length+')</option><option value="needs" '+(infoFilter==='needs'?'selected':'')+'>Needs info ('+needsInfo+')</option><option value="complete" '+(infoFilter==='complete'?'selected':'')+'>Complete ('+completeInfo+')</option></select></label>'+(section==='appliance'?'<label><span>Warranty</span><select id="home-warranty-filter" aria-label="Warranty status"><option value="all" '+(warrantyFilter==='all'?'selected':'')+'>All</option><option value="covered" '+(warrantyFilter==='covered'?'selected':'')+'>Covered</option><option value="expired" '+(warrantyFilter==='expired'?'selected':'')+'>Expired</option><option value="unconfirmed" '+(warrantyFilter==='unconfirmed'?'selected':'')+'>Unconfirmed</option><option value="missing" '+(warrantyFilter==='missing'?'selected':'')+'>No details</option><option value="not_applicable" '+(warrantyFilter==='not_applicable'?'selected':'')+'>Not tracked</option></select></label><label><span>Sort</span><select id="home-sort" aria-label="Sort collection"><option value="attention" '+(sortBy==='attention'?'selected':'')+'>Needs attention</option><option value="name" '+(sortBy==='name'?'selected':'')+'>Name</option><option value="newest" '+(sortBy==='newest'?'selected':'')+'>Newest</option><option value="cost" '+(sortBy==='cost'?'selected':'')+'>Highest cost</option><option value="warranty" '+(sortBy==='warranty'?'selected':'')+'>Warranty attention</option></select></label>':'')+'<label class="home-archived-filter"><input id="home-archived" type="checkbox" '+(showArchived?'checked':'')+'> Archived</label></div><div id="home-register"></div></section></div>'+
+      '<div class="home-workspace '+(section!=='appliance'?'home-workspace-wide':'')+'">'+(section==='appliance'?categoryNav(assets):'')+'<section class="home-collection"><div class="home-panel-head"><div><h3>'+(section==='appliance'?'Your collection':titles[section])+'</h3><p class="home-muted">'+(section==='appliance'?'Purchases grouped by category.':section==='insurance'?'Policies, cover and renewal dates.':section==='mortgage'?'Your loan and next refinancing review.':'Services and upkeep, in one place.')+'</p></div>'+(section==='appliance'?viewToggle():'<button class="home-button primary" id="home-add" '+(!editable?'disabled':'')+'>+ Add '+labels[section]+'</button>')+'</div><div class="home-filters"><input id="home-search" type="search" aria-label="Search Home records" placeholder="'+({appliance:'Search items, brands or models…',insurance:'Search policies…',mortgage:'Search loan records…',maintenance:'Search services…'}[section])+'" value="'+esc(query)+'"><label class="home-info-filter"><span>Information</span><select id="home-info-filter" aria-label="Information status"><option value="all" '+(infoFilter==='all'?'selected':'')+'>All ('+infoRows.length+')</option><option value="needs" '+(infoFilter==='needs'?'selected':'')+'>Needs info ('+needsInfo+')</option><option value="complete" '+(infoFilter==='complete'?'selected':'')+'>Complete ('+completeInfo+')</option></select></label>'+(section==='appliance'?'<label><span>Warranty</span><select id="home-warranty-filter" aria-label="Warranty status"><option value="all" '+(warrantyFilter==='all'?'selected':'')+'>All</option><option value="covered" '+(warrantyFilter==='covered'?'selected':'')+'>Covered</option><option value="expired" '+(warrantyFilter==='expired'?'selected':'')+'>Expired</option><option value="unconfirmed" '+(warrantyFilter==='unconfirmed'?'selected':'')+'>Unconfirmed</option><option value="missing" '+(warrantyFilter==='missing'?'selected':'')+'>No details</option><option value="not_applicable" '+(warrantyFilter==='not_applicable'?'selected':'')+'>Not tracked</option></select></label><label><span>Sort</span><select id="home-sort" aria-label="Sort collection"><option value="attention" '+(sortBy==='attention'?'selected':'')+'>Needs attention</option><option value="name" '+(sortBy==='name'?'selected':'')+'>Name</option><option value="newest" '+(sortBy==='newest'?'selected':'')+'>Newest</option><option value="cost" '+(sortBy==='cost'?'selected':'')+'>Highest cost</option><option value="expiry" '+(sortBy==='expiry'?'selected':'')+'>Warranty end</option><option value="warranty" '+(sortBy==='warranty'?'selected':'')+'>Warranty attention</option></select></label>':'')+'<label class="home-archived-filter"><input id="home-archived" type="checkbox" '+(showArchived?'checked':'')+'> Archived</label></div><div id="home-register"></div></section></div>'+
       (checks.length?'<details class="home-checks home-panel"><summary><strong>Complete your records</strong><span>'+checks.length+' to review</span></summary><div class="home-check-list">'+todo.filter(function(a){return !a.date;}).map(actionHTML).join('')+'</div></details>':'')+referenceHTML()+
       '<footer class="home-footer"><span>'+(editable?'Saved on this computer':'Read-only')+' · Documents in Drive</span><button class="home-button" id="home-refresh">Refresh</button></footer>';
     renderRegister();
-    root.querySelectorAll('[data-category]').forEach(function(b){b.onclick=function(){category=b.dataset.category;root.querySelectorAll('[data-category]').forEach(function(n){n.setAttribute('aria-pressed',String(n===b));});renderRegister();};});
+    root.querySelectorAll('[data-category]').forEach(function(b){b.onclick=function(){category=b.dataset.category;room='All';syncRail();renderRegister();};});
+    root.querySelectorAll('[data-room]').forEach(function(b){b.onclick=function(){category=b.dataset.roomCategory;room=room===b.dataset.room&&category===b.dataset.roomCategory?'All':b.dataset.room;syncRail();renderRegister();};});
     root.querySelectorAll('[data-section]').forEach(function(b){b.onclick=function(){section=b.dataset.section;query='';render();};});
     root.querySelector('#home-search').oninput=function(e){query=e.target.value;renderRegister();};
     root.querySelector('#home-info-filter').onchange=function(e){infoFilter=e.target.value;renderRegister();};
     if(root.querySelector('#home-warranty-filter'))root.querySelector('#home-warranty-filter').onchange=function(e){warrantyFilter=e.target.value;renderRegister();};
-    if(root.querySelector('#home-sort'))root.querySelector('#home-sort').onchange=function(e){sortBy=e.target.value;renderRegister();};
+    if(root.querySelector('#home-sort'))root.querySelector('#home-sort').onchange=function(e){setSort(e.target.value,false);renderRegister();};
+    root.querySelectorAll('[data-view]').forEach(function(b){b.onclick=function(){view=b.dataset.view;try{localStorage.setItem('home-view',view);}catch(err){}root.querySelectorAll('[data-view]').forEach(function(n){n.setAttribute('aria-pressed',String(n===b));});renderRegister();};});
     root.querySelector('#home-archived').onchange=function(e){showArchived=e.target.checked;renderRegister();};
-    root.querySelectorAll('[data-quick]').forEach(function(b){b.onclick=function(){var v=b.dataset.quick;infoFilter=v==='needs'?'needs':'all';warrantyFilter=['covered','expired','missing','not_applicable'].includes(v)?v:'all';render();};});
+    root.querySelectorAll('[data-quick]').forEach(function(b){b.onclick=function(){var v=b.dataset.quick;if(v==='all'){query='';category='All';room='All';showArchived=false;}infoFilter=v==='needs'?'needs':'all';warrantyFilter=['covered','expired','missing','not_applicable'].includes(v)?v:'all';render();};});
     if(root.querySelector('#home-add'))root.querySelector('#home-add').onclick=function(){openRecord({id:'home_'+crypto.randomUUID(),kind:section,name:'',status:'Needs checking',category:section==='appliance'&&category!=='All'?category:''});};
     root.querySelector('#home-refresh').onclick=load;
     root.querySelectorAll('[data-open]').forEach(bindOpen);
@@ -201,49 +232,177 @@
     }
     return path?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+path+'</svg>':homeIcon(r.category);
   }
-  function thumbnail(r) {
+  function thumbnail(r, large) {
     var photo=homePhotos[r.id];
-    return '<span class="home-thumb '+(photo&&photo.files.length>1?'home-thumb-pair':'')+'" aria-hidden="true">'+(photo?photo.files.map(function(f){return '<img src="assets/home/'+f+(f.includes('.')?'':'.webp')+'" alt="" width="48" height="48" loading="lazy" decoding="async">';}).join(''):itemIcon(r))+'</span>';
+    return '<span class="home-thumb '+(photo&&photo.files.length>1?'home-thumb-pair':'')+(large?' home-thumb-lg':'')+'" aria-hidden="true">'+(photo?photo.files.map(function(f){return '<img src="assets/home/'+f+(f.includes('.')?'':'.webp')+'" alt="" width="48" height="48" loading="lazy" decoding="async">';}).join(''):itemIcon(r))+'</span>';
+  }
+  var viewIcons={list:'<path d="M4 6h16M4 12h16M4 18h16"/>',grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',coverage:'<path d="M3 6h9M3 12h14M3 18h6"/><circle cx="18" cy="6" r="1"/><circle cx="20" cy="12" r="1"/><circle cx="12" cy="18" r="1"/>'};
+  function viewToggle() {
+    return '<div class="home-view-toggle" role="group" aria-label="Collection view">'+[['list','List'],['grid','Grid'],['coverage','Coverage']].map(function(v){
+      return '<button type="button" data-view="'+v[0]+'" aria-pressed="'+(view===v[0])+'" title="'+v[1]+' view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+viewIcons[v[0]]+'</svg><span>'+v[1]+'</span></button>';
+    }).join('')+'</div>';
+  }
+  var toneRank={expired:0,unconfirmed:1,missing:2,covered:3,not_applicable:4};
+  var CATEGORIES=['Appliances','Fixtures','Furniture'];
+  function coverEnd(r) { return r.expires||r.secondaryExpiry||''; }
+  var defaultDir={newest:'desc',cost:'desc'};
+  function setSort(key, toggle) {
+    if(toggle&&sortBy===key)sortDir=sortDir==='asc'?'desc':'asc';
+    else{sortBy=key;sortDir=defaultDir[key]||'asc';}
+    var select=root.querySelector('#home-sort');if(select)select.value=sortBy;
+  }
+  function sortItems(items) {
+    var dir=sortDir==='desc'?-1:1;
+    function key(r){
+      switch(sortBy){
+        case 'name':return r.name.toLowerCase();
+        case 'newest':return r.purchased||r.delivered||r.installed||'';
+        case 'cost':return r.cost||0;
+        case 'category':return (r.category||'zzz')+' '+r.name.toLowerCase();
+        case 'expiry':return coverEnd(r)||'9999';
+        case 'warranty':return toneRank[warrantyTone(r)];
+        default:return Number(!needsInformation(r));
+      }
+    }
+    return items.slice().sort(function(a,b){var ka=key(a),kb=key(b);var c=typeof ka==='number'?ka-kb:String(ka).localeCompare(String(kb));return c*dir||a.name.localeCompare(b.name);});
+  }
+  function groups(rows) {
+    var cats=CATEGORIES.slice();
+    if(rows.some(function(r){return !CATEGORIES.includes(r.category);}))cats.push('Other');
+    return cats.map(function(c){
+      var items=sortItems(rows.filter(function(r){return c==='Other'?!CATEGORIES.includes(r.category):r.category===c;}));
+      var zones=room==='All'?zonesFor(items):[];
+      var rooms=zones.length?zones.map(function(z){return {name:z.name,items:items.filter(function(r){return zoneOf(r)===z.name;})};}):[{name:'',items:items}];
+      return {name:c,items:items,rooms:rooms};
+    }).filter(function(g){return g.items.length;});
+  }
+  // One primary state per item. Everything finer lives in the detail view.
+  function primaryChip(r) {
+    var tone=warrantyTone(r), end=r.expires, now=today();
+    var label=tone==='covered'?(end&&days(end,now)<=90?'Expiring':'Covered'):tone==='expired'?'Expired':tone==='unconfirmed'?'Unverified':tone==='not_applicable'?'Not tracked':'No warranty';
+    var cls=label==='Expiring'?'expiring':tone.replace('_','-');
+    var unverified=tone==='covered'&&r.status!=='Verified'&&r.warrantyStatus!=='covered';
+    return '<span class="home-chip '+cls+(unverified?' dashed':'')+'" title="'+esc(r.warrantyLabel||r.warrantyTerms||'')+'">'+label+'</span>';
+  }
+  function coverText(r) {
+    var end=coverEnd(r);
+    if(end)return (warrantyState(end,today())==='expired'?'Ended ':'Ends ')+date(end);
+    return r.warrantyLabel||(r.warrantyTerms?'End date unknown':'Receipt or terms needed');
+  }
+  function itemCell(r) {
+    var sub=[r.room,r.brand,r.model].filter(Boolean).join(' · ')||r.provider||'';
+    return '<span class="home-list-item">'+thumbnail(r)+'<span><strong>'+esc(r.name)+'</strong>'+(sub?'<small title="'+esc(sub)+'">'+esc(sub)+'</small>':'')+'</span></span>';
+  }
+  function itemButton(r) {
+    var sub=[r.room,r.brand,r.model].filter(Boolean).join(' · ')||r.provider||'';
+    return '<button type="button" class="home-list-item home-row-open" data-open="'+esc(r.id)+'" aria-label="Open '+esc(r.name)+'">'+thumbnail(r)+'<span><strong>'+esc(r.name)+'</strong>'+(sub?'<small title="'+esc(sub)+'">'+esc(sub)+'</small>':'')+'</span></button>';
+  }
+  function listHTML(rows) {
+    var cols=[['name','Item'],['cost','Cost','num'],['expiry','Warranty'],['attention','To do']];
+    var head=cols.map(function(c){var active=sortBy===c[0];return '<th class="'+(c[2]||'')+'" aria-sort="'+(active?(sortDir==='asc'?'ascending':'descending'):'none')+'"><button type="button" data-sort="'+c[0]+'">'+c[1]+(active?icon(sortDir==='asc'?'up':'down','home-sort-icon'):'')+'</button></th>';}).join('');
+    function row(r){
+      var reasons=attention(r), complete=!needsInformation(r);
+      return '<tr data-open="'+esc(r.id)+'"><td>'+itemButton(r)+'</td><td class="num">'+(r.cost==null?'<span class="home-muted">'+(r.costBasis==='Gift'?'Gift':'—')+'</span>':money(r.cost))+'</td><td>'+primaryChip(r)+'<small>'+esc(coverText(r))+'</small></td><td>'+(complete?'<span class="home-todo done">'+icon('check')+'Complete</span>':'<span class="home-todo" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+(reasons.length>1?' +'+(reasons.length-1):'')+'</span>')+'</td></tr>';
+    }
+    var body=groups(rows).map(function(g){
+      var total=g.items.reduce(function(n,r){return n+(r.cost||0);},0);
+      var header='<tr class="home-list-group"><th colspan="4"><span class="home-group-icon">'+homeIcon(g.name)+'</span><span>'+esc(g.name)+'</span><span class="home-group-count">'+g.items.length+'</span><span class="home-list-group-total">'+money(total)+'</span></th></tr>';
+      return g.rooms.map(function(sub,i){
+        var roomHead=sub.name?'<tr class="home-list-room"><th colspan="4"><span>'+esc(sub.name)+'</span><span class="home-group-count">'+sub.items.length+'</span></th></tr>':'';
+        return '<tbody class="home-category-group" data-group="'+esc(g.name)+'" data-room="'+esc(sub.name)+'">'+(i===0?header:'')+roomHead+sub.items.map(row).join('')+'</tbody>';
+      }).join('');
+    }).join('');
+    var total=rows.reduce(function(n,r){return n+(r.cost||0);},0);
+    return '<div class="home-list-wrap"><table class="home-list"><colgroup><col style="width:46%"><col style="width:15%"><col style="width:23%"><col style="width:16%"></colgroup><thead><tr>'+head+'</tr></thead>'+body+'<tfoot><tr><td>'+rows.length+' items</td><td class="num">'+money(total)+'</td><td colspan="2"></td></tr></tfoot></table></div>';
+  }
+  function shiftDays(iso, n) { var d=new Date(iso+'T00:00:00Z'); d.setUTCDate(d.getUTCDate()+n); return d.toISOString().slice(0,10); }
+  function coverageHTML(rows) {
+    var now=today();
+    var dated=rows.filter(function(r){return r.expires||r.secondaryExpiry;}).map(function(r){
+      var start=r.warrantyStart||r.installed||r.delivered||r.purchased||shiftDays(r.expires||r.secondaryExpiry,-365);
+      var ends=[r.expires,r.secondaryExpiry].filter(Boolean).sort();
+      return {r:r,start:start,end:ends[ends.length-1],first:r.expires||ends[0]};
+    }).sort(function(a,b){return a.first.localeCompare(b.first)||a.r.name.localeCompare(b.r.name);});
+    var undated=sortItems(rows.filter(function(r){return !r.expires&&!r.secondaryExpiry;}));
+    if(!dated.length)return '<div class="home-empty"><h4>No dated warranty cover to chart</h4><p>Items without an end date are listed in the list and grid views.</p></div>';
+    var minYear=Math.min.apply(null,dated.map(function(d){return +d.start.slice(0,4);}).concat(+now.slice(0,4)));
+    var maxYear=Math.max.apply(null,dated.map(function(d){return +d.end.slice(0,4);}).concat(+now.slice(0,4)));
+    var axisStart=minYear+'-01-01', axisEnd=(maxYear+1)+'-01-01', span=days(axisEnd,axisStart);
+    function pct(d){return Math.max(0,Math.min(100,days(d,axisStart)/span*100));}
+    var years=[];for(var y=minYear;y<=maxYear;y++)years.push(y);
+    var grid='<span class="home-gantt-lines" aria-hidden="true">'+years.map(function(y){return '<i style="left:'+pct(y+'-01-01')+'%"></i>';}).join('')+'</span>';
+    var axis='<div class="home-gantt-axis"><span></span><div>'+years.map(function(y){return '<b style="left:'+pct(y+'-01-01')+'%">'+y+'</b>';}).join('')+'<i class="home-gantt-today" style="left:'+pct(now)+'%" title="Today · '+date(now)+'"><span>Today</span></i></div></div>';
+    var body=dated.map(function(d){
+      var r=d.r, bars='';
+      var unverified=r.status!=='Verified'&&r.warrantyStatus!=='covered';
+      if(r.expires){var st=warrantyState(r.expires,now);var tone=st==='expired'?'expired':days(r.expires,now)<=90?'expiring':'covered';bars+='<span class="home-gantt-bar '+tone+(unverified?' dashed':'')+'" style="left:'+pct(d.start)+'%;width:'+Math.max(0.6,pct(r.expires)-pct(d.start))+'%" title="'+esc('Warranty · '+date(d.start)+' to '+date(r.expires))+'"><span>'+(st==='expired'?'Ended ':'Ends ')+date(r.expires)+'</span></span>';}
+      if(r.secondaryExpiry){var from=r.expires&&r.expires<r.secondaryExpiry?r.expires:d.start;var st2=warrantyState(r.secondaryExpiry,now);bars+='<span class="home-gantt-bar secondary '+(st2==='expired'?'expired':'covered')+'" style="left:'+pct(from)+'%;width:'+Math.max(0.6,pct(r.secondaryExpiry)-pct(from))+'%" title="'+esc((r.secondaryWarranty||'Additional cover')+' · to '+date(r.secondaryExpiry))+'"><span>'+esc(r.secondaryWarranty||'Additional cover')+' · '+date(r.secondaryExpiry)+'</span></span>';}
+      return '<div class="home-gantt-row" data-open="'+esc(r.id)+'" tabindex="0" role="button" aria-label="Open '+esc(r.name)+'"><div class="home-gantt-label">'+itemCell(r)+'</div><div class="home-gantt-track">'+grid+'<i class="home-gantt-today" style="left:'+pct(now)+'%"></i>'+bars+'</div></div>';
+    }).join('');
+    var rest=undated.length?'<details class="home-gantt-rest"><summary><strong>Without a dated end</strong><span>'+undated.length+' items</span></summary><div class="home-gantt-rest-list">'+undated.map(function(r){return '<button type="button" class="home-gantt-rest-item" data-open="'+esc(r.id)+'">'+itemCell(r)+primaryChip(r)+'</button>';}).join('')+'</div></details>':'';
+    return '<div class="home-gantt" aria-label="Warranty coverage timeline">'+axis+body+'</div><p class="home-muted home-gantt-note">Bars run from the recorded warranty start (or installation, delivery or purchase date) to the recorded end. Dashed bars are dates from unverified documents.</p>'+rest;
   }
   function collectionHTML(rows) {
-    var categories=['Appliances','Fixtures','Furniture'];
-    if(rows.some(function(r){return !categories.includes(r.category);}))categories.push('Other');
-    return categories.map(function(c){
-      var items=rows.filter(function(r){return c==='Other'?!['Appliances','Fixtures','Furniture'].includes(r.category):r.category===c;});
-      var rank={expired:0,unconfirmed:1,missing:2,covered:3};
-      items.sort(function(a,b){
-        if(sortBy==='name')return a.name.localeCompare(b.name);
-        if(sortBy==='newest')return (b.purchased||'').localeCompare(a.purchased||'')||a.name.localeCompare(b.name);
-        if(sortBy==='cost')return (b.cost||0)-(a.cost||0)||a.name.localeCompare(b.name);
-        if(sortBy==='warranty')return rank[warrantyTone(a)]-rank[warrantyTone(b)]||a.name.localeCompare(b.name);
-        return Number(!needsInformation(a))-Number(!needsInformation(b))||a.name.localeCompare(b.name);
-      });
-      if(!items.length)return '';
-      return '<section class="home-category-group"><header><div><span class="home-group-icon">'+homeIcon(c)+'</span><h4>'+c+'</h4><span class="home-group-count">'+items.length+'</span></div><span>'+money(items.reduce(function(n,r){return n+(r.cost||0);},0))+'</span></header><div class="home-item-grid">'+items.map(function(r){
-        var info=r.brand||r.provider||r.room||'Details to add';
-        var complete=!needsInformation(r), state=complete?'Info complete':'Needs info';
-        var eventDate=r.installed?esc(r.installationType||'Installed')+' · '+date(r.installed):r.delivered?'Delivered · '+date(r.delivered):'Delivery / installation date needed';
-        return '<button class="home-asset-card" data-open="'+esc(r.id)+'"><span class="home-card-top"><span class="home-card-brand">'+esc(info)+'</span><span class="home-card-arrow" aria-hidden="true">↗</span></span><span class="home-card-identity">'+thumbnail(r)+'<strong class="home-card-name">'+esc(r.name)+'</strong></span><span class="home-card-price">'+(r.cost==null?(r.costBasis==='Gift'?'Housewarming gift':'Cost to add'):money(r.cost))+'</span><span class="home-card-meta"><span>'+eventDate+'</span><span class="home-card-state '+(complete?'recorded':'needs-info')+'">'+state+'</span></span>'+cardCover(r)+'</button>';
-      }).join('')+'</div></section>';
+    if(view==='list')return listHTML(rows);
+    if(view==='coverage')return coverageHTML(rows);
+    return groups(rows).map(function(g){
+      var items=g.items, c=g.name;
+      return '<section class="home-category-group" data-group="'+esc(c)+'"><header><div><span class="home-group-icon">'+homeIcon(c)+'</span><h4>'+c+'</h4><span class="home-group-count">'+items.length+'</span></div><span>'+money(items.reduce(function(n,r){return n+(r.cost||0);},0))+'</span></header>'+g.rooms.map(function(sub){
+        return '<div class="home-room-group" data-group="'+esc(c)+'" data-room="'+esc(sub.name)+'">'+(sub.name?'<h5><span>'+esc(sub.name)+'</span><span class="home-group-count">'+sub.items.length+'</span></h5>':'')+'<div class="home-item-grid">'+sub.items.map(function(r){
+        var info=r.brand||r.provider||r.room||'Brand to add';
+        var complete=!needsInformation(r), reasons=attention(r);
+        var eventDate=r.installed?esc(r.installationType||'Installed')+' · '+date(r.installed):r.delivered?'Delivered · '+date(r.delivered):r.purchased?'Purchased · '+date(r.purchased):'No dates recorded';
+        var model=r.model?'<span class="home-card-model" title="'+esc(r.model)+'">'+esc(r.model)+'</span>':'';
+        return '<button class="home-asset-card" data-open="'+esc(r.id)+'"><span class="home-card-top">'+thumbnail(r)+'<span class="home-card-title"><span class="home-card-brand">'+esc(info)+'</span><strong class="home-card-name">'+esc(r.name)+'</strong>'+model+'</span></span><span class="home-card-price'+(r.cost==null?' unpriced':'')+'">'+(r.cost==null?(r.costBasis==='Gift'?'Housewarming gift':'Cost to add'):money(r.cost))+'</span><span class="home-card-meta"><span class="home-card-date">'+eventDate+'</span>'+(complete?'<span class="home-card-state recorded">Complete</span>':'<span class="home-card-state needs-info" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+'</span>')+'</span><span class="home-cover-row">'+primaryChip(r)+'<span>'+esc(coverText(r))+'</span></span></button>';
+        }).join('')+'</div></div>';
+      }).join('')+'</section>';
     }).join('');
   }
-  function actionHTML(a) { return '<button class="home-action '+a.tone+'" data-open="'+esc(a.record.id)+'"><span><strong>'+esc(a.label)+'</strong><small>'+esc(a.record.name)+'</small></span><span>'+(a.date?date(a.date):esc(a.record.status))+' →</span></button>'; }
-  function bindOpen(b) { b.onclick=function(){var r=store.records.find(function(r){return r.id===b.dataset.open;});if(r)openRecord(r);}; }
+  // Scroll spy: while every category is shown, the rail follows the group under the sticky header.
+  // Scroll spy: the rail follows the category and room under the sticky header while the view is unfiltered by room.
+  function bindScrollSpy() {
+    if(spyHandler){window.removeEventListener('scroll',spyHandler);spyHandler=null;}
+    var nav=root.querySelector('.home-category-nav');
+    if(!nav||section!=='appliance'||room!=='All'||view==='coverage')return;
+    var blocks=Array.prototype.slice.call(root.querySelectorAll('#home-register [data-room]'));
+    if(blocks.length<2)return;
+    var ticking=false;
+    function update(){
+      ticking=false;
+      var line=120, cat='', rm='';
+      blocks.forEach(function(b){var box=b.getBoundingClientRect();if(box.top<=line&&box.bottom>line){cat=b.dataset.group;rm=b.dataset.room;}});
+      if(!cat&&window.innerHeight+window.scrollY>=document.documentElement.scrollHeight-2){var last=blocks[blocks.length-1];if(last.getBoundingClientRect().top<window.innerHeight){cat=last.dataset.group;rm=last.dataset.room;}}
+      var railCat=category==='All'?cat:category;
+      nav.querySelectorAll('[data-category]').forEach(function(b){var on=category==='All'&&b.dataset.category===cat&&!!cat;b.classList.toggle('is-current',on);if(on)b.setAttribute('aria-current','true');else b.removeAttribute('aria-current');});
+      nav.querySelectorAll('.home-rail-rooms').forEach(function(list){list.hidden=list.dataset.for!==railCat;});
+      nav.querySelectorAll('[data-room]').forEach(function(b){var on=!!cat&&b.dataset.roomCategory===cat&&b.dataset.room===rm;b.classList.toggle('is-current',on);if(on)b.setAttribute('aria-current','true');else b.removeAttribute('aria-current');});
+    }
+    spyHandler=function(){if(!ticking){ticking=true;setTimeout(update,60);}};
+    window.addEventListener('scroll',spyHandler,{passive:true});
+    update();
+  }
+  function actionHTML(a) { return '<button class="home-action '+a.tone+'" data-open="'+esc(a.record.id)+'"><span><strong>'+esc(a.label)+'</strong><small>'+esc(a.record.name)+'</small></span><span>'+(a.date?date(a.date):esc(a.record.status))+icon('chevronRight')+'</span></button>'; }
+  function bindOpen(b) {
+    b.onclick=function(e){if(e.target.closest('a'))return;var inner=e.target.closest('[data-open]');if(inner&&inner!==b)return;var r=store.records.find(function(r){return r.id===b.dataset.open;});if(r)openRecord(r);};
+    if(b.tagName!=='BUTTON')b.onkeydown=function(e){if(e.key==='Enter'||e.key===' '){e.preventDefault();b.click();}};
+  }
   function renderRegister() {
-    var rows = store.records.filter(function(r){var incomplete=needsInformation(r),infoMatches=infoFilter==='all'||(infoFilter==='needs'&&incomplete)||(infoFilter==='complete'&&!incomplete);var warrantyMatches=section!=='appliance'||warrantyFilter==='all'||warrantyTone(r)===warrantyFilter;return r.kind===section&&(section!=='appliance'||category==='All'||r.category===category)&&infoMatches&&warrantyMatches&&(showArchived||r.status!=='Archived')&&JSON.stringify(r).toLowerCase().includes(query.toLowerCase());});
+    var rows = store.records.filter(function(r){var incomplete=needsInformation(r),infoMatches=infoFilter==='all'||(infoFilter==='needs'&&incomplete)||(infoFilter==='complete'&&!incomplete);var warrantyMatches=section!=='appliance'||warrantyFilter==='all'||warrantyTone(r)===warrantyFilter;return r.kind===section&&(section!=='appliance'||category==='All'||r.category===category)&&(section!=='appliance'||room==='All'||zoneOf(r)===room)&&infoMatches&&warrantyMatches&&(showArchived||r.status!=='Archived')&&JSON.stringify(r).toLowerCase().includes(query.toLowerCase());});
     var el=root.querySelector('#home-register');
-    if (!rows.length) { var filtered=query||infoFilter!=='all';el.innerHTML='<div class="home-empty"><h4>'+(filtered?'No matching records':'No '+titles[section].toLowerCase()+' recorded')+'</h4><p>'+(filtered?'Change the search or information filter.':section==='mortgage'?'Add your loan letter to record the bank, rate and review dates.':'Add a record to keep costs, dates and documents together.')+'</p></div>';return; }
-    if(section==='appliance'){el.innerHTML=collectionHTML(rows);el.querySelectorAll('[data-open]').forEach(bindOpen);return;}
+    if (!rows.length) { bindScrollSpy(); var filtered=query||infoFilter!=='all'||(section==='appliance'&&(warrantyFilter!=='all'||category!=='All'||room!=='All'));el.innerHTML='<div class="home-empty"><h4>'+(filtered?'No matching records':'No '+titles[section].toLowerCase()+' recorded')+'</h4><p>'+(filtered?'Change the search, category or filters.':section==='mortgage'?'Add your loan letter to record the bank, rate and review dates.':'Add a record to keep costs, dates and documents together.')+'</p></div>';return; }
+    if(section==='appliance'){el.innerHTML=collectionHTML(rows);el.querySelectorAll('[data-open]').forEach(bindOpen);el.querySelectorAll('[data-sort]').forEach(function(b){b.onclick=function(){setSort(b.dataset.sort,true);renderRegister();};});bindScrollSpy();return;}
+    bindScrollSpy();
+    rows.sort(function(a,b){var ka=section==='maintenance'?(nextService(a)||'9999'):(a.expires||'9999'), kb=section==='maintenance'?(nextService(b)||'9999'):(b.expires||'9999');return ka.localeCompare(kb)||a.name.localeCompare(b.name);});
     el.innerHTML='<div class="home-service-grid">'+rows.map(function(r){
       var facts=section==='insurance'?[['Premium',money(r.premium)+(r.cadence?' · '+esc(r.cadence):'')],['Policy end',warranty(r)],['Coverage',esc(r.coverage||'To add')]]:section==='mortgage'?[['Balance',money(r.balance)],['Balance as of',date(r.balanceDate)],['Monthly instalment',money(r.instalment)],['Annual rate',r.rate==null?'To add':esc(r.rate)+'%'],['Lock-in ends',date(r.lockInEnd)],['Review date',date(r.reviewDate)]]:r.installed?[['Setup date',date(r.installed)],['Event',esc(r.installationType||'Installation')],['Provider',esc(r.provider||'To add')]]:[['Service cost',money(r.cost)],['Last service',date(r.lastService)],['Next service',date(nextService(r))]];
-      return '<article class="home-service-card"><header><div><span class="home-card-brand">'+esc(r.provider||r.room||titles[section])+'</span><h4>'+esc(r.name)+'</h4></div>'+badge(r)+'</header><dl>'+facts.map(function(f){return '<div><dt>'+f[0]+'</dt><dd>'+f[1]+'</dd></div>';}).join('')+'</dl>'+(r.action?'<p class="home-service-note">'+esc(r.action)+'</p>':'')+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View details →</button></footer></article>';
+      return '<article class="home-service-card"><header><div><span class="home-card-brand">'+esc(r.provider||r.room||titles[section])+'</span><h4>'+esc(r.name)+'</h4></div>'+badge(r)+'</header><dl>'+facts.map(function(f){return '<div><dt>'+f[0]+'</dt><dd>'+f[1]+'</dd></div>';}).join('')+'</dl>'+(r.action?'<p class="home-service-note">'+esc(r.action)+'</p>':'')+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View details '+icon('chevronRight')+'</button></footer></article>';
     }).join('')+'</div>';
     el.querySelectorAll('[data-open]').forEach(bindOpen);
   }
   function referenceHTML() {
     var ref=store.costReference;if(!ref)return '';
     var comparisons=ref.comparisons||[];
-    return '<details class="home-panel home-cost-reference"><summary><strong>House sheet comparison</strong><span class="home-muted"> Original categories, amounts and differences</span></summary><p class="home-muted">Read from '+esc(ref.range)+' on '+date(ref.checkedAt)+'. This is a historical source snapshot. HDB amounts are not a current mortgage balance. These amounts are not added to the item register total.</p><p><a href="'+esc(ref.sourceUrl)+'" target="_blank" rel="noopener noreferrer">Open the original House sheet ↗</a></p><div class="home-reference-groups">'+ref.groups.map(function(g){return '<details><summary><strong>'+esc(g.name)+'</strong><span>'+money(g.reportedTotal)+'</span></summary><table class="home-table"><thead><tr><th>Source item</th><th>Sheet amount</th></tr></thead><tbody>'+g.rows.map(function(r){return '<tr><td>'+esc(r[0])+'</td><td>'+ (r[1]==null?esc(r[2]||'Not recorded'):money(r[1]))+'</td></tr>';}).join('')+'</tbody></table></details>';}).join('')+'</div><p class="home-muted">Sheet renovation total: '+money(ref.renovationTotal)+' (Appliances + Fixtures + Furniture + Renovation). The sheet lists Storerack twice; one record is included until the second purchase is confirmed. Gift labels are preserved without assuming who owns an item.</p><h3>Reconciliation</h3><div class="home-table-wrap"><table class="home-table"><thead><tr><th>Item / group</th><th>House sheet</th><th>Current register</th><th>Notes</th></tr></thead><tbody>'+comparisons.map(function(c){var found=c.recordIds.map(function(id){return store.records.find(function(r){return r.id===id&&r.status!=='Archived';});}).filter(Boolean);var complete=found.length===c.recordIds.length&&found.every(function(r){return r.cost!=null;});var total=complete?found.reduce(function(n,r){return n+r.cost;},0):null;return '<tr><td>'+esc(c.name)+'</td><td>'+money(c.sheetAmount)+'</td><td>'+money(total)+(total!=null&&Math.abs(total-c.sheetAmount)>=0.005?'<small>Difference '+money(Math.round((total-c.sheetAmount)*100)/100)+'</small>':'')+'</td><td>'+esc(c.note)+'</td></tr>';}).join('')+'</tbody></table></div></details>';
+    return '<details class="home-panel home-cost-reference"><summary><strong>House sheet comparison</strong><span class="home-muted"> Original categories, amounts and differences</span></summary><p class="home-muted">Read from '+esc(ref.range)+' on '+date(ref.checkedAt)+'. This is a historical source snapshot. HDB amounts are not a current mortgage balance. These amounts are not added to the item register total.</p><p><a href="'+esc(ref.sourceUrl)+'" target="_blank" rel="noopener noreferrer">Open the original House sheet '+icon('external')+'</a></p><div class="home-reference-groups">'+ref.groups.map(function(g){return '<details><summary><strong>'+esc(g.name)+'</strong><span>'+money(g.reportedTotal)+'</span></summary><table class="home-table"><thead><tr><th>Source item</th><th>Sheet amount</th></tr></thead><tbody>'+g.rows.map(function(r){return '<tr><td>'+esc(r[0])+'</td><td>'+ (r[1]==null?esc(r[2]||'Not recorded'):money(r[1]))+'</td></tr>';}).join('')+'</tbody></table></details>';}).join('')+'</div><p class="home-muted">Sheet renovation total: '+money(ref.renovationTotal)+' (Appliances + Fixtures + Furniture + Renovation). The sheet lists Storerack twice; one record is included until the second purchase is confirmed. Gift labels are preserved without assuming who owns an item.</p><h3>Reconciliation</h3><div class="home-table-wrap"><table class="home-table"><thead><tr><th>Item / group</th><th>House sheet</th><th>Current register</th><th>Notes</th></tr></thead><tbody>'+comparisons.map(function(c){var found=c.recordIds.map(function(id){return store.records.find(function(r){return r.id===id&&r.status!=='Archived';});}).filter(Boolean);var complete=found.length===c.recordIds.length&&found.every(function(r){return r.cost!=null;});var total=complete?found.reduce(function(n,r){return n+r.cost;},0):null;return '<tr><td>'+esc(c.name)+'</td><td>'+money(c.sheetAmount)+'</td><td>'+money(total)+(total!=null&&Math.abs(total-c.sheetAmount)>=0.005?'<small>Difference '+money(Math.round((total-c.sheetAmount)*100)/100)+'</small>':'')+'</td><td>'+esc(c.note)+'</td></tr>';}).join('')+'</tbody></table></div></details>';
   }
   var dialog=document.createElement('dialog');dialog.className='home-dialog';dialog.setAttribute('aria-labelledby','home-dialog-title');document.body.appendChild(dialog);
   var backdropPressed=false;
@@ -278,12 +437,20 @@
       return keys.split(',').filter(function(k){return record[k]!=null&&record[k]!=='';}).map(function(k){
         var f=fields.appliance.find(function(f){return f[0]===k;});
         var value=(k==='expires'||k==='secondaryExpiry')?coverDate(record,k):f[2]==='date'?date(record[k]):f[2]==='number'?money(record[k]):record[k];
-        return '<div><dt>'+esc(f[1])+'</dt><dd>'+esc(value)+'</dd></div>';
+        var copy=(k==='serial'||k==='model')?'<button type="button" class="home-copy" data-copy="'+esc(record[k])+'" aria-label="Copy '+(k==='serial'?'serial number':'model')+'">Copy</button>':'';
+        return '<div><dt>'+esc(f[1])+'</dt><dd>'+esc(value)+copy+'</dd></div>';
       }).join('');
     }
+    function timeline() {
+      var now=today();
+      var steps=[['Purchased',record.purchased],['Delivered',record.delivered],[record.installationType||'Installed',record.installed],['Warranty start',record.warrantyStart],['Warranty end',record.expires,'end'],[record.secondaryWarranty||'Additional cover',record.secondaryExpiry,'end']].filter(function(s){return s[1];});
+      if(steps.length<2)return '';
+      return '<ol class="home-timeline" aria-label="Key dates">'+steps.map(function(s){return '<li class="'+(days(s[1],now)<=0?'done ':'')+(s[2]||'')+'"><span>'+esc(s[0])+'</span><strong>'+date(s[1])+'</strong></li>';}).join('')+'</ol>';
+    }
     var photo=homePhotos[record.id];
+    var subtitle=[record.brand,record.model].filter(Boolean).join(' · ');
     var warrantyFacts=facts('warrantyStart,warrantyStartBasis,expires,warrantyTerms,warrantyCertificate,secondaryWarranty,secondaryExpiry,coverage');
-    var warrantySource=record.warrantySourceUrl&&/^https:\/\//.test(record.warrantySourceUrl)?'<p class="home-source"><a href="'+esc(record.warrantySourceUrl)+'" target="_blank" rel="noopener noreferrer">Open official warranty terms ↗</a></p>':'';
+    var warrantySource=record.warrantySourceUrl&&/^https:\/\//.test(record.warrantySourceUrl)?'<p class="home-source"><a href="'+esc(record.warrantySourceUrl)+'" target="_blank" rel="noopener noreferrer">Open official warranty terms '+icon('external')+'</a></p>':'';
     var warrantyBasis=record.warrantyStatus==='not_applicable'?'Warranty is not tracked for this item.':record.warrantyStartBasis==='Shopee delivery'?'Warranty begins from the Shopee delivery date: '+date(record.warrantyStart)+'.':record.warrantyStartBasis==='Delivery'?'Warranty begins from the recorded delivery date: '+date(record.warrantyStart)+'.':record.warrantyStart?'Warranty begins from the recorded installation date: '+date(record.warrantyStart)+'.':record.installed?'Warranty begins from the recorded installation date: '+date(record.installed)+'.':record.delivered?'Delivered '+date(record.delivered)+'. Warranty start is not yet recorded.':'Installation or delivery date needed to establish the warranty start and calculate expiry.';
     var components=Array.isArray(record.components)?record.components:[];
     var componentHTML=components.length?'<section class="home-component-section"><h3>Included items <span>'+components.length+'</span></h3><p class="home-muted">Line amounts are document prices before any shared bundle discount. The parent record is the amount counted in your home total.</p><div class="home-component-table"><table><thead><tr><th>Fixture</th><th>Model</th><th>Area</th><th>Qty</th><th>Line amount</th></tr></thead><tbody>'+components.map(function(c){return '<tr><td><strong>'+esc(c.name)+'</strong></td><td>'+esc(c.model||'—')+'</td><td>'+esc(c.area||'—')+'</td><td>'+esc(c.quantity==null?'—':c.quantity)+'</td><td>'+(c.amount==null?'Included':money(c.amount))+'</td></tr>';}).join('')+'</tbody></table></div></section>':'';
@@ -291,8 +458,9 @@
     var costBreakdown=costRows.length?'<section class="home-cost-breakdown"><h3>Purchase breakdown</h3><dl>'+costRows.map(function(row){return '<div><dt>'+row[0]+'</dt><dd>'+money(row[1])+'</dd></div>';}).join('')+'<div class="home-cost-total"><dt>Order total</dt><dd>'+money(record.cost)+'</dd></div></dl></section>':'';
     var services=store.records.filter(function(r){return r.kind==='maintenance'&&r.status!=='Archived'&&r.id.indexOf(record.id+'_filter_')===0;});
     var serviceHTML=services.length?'<section><h3>Filter replacements</h3><p class="home-muted">Three-year package · S$480 paid once. Annual dates follow your instructions, starting on the filter receipt date.</p><dl>'+services.map(function(r){return '<div><dt>'+esc(r.name)+'</dt><dd>'+date(r.nextService)+' · '+(r.lastService?'Last serviced '+date(r.lastService):'Completion unconfirmed')+'</dd></div>';}).join('')+'</dl><p>'+source(services[0])+'</p></section>':'';
-    dialog.innerHTML='<header class="home-dialog-head"><div><span class="home-eyebrow">'+esc(record.category||'Home collection')+'</span><h2 id="home-dialog-title">'+esc(record.name)+'</h2></div><button type="button" class="home-button" id="home-close" aria-label="Close Home record">×</button></header><div class="home-dialog-body home-item-detail"><div class="home-detail-price">'+thumbnail(record)+'<strong>'+(record.cost==null?(record.costBasis==='Gift'?'Housewarming gift':'Cost not recorded'):money(record.cost))+'</strong>'+badge(record)+'</div><p class="home-source">'+source(record)+'</p>'+(photo?'<p class="home-photo-credit"><a href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer">Product image: '+esc(photo.label)+' ↗</a></p>':'')+costBreakdown+'<section><h3>About this item</h3><dl>'+facts('brand,model,room,serial')+'</dl></section>'+componentHTML+'<section><h3>Ownership, delivery & installation</h3><dl>'+facts('provider,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource,costBasis,funding')+'</dl></section><section><h3>Warranty & cover</h3><p class="home-warranty-basis">'+esc(warrantyBasis)+'</p>'+(warrantyFacts?'<dl>'+warrantyFacts+'</dl>':record.warrantyStatus==='not_applicable'?'':'<p class="home-muted">Warranty details not yet recorded.</p>')+warrantySource+'</section>'+serviceHTML+(record.action?'<section><h3>To keep in mind</h3><p class="home-detail-note">'+esc(record.action)+'</p></section>':'')+(record.notes?'<details class="home-field-group"><summary>Documents & notes</summary><p class="home-detail-note">'+esc(record.notes)+'</p></details>':'')+'</div>';
+    dialog.innerHTML='<header class="home-dialog-head"><div><h2 id="home-dialog-title">'+esc(record.name)+'</h2><p class="home-dialog-sub">'+esc([record.category||'Home collection',record.room].filter(Boolean).join(' · '))+'</p></div><button type="button" class="home-button home-close" id="home-close" aria-label="Close Home record">'+icon('close')+'</button></header><div class="home-dialog-body home-item-detail"><div class="home-detail-hero">'+thumbnail(record,true)+'<div><div class="home-detail-price"><strong>'+(record.cost==null?(record.costBasis==='Gift'?'Housewarming gift':'Cost not recorded'):money(record.cost))+'</strong>'+badge(record)+'</div>'+(subtitle?'<p class="home-detail-sub">'+esc(subtitle)+'</p>':'')+'</div></div>'+timeline()+'<p class="home-source">'+source(record)+'</p>'+(photo?'<p class="home-photo-credit"><a href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer">Product image: '+esc(photo.label)+icon('external')+'</a></p>':'')+costBreakdown+'<section><h3>About this item</h3><dl>'+facts('brand,model,room,roomDetail,serial')+'</dl></section>'+componentHTML+'<section><h3>Ownership, delivery & installation</h3><dl>'+facts('provider,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource,costBasis,funding')+'</dl></section><section><h3>Warranty & cover</h3><p class="home-warranty-basis tone-'+esc(warrantyTone(record)).replace('not_applicable','none')+'">'+esc(warrantyBasis)+'</p>'+(warrantyFacts?'<dl>'+warrantyFacts+'</dl>':record.warrantyStatus==='not_applicable'?'':'<p class="home-muted">Warranty details not yet recorded.</p>')+warrantySource+'</section>'+serviceHTML+(record.action?'<section><h3>To keep in mind</h3><p class="home-detail-note">'+esc(record.action)+'</p></section>':'')+(record.notes?'<details class="home-field-group"><summary>Documents & notes</summary><p class="home-detail-note">'+esc(record.notes)+'</p></details>':'')+'</div>';
     dialog.querySelector('#home-close').onclick=function(){dialog.close();};
+    dialog.querySelectorAll('[data-copy]').forEach(function(b){b.onclick=function(){if(!navigator.clipboard)return;navigator.clipboard.writeText(b.dataset.copy).then(function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},1500);});};});
     dialog.showModal();
     dialog.scrollTop=0;
   }
@@ -301,7 +469,7 @@
     if(record.kind==='appliance'){openItem(record);return;}
     var revision=store.revision;
     var linked=txs.find(function(t){return t.id===record.transactionId&&t.source===record.transactionSource;});
-    dialog.innerHTML='<form id="home-form"><header class="home-dialog-head"><div><span class="home-eyebrow">'+esc(titles[record.kind])+'</span><h2 id="home-dialog-title">'+esc(record.name||'New '+labels[record.kind])+'</h2></div><button class="home-button" type="button" id="home-close" aria-label="Close Home record">×</button></header><div class="home-dialog-body"><p class="home-source">'+source(record)+'</p><fieldset '+(!editable?'disabled':'')+'>'+groupedFields(record)+'<details class="home-field-group home-link-transaction"><summary>Linked payment</summary><p class="home-muted">Reference an existing statement payment. This does not add spending or change its ownership.</p><input id="home-tx-search" type="search" placeholder="Search payments by merchant, date or amount" aria-label="Search payments"><select id="home-tx" aria-label="Linked payment"><option value="">No linked payment</option>'+(linked?'<option value="'+esc(linked.source+':'+linked.id)+'" selected>'+esc(txLabel(linked))+'</option>':'')+'</select><small id="home-tx-help" class="home-muted">'+(record.transactionId&&!linked?'Previously linked payment is unavailable; choose a current payment.':'Search to choose a payment. Amounts remain independently recorded above.')+'</small></details></fieldset>'+(record.kind==='mortgage'?'<p class="home-muted">Without an explicit review date, attention reminders suggest the earlier of 90 days or the recorded notice period before lock-in ends. This is a planning date, not a contractual deadline.</p>':'')+'<p id="home-error" role="alert"></p></div><footer class="home-dialog-foot"><span class="home-muted">'+(editable?'Changes are saved locally with backups.':'Read-only view')+'</span><button class="home-button primary" id="home-save" '+(!editable?'disabled':'')+'>Save record</button></footer></form>';
+    dialog.innerHTML='<form id="home-form"><header class="home-dialog-head"><div><h2 id="home-dialog-title">'+esc(record.name||'New '+labels[record.kind])+'</h2><p class="home-dialog-sub">'+esc(titles[record.kind])+'</p></div><button class="home-button home-close" type="button" id="home-close" aria-label="Close Home record">'+icon('close')+'</button></header><div class="home-dialog-body"><p class="home-source">'+source(record)+'</p><fieldset '+(!editable?'disabled':'')+'>'+groupedFields(record)+'<details class="home-field-group home-link-transaction"><summary>Linked payment</summary><p class="home-muted">Reference an existing statement payment. This does not add spending or change its ownership.</p><input id="home-tx-search" type="search" placeholder="Search payments by merchant, date or amount" aria-label="Search payments"><select id="home-tx" aria-label="Linked payment"><option value="">No linked payment</option>'+(linked?'<option value="'+esc(linked.source+':'+linked.id)+'" selected>'+esc(txLabel(linked))+'</option>':'')+'</select><small id="home-tx-help" class="home-muted">'+(record.transactionId&&!linked?'Previously linked payment is unavailable; choose a current payment.':'Search to choose a payment. Amounts remain independently recorded above.')+'</small></details></fieldset>'+(record.kind==='mortgage'?'<p class="home-muted">Without an explicit review date, attention reminders suggest the earlier of 90 days or the recorded notice period before lock-in ends. This is a planning date, not a contractual deadline.</p>':'')+'<p id="home-error" role="alert"></p></div><footer class="home-dialog-foot"><span class="home-muted">'+(editable?'Changes are saved locally with backups.':'Read-only view')+'</span><button class="home-button primary" id="home-save" '+(!editable?'disabled':'')+'>Save record</button></footer></form>';
     dialog.querySelector('#home-close').onclick=function(){if(!busy)dialog.close();};
     var select=dialog.querySelector('#home-tx');
     dialog.querySelector('#home-tx-search').oninput=function(e){
