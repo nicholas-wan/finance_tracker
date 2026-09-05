@@ -2358,8 +2358,18 @@
     var wrap = document.getElementById("income-kpis");
     clear(wrap);
     var steps = data.salarySteps || [];
-    var years = data.salaryYears || [];
+    // The salary file is hand-maintained, so its order is not trusted: the KPI
+    // cards read the last row and the table lists the newest year first.
+    var years = (data.salaryYears || []).slice().sort(function (a, b) {
+      return a.year - b.year;
+    });
     var latest = steps[steps.length - 1];
+    function growthPercent(growth) {
+      return typeof growth === "number" && isFinite(growth) && growth > 0
+        ? (growth - 1) * 100 : null;
+    }
+    function growthLabel(pct) { return (pct >= 0 ? "+" : "") + pct.toFixed(1) + "%"; }
+    function knownAmount(value) { return typeof value === "number" && isFinite(value); }
     var prev = steps[steps.length - 2];
     // The hand-kept salary sheet is optional: a clone without one shows only
     // what the bank history supports, rather than empty panels.
@@ -2386,11 +2396,17 @@
     }
     var lastYear = years[years.length - 1];
     if (lastYear) {
+      var lastGrowth = growthPercent(lastYear.growth);
       wrap.appendChild(metric(lastYear.year + " income", fmt0(lastYear.income),
-        lastYear.growth ? "+" + ((lastYear.growth - 1) * 100).toFixed(1) + "% on " + (lastYear.year - 1) : null,
-        null, "up"));
-      wrap.appendChild(metric(lastYear.year + " tax", fmt0(lastYear.tax),
-        ((lastYear.tax / lastYear.income) * 100).toFixed(1) + "% effective rate", null, "receipt"));
+        lastGrowth === null ? null : growthLabel(lastGrowth) + " on " + (lastYear.year - 1),
+        lastGrowth !== null && lastGrowth < 0 ? "bad" : null, "up"));
+      if (knownAmount(lastYear.tax)) {
+        wrap.appendChild(metric(lastYear.year + " tax", fmt0(lastYear.tax),
+          ((lastYear.tax / lastYear.income) * 100).toFixed(1) + "% effective rate", null, "receipt"));
+      } else {
+        wrap.appendChild(metric(lastYear.year + " tax", "\u2014",
+          "not on the salary sheet yet", null, "receipt"));
+      }
     }
 
     // Salary step timeline
@@ -2430,9 +2446,10 @@
       var tr = document.createElement("tr");
       tr.appendChild(el("td", "", String(y.year)));
       tr.appendChild(el("td", "num", fmt0(y.income)));
-      tr.appendChild(el("td", "num " + (y.growth ? "pos" : ""),
-        y.growth ? "+" + ((y.growth - 1) * 100).toFixed(1) + "%" : "—"));
-      tr.appendChild(el("td", "num", y.tax ? fmt0(y.tax) : "—"));
+      var pct = growthPercent(y.growth);
+      tr.appendChild(el("td", "num " + (pct === null ? "" : pct >= 0 ? "pos" : "neg"),
+        pct === null ? "—" : growthLabel(pct)));
+      tr.appendChild(el("td", "num", knownAmount(y.tax) ? fmt0(y.tax) : "—"));
       table.appendChild(tr);
     });
     yearWrap.appendChild(table);
@@ -5568,6 +5585,10 @@
     // Transactions has its own period picker, so the header month nav steps aside.
     var monthTabs = { overview: 1 };
     document.getElementById("month-nav").classList.toggle("hidden", !monthTabs[name]);
+    if (name === "overview" && state.chartStale) {
+      state.chartStale = false;
+      renderStacked();
+    }
   }
 
   function applyTheme(theme) {
@@ -5694,6 +5715,19 @@
       state.ledgerLimit = LEDGER_CAP;
       renderPeriod();
       renderLedger();
+    });
+
+    // The month chart sizes itself from the viewport when it draws, so redraw
+    // it once the window settles into a new shape rather than leaving a
+    // phone-sized drawing stretched across a desktop. A hidden Overview has
+    // no width to measure, so it redraws when the tab comes back instead.
+    var resizeTimer = null;
+    window.addEventListener("resize", function () {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(function () {
+        if (state.tab === "overview") renderStacked();
+        else state.chartStale = true;
+      }, 150);
     });
 
     var pills = document.getElementById("owner-pills");

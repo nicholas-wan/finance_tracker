@@ -636,6 +636,7 @@ table.mini th { text-align: left; font-size: var(--fs-caption); font-weight: 500
 table.mini td { padding: 8px 6px; border-bottom: 1px solid var(--border); }
 table.mini .num { text-align: right; font-variant-numeric: tabular-nums; }
 table.mini .pos { color: var(--green); }
+table.mini .neg { color: var(--red); }
 table.mini .strong { font-weight: 600; }
 table.mini tr.total-row td { border-bottom: none; border-top: 1px solid var(--text-3); font-weight: 600; }
 table.mini tr.settlement-opening-row td { background: var(--surface-2); color: var(--text-2); }

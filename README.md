@@ -223,7 +223,11 @@ generated-data rebuilds are atomic and roll back if validation fails.
 
 - Merchant category rules: `CATEGORY_RULES` in `scripts/build_data.py`
 - Game seller rules: `GAME_RULES` in `scripts/build_data.py`
-- Salary history: `manual/salary.json`
+- Salary history: `manual/salary.json`. `years` rows hold each year's income
+  and tax from the IRAS Notice of Assessment, filed under the income year
+  (Year of Assessment minus one), with `growth` as the ratio against the
+  previous year's income; the validator checks that ratio. Row order does not
+  matter, the dashboard sorts by year.
 - Game-account sales: `manual/game_sales.json`
 - Insurance policies: `manual/insurance.json` (Git-ignored). Monthly premiums are
   annualised at 12 payments; one-off investments are excluded from recurring
