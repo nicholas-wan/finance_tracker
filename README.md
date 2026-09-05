@@ -19,9 +19,21 @@ and review decisions.
 ### Desktop or taskbar launcher
 
 The repository includes `scripts/launch_dashboard.vbs` and
-`scripts/launch_dashboard.ps1`. The desktop **Finances** shortcut runs them without
-opening a PowerShell window, starts one editable server, and opens the dashboard.
-Right-click the shortcut and choose **Show more options → Pin to taskbar**.
+`scripts/launch_dashboard.ps1`. The desktop **Yx Finances** shortcut runs them
+without opening a PowerShell window, starts one editable server on port 3403,
+and opens the dashboard. It uses `app/favicon.ico`, the purple Yx mark, so it
+sits next to the green Nic tracker icon without confusion. Right-click the
+shortcut and choose **Show more options → Pin to taskbar**. To recreate the
+shortcut, run this in PowerShell:
+
+```powershell
+$s = (New-Object -ComObject WScript.Shell).CreateShortcut("$([Environment]::GetFolderPath('Desktop'))\Yx Finances.lnk")
+$s.TargetPath = "C:\Windows\System32\wscript.exe"
+$s.Arguments = '//nologo "' + (Resolve-Path .\scripts\launch_dashboard.vbs) + '"'
+$s.WorkingDirectory = (Resolve-Path .)
+$s.IconLocation = (Resolve-Path .\app\favicon.ico).Path + ",0"
+$s.Save()
+```
 
 Launcher-started servers track open dashboard tabs. Closing the last tab normally
 stops the server within about fifteen seconds; the grace period is long enough that
