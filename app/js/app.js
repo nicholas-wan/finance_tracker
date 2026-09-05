@@ -999,7 +999,8 @@
         owner: document.body.classList.contains("yx-single-owner") ? "Yx" : values.owner,
         category: values.category,
         displayName: values.displayName,
-        remark: values.remark
+        remark: values.remark,
+        destination: values.destination || ""
       })
     }).then(function (response) {
       return response.json().catch(function () {
@@ -1296,6 +1297,53 @@
       "Private context that remains attached to this exact transaction."
     ));
 
+    // Destination: the country or region a travel charge belongs to. Most
+    // rows infer it; a platform charge whose descriptor says only
+    // "Singapore" needs a hand, and the nearest trip is offered as a start.
+    var inferredDestination = window.Insights.travelCountry(
+      Object.assign({}, t, { destination: "", category: "Travel" }));
+    var destination = document.createElement("select");
+    var inferredOption = document.createElement("option");
+    inferredOption.value = "";
+    inferredOption.textContent = "Inferred \u00b7 " +
+      (inferredDestination === "Unknown" ? "unknown" : inferredDestination);
+    destination.appendChild(inferredOption);
+    var destinationNames = window.Insights.destinations();
+    if (t.destination && destinationNames.indexOf(t.destination) === -1) {
+      destinationNames.push(t.destination);
+    }
+    destinationNames.forEach(function (name) {
+      var option = document.createElement("option");
+      option.value = name;
+      option.textContent = name;
+      destination.appendChild(option);
+    });
+    destination.value = t.destination || "";
+    destination.disabled = !editor.available;
+    var suggestion = !t.destination && inferredDestination === "Unknown"
+      ? window.Insights.suggestedDestination(t, data.transactions) : null;
+    var destinationField = drawerField("Destination", destination,
+      t.destination
+        ? "Saved by hand. Choose Inferred to go back to the automatic reading."
+        : inferredDestination !== "Unknown"
+        ? "Read from the booking, the descriptor or the charge currency."
+        : suggestion
+        ? "The descriptor names only the platform. Nearest travel charge within a week: " +
+          suggestion.country + " on " + dateLabel(suggestion.date) + " (" + suggestion.description + ")."
+        : "The descriptor names only the platform, and no travel charge within a week names a destination.");
+    if (suggestion && editor.available) {
+      var useSuggestion = el("button", "drawer-suggest", "Use " + suggestion.country);
+      useSuggestion.type = "button";
+      useSuggestion.addEventListener("click", function () { destination.value = suggestion.country; });
+      destinationField.appendChild(useSuggestion);
+    }
+    function syncDestinationField() {
+      destinationField.classList.toggle("hidden", category.value !== "Travel");
+    }
+    syncDestinationField();
+    category.addEventListener("change", syncDestinationField);
+    form.appendChild(destinationField);
+
     var actions = el("div", "drawer-form-actions");
     var status = el("span", "drawer-save-status", editor.available
       ? "Changes are saved by stable transaction ID."
@@ -1312,7 +1360,8 @@
         owner: owner.value,
         category: category.value,
         displayName: displayName.value.trim().replace(/\s+/g, " "),
-        remark: remark.value.trim().replace(/\s+/g, " ")
+        remark: remark.value.trim().replace(/\s+/g, " "),
+        destination: category.value === "Travel" ? destination.value : ""
       }, save, status);
     });
     editSection.appendChild(form);
@@ -1695,6 +1744,7 @@
         country === "All" ? "All countries" : country);
       pill.type = "button";
       if (country !== "All") {
+        pill.insertBefore(window.Flags.node(country, "sm"), pill.firstChild);
         pill.appendChild(el("span", "pill-count", String(counts[country])));
         pill.title = counts[country] + " travel charge" + (counts[country] === 1 ? "" : "s") +
           " across all statements";
@@ -1731,7 +1781,15 @@
 
   function tripLabel(trip) {
     if (trip.primary === "Unknown") return "Unknown destination";
-    return trip.primary + (trip.countries.length > 1 ? " +" + (trip.countries.length - 1) : "");
+    var place = trip.city && trip.city !== trip.primary
+      ? trip.city + ", " + trip.primary : trip.primary;
+    return place + (trip.countries.length > 1 ? " +" + (trip.countries.length - 1) : "");
+  }
+  function countryLabel(country, size) {
+    var node = document.createDocumentFragment();
+    node.appendChild(window.Flags.node(country, size));
+    node.appendChild(document.createTextNode(country));
+    return node;
   }
 
   // Every trip in the history, split into the ones that stand on their own
@@ -1836,7 +1894,9 @@
     // against the whole history rather than against each other.
     var medianPerDay = catalogue.medianPerDay;
     function inCountry(trip) {
-      return country === "All" || trip.countries.indexOf(country) !== -1;
+      if (country === "All") return true;
+      if (country === "Unknown") return trip.primary === "Unknown";
+      return trip.countries.indexOf(country) !== -1;
     }
     var year = options.year || "All";
     function inYear(trip) { return year === "All" || trip.start.slice(0, 4) === year; }
@@ -1874,7 +1934,7 @@
       var active = options.isActive ? options.isActive(trip) : false;
       var card = el("div", "kpi trip-card" + (active ? " active" : ""));
       var title = el("p", "label");
-      title.appendChild(icon("plane"));
+      title.appendChild(trip.primary === "Unknown" ? icon("plane") : window.Flags.node(trip.primary));
       title.appendChild(document.createTextNode(label));
       if (trip.countries.length > 1) title.title = trip.countries.join(", ");
       card.appendChild(title);
@@ -5210,7 +5270,9 @@
         var active = state.travelCountry === entry.country;
         var refunded = Math.abs(entry.amount) < 0.01;
         var row = el("div", "transaction-breakdown-row" + (active ? " active" : ""));
-        row.appendChild(el("span", "transaction-breakdown-name", entry.country));
+        var nameNode = el("span", "transaction-breakdown-name");
+        nameNode.appendChild(countryLabel(entry.country, "sm"));
+        row.appendChild(nameNode);
         var track = el("span", "transaction-breakdown-track");
         var fill = el("span", "transaction-breakdown-fill" +
           (entry.amount < 0 ? " refund" : "") +
@@ -5230,6 +5292,12 @@
       });
       section.appendChild(yearBlock);
     });
+    if (state.travelCountry === "Unknown") {
+      section.appendChild(el("p", "travel-unknown-hint",
+        "These charges bill from a platform's Singapore entity, so nothing in the " +
+        "descriptor names where the money went. Open a row and set its destination; " +
+        "the drawer suggests the nearest trip within a week."));
+    }
     summary.appendChild(section);
   }
 
@@ -5841,7 +5909,9 @@
       var amount = byCountry[country];
       var refunded = Math.abs(amount) < 0.5;
       var row = el("div", "cat-row");
-      row.appendChild(el("span", "name", country));
+      var nameNode = el("span", "name");
+      nameNode.appendChild(countryLabel(country, "sm"));
+      row.appendChild(nameNode);
       var track = el("div", "track");
       if (!refunded) {
         var fill = el("div", "fill");
@@ -5931,8 +6001,9 @@
       });
       var names = Object.keys(destinations).sort();
       if (names.length) {
-        var inline = el("small", "travel-country-inline",
-          names.length === 1 ? names[0] : names.length + " destinations");
+        var inline = el("small", "travel-country-inline");
+        if (names.length === 1) inline.appendChild(countryLabel(names[0], "sm"));
+        else inline.appendChild(document.createTextNode(names.length + " destinations"));
         if (names.length > 1) inline.title = names.join(", ");
         category.appendChild(inline);
       }
@@ -6136,7 +6207,12 @@
       // "Unknown" under every platform charge is noise; the details row and
       // the breakdown still say so where it matters.
       if (rowCountry && rowCountry !== "Unknown") {
-        tdCat.appendChild(el("small", "travel-country-inline", rowCountry));
+        var inlineCountry = el("small", "travel-country-inline");
+        inlineCountry.appendChild(countryLabel(rowCountry, "sm"));
+        tdCat.appendChild(inlineCountry);
+      } else if (rowCountry === "Unknown") {
+        // An affordance rather than a label: the drawer can set it.
+        tdCat.appendChild(el("small", "travel-country-inline muted", "set destination"));
       }
       tr.appendChild(tdCat);
       var tdOwner = el("td", "col-owner");

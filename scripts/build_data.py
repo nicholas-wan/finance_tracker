@@ -1709,6 +1709,11 @@ def main():
                 "kind": trip_match_kind,
                 "note": trip_match_note,
             }
+        # A hand-set destination for a travel charge whose descriptor names
+        # only the platform's billing entity; the dashboard reads it before
+        # its own inference.
+        if override.get("destination"):
+            record["destination"] = override["destination"]
         if is_trip_description(r["description"]):
             # Every Trip.com statement row, matched or not, charge or refund,
             # carries the marker so the "Trip.com only" filter and the

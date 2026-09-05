@@ -420,6 +420,7 @@ def validate_transaction_detail_request(payload, transactions):
     category = payload.get("category")
     display_name = payload.get("displayName")
     remark = payload.get("remark")
+    destination = payload.get("destination", "")
     if not isinstance(tx_id, str) or not tx_id.startswith("tx_"):
         raise ValueError("A valid transaction ID is required.")
     if tx_id not in transactions:
@@ -438,7 +439,14 @@ def validate_transaction_detail_request(payload, transactions):
     remark = " ".join(remark.split())
     if len(remark) > 240:
         raise ValueError("Remark must be 240 characters or fewer.")
-    return tx_id, owner, category, display_name, remark
+    # The destination is the country or region a travel charge belongs to,
+    # for rows whose descriptor names only a platform's billing entity.
+    if not isinstance(destination, str):
+        raise ValueError("Destination must be text.")
+    destination = " ".join(destination.split())
+    if len(destination) > 40:
+        raise ValueError("Destination must be 40 characters or fewer.")
+    return tx_id, owner, category, display_name, remark, destination
 
 
 def run_script(script):
@@ -776,13 +784,13 @@ def save_remark(tx_id, remark):
         }
 
 
-def save_transaction_detail(tx_id, owner, category, display_name, remark):
+def save_transaction_detail(tx_id, owner, category, display_name, remark, destination=""):
     with WRITE_LOCK:
         transaction_data = load_json(TRANSACTIONS_PATH)
         transactions = {
             row.get("id"): row for row in transaction_data.get("transactions", [])
         }
-        tx_id, owner, category, display_name, remark = (
+        tx_id, owner, category, display_name, remark, destination = (
             validate_transaction_detail_request(
                 {
                     "id": tx_id,
@@ -790,6 +798,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                     "category": category,
                     "displayName": display_name,
                     "remark": remark,
+                    "destination": destination,
                 },
                 transactions,
             )
@@ -846,6 +855,8 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             override["category"] = category
         if display_name:
             override["displayName"] = display_name
+        if destination:
+            override["destination"] = destination
         if override:
             overrides[tx_id] = override
         else:
@@ -858,6 +869,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             ("Category", current.get("category", ""), category),
             ("Owner", current.get("owner", "Unassigned"), owner),
             ("Remarks", current.get("remark", ""), remark),
+            ("Destination", current.get("destination", ""), destination),
         )
         for field, before, after in comparisons:
             if before != after:
@@ -918,6 +930,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                 or updated.get("category") != category
                 or not display_applied
                 or updated.get("remark", "") != remark
+                or updated.get("destination", "") != destination
             ):
                 raise RuntimeError(
                     "The rebuilt dashboard did not apply all transaction details."

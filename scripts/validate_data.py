@@ -1159,6 +1159,8 @@ def main():
             errors.append("category override %s was not applied" % tx_id)
         if "displayName" in override and built.get("displayName") != override["displayName"]:
             errors.append("display name override %s was not applied" % tx_id)
+        if "destination" in override and built.get("destination") != override["destination"]:
+            errors.append("destination override %s was not applied" % tx_id)
 
     for tx_id, remark in remark_data.get("remarksById", {}).items():
         built = final_by_id.get(tx_id)

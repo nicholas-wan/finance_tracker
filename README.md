@@ -215,7 +215,8 @@ review-status filters.
 - The **Travel** tab shows the whole travel history: this year so far against
   the same months of last year, the all-time total, the trip count with the
   median cost per day, the latest trip taken and the next one booked, every
-  trip as a card under a divider per year (trips that have not started yet sit
+  trip as a card named by its main city and country ("Chengdu, China") under
+  a divider per year (trips that have not started yet sit
   under **Upcoming**) with year pills to narrow the list (the latest year is
   selected by default), and bars by country/region with charge counts and
   shares and by statement year. Each card and bar opens the Transactions tab
@@ -237,10 +238,17 @@ review-status filters.
   clicking one shows exactly its charges. Destination evidence comes from
   matched booking names, flight airport codes, or an explicit transaction
   location; `Singapore` in a platform's billing descriptor is not treated as
-  the destination. Refunds net inside the same statement year and
-  country/region, individual and grouped rows show the inferred destination,
+  the destination. A foreign-currency charge in a single-country currency
+  (CNY, MYR, HKD, JPY and so on) is read as that country; USD and EUR are not.
+  Any travel charge can be given a destination by hand in its drawer, which
+  offers the nearest travel charge within a week as a starting point; the
+  choice is saved as `destination` in `manual/transaction_overrides.json`, the
+  build publishes it on the row and the validator checks it was applied.
+  Refunds net inside the same statement year and country/region, individual
+  and grouped rows show the inferred destination with a small flag drawn
+  inline by `app/js/flags.js` (no downloads, so the dashboard stays offline),
   and generic Klook, KKday, Airbnb, and platform-only charges remain visibly
-  grouped as **Unknown** until stronger evidence exists.
+  grouped as **Unknown** until you set them.
 - **Grab only** shows every Grab statement charge. Safely matched food rows lead
   with the stall name, while rides use friendly saved location names where
   configured. Food item lines and delivery addresses stay out of the interface;

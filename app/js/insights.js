@@ -35,22 +35,117 @@ window.Insights = (function () {
     ["France", /TOUR EIFFEL|TROCADERO|PARIS|FRANCE|\bCDG\b/i],
     ["Germany", /BERLIN|GERMANY|\bBER\b/i],
     ["United Kingdom", /UKVI|UNITED KINGDOM|WWW\.GOV\.UK|\bLONDON\b|\bLHR\b/i],
+    ["Malaysia", /MALAYSIA|KUALA LUMPUR|JOHOR|PETALING JAYA|PENANG|\b(?:KUL|JHB|PEN)\b/i],
+    ["Thailand", /THAILAND|BANGKOK|PHUKET|CHIANG MAI|\b(?:BKK|DMK|HKT)\b/i],
+    ["Vietnam", /VIETNAM|HANOI|HO CHI MINH|SAIGON|DA NANG|\b(?:SGN|HAN|DAD)\b/i],
+    ["Indonesia", /INDONESIA|\bBALI\b|JAKARTA|DENPASAR|\b(?:DPS|CGK)\b/i],
     ["Singapore", /RITZ CARLTON MILLENIA|MARINA BAY SANDS|SENTOSA/i]
   ];
-  function travelCountry(transaction) {
-    if (!transaction || transaction.category !== "Travel") return "";
+  // A foreign-currency charge names its country almost as well as an
+  // airport code does, for currencies used by one country. USD and EUR are
+  // left out because they are not.
+  var CURRENCY_COUNTRIES = {
+    CNY: "China", HKD: "Hong Kong", MOP: "Macau", TWD: "Taiwan", JPY: "Japan",
+    KRW: "South Korea", MYR: "Malaysia", THB: "Thailand", VND: "Vietnam",
+    IDR: "Indonesia", PHP: "Philippines", AUD: "Australia", NZD: "New Zealand",
+    GBP: "United Kingdom", CAD: "Canada", CHF: "Switzerland", INR: "India"
+  };
+  // The city inside a destination, from the same evidence, for a trip label
+  // that reads "Chengdu, China" rather than a bare country.
+  var TRAVEL_CITY_RULES = [
+    ["Hong Kong", /HONG KONG|\bHKG\b/i],
+    ["Macau", /MACAU|MACAO|\bMFM\b/i],
+    ["Taipei", /TAIPEI|\bTPE\b/i],
+    ["Kaohsiung", /KAOHSIUNG|\bKHH\b/i],
+    ["Shanghai", /SHANGHAI|\bPVG\b|\bSHA\b|TOY STORY HOTEL/i],
+    ["Beijing", /BEIJING|\b(?:PEK|PKX)\b/i],
+    ["Shenzhen", /SHENZHEN|\bSZX\b/i],
+    ["Guangzhou", /GUANGZHOU|\bCAN\b|CHIMELONG/i],
+    ["Chengdu", /CHENGDU|\bTFU\b|\bCTU\b/i],
+    ["Zhangjiajie", /ZHANGJIAJIE/i],
+    ["Haikou", /HAIKOU/i],
+    ["Hangzhou", /HANGZHOU/i],
+    ["Wuxi", /WUXI/i],
+    ["Zhongshan", /ZHONGSHAN/i],
+    ["Seoul", /SEOUL|YEOUIDO|\b(?:ICN|GMP)\b/i],
+    ["Tokyo", /TOKYO|NARITA|\bUENO\b|SUNSHINE AQUARIUM|\b(?:NRT|HND)\b/i],
+    ["Osaka", /OSAKA|\bKIX\b/i],
+    ["Hiroshima", /HIROSHIMA|MIYAJIMA|\bHIJ\b|SARDONYX/i],
+    ["Toronto", /TORONTO|ONTARIO|\bYYZ\b/i],
+    ["Niagara Falls", /NIAGARA|RIPLEYSCANA/i],
+    ["Boston", /BOSTON|\bBOS\b/i],
+    ["Buffalo", /BUFFALO|\bBUF\b/i],
+    ["Wilmington", /WILMINGTON/i],
+    ["Sydney", /SYDNEY|TARONGA|\bSYD\b/i],
+    ["Paris", /PARIS|TOUR EIFFEL|TROCADERO|\bCDG\b/i],
+    ["Berlin", /BERLIN|\bBER\b/i],
+    ["London", /\bLONDON\b|\bLHR\b/i],
+    ["Kuala Lumpur", /KUALA LUMPUR|\bKUL\b/i],
+    ["Johor Bahru", /JOHOR|\bJB\b/i],
+    ["Petaling Jaya", /PETALING JAYA/i],
+    ["Penang", /PENANG|\bPEN\b/i],
+    ["Bangkok", /BANGKOK|\b(?:BKK|DMK)\b/i],
+    ["Bali", /\bBALI\b|DENPASAR|\bDPS\b/i]
+  ];
+  function travelEvidence(transaction) {
     var bookings = Array.isArray(transaction.tripBookings) && transaction.tripBookings.length
       ? transaction.tripBookings : transaction.tripBooking ? [transaction.tripBooking] : [];
-    var text = bookings.map(function (booking) {
+    return bookings.map(function (booking) {
       return [booking.productName, booking.productType].filter(Boolean).join(" ");
     }).concat([
       transaction.displayName,
       transaction.description
     ]).filter(Boolean).join(" ");
+  }
+  function currencyCountry(transaction) {
+    var code = String(transaction.foreign || "").trim().slice(0, 3).toUpperCase();
+    return CURRENCY_COUNTRIES[code] || "";
+  }
+  // Destination evidence, strongest first: a saved destination, then the
+  // booking or descriptor text, then a single-country currency.
+  function travelCountry(transaction) {
+    if (!transaction || transaction.category !== "Travel") return "";
+    if (transaction.destination) return transaction.destination;
+    var text = travelEvidence(transaction);
     for (var i = 0; i < TRAVEL_COUNTRY_RULES.length; i += 1) {
       if (TRAVEL_COUNTRY_RULES[i][1].test(text)) return TRAVEL_COUNTRY_RULES[i][0];
     }
-    return "Unknown";
+    return currencyCountry(transaction) || "Unknown";
+  }
+  // Every destination the rules or currencies can name, for the drawer's
+  // destination picker.
+  function destinations() {
+    var names = {};
+    TRAVEL_COUNTRY_RULES.forEach(function (rule) { names[rule[0]] = true; });
+    Object.keys(CURRENCY_COUNTRIES).forEach(function (code) { names[CURRENCY_COUNTRIES[code]] = true; });
+    return Object.keys(names).sort();
+  }
+  function travelCity(transaction) {
+    if (!transaction || transaction.category !== "Travel") return "";
+    var text = travelEvidence(transaction);
+    for (var i = 0; i < TRAVEL_CITY_RULES.length; i += 1) {
+      if (TRAVEL_CITY_RULES[i][1].test(text)) return TRAVEL_CITY_RULES[i][0];
+    }
+    return "";
+  }
+  // For a travel charge with no destination of its own: the known destination
+  // of the nearest other travel charge within a week, since a platform
+  // charge usually sits among the trip it paid for.
+  function suggestedDestination(transaction, transactions) {
+    if (!transaction || !transaction.date) return null;
+    var best = null;
+    (transactions || []).forEach(function (other) {
+      if (!other || other.id === transaction.id || other.category !== "Travel" || !other.date) return;
+      var country = travelCountry(other);
+      if (!country || country === "Unknown") return;
+      var gap = Math.abs(dayNumber(other.date) - dayNumber(transaction.date));
+      if (gap > 7) return;
+      if (!best || gap < best.gap || (gap === best.gap && Math.abs(other.amount) > Math.abs(best.amount))) {
+        best = { country: country, gap: gap, date: other.date, amount: other.amount,
+                 description: other.displayName || other.description };
+      }
+    });
+    return best;
   }
 
   // ---------- Trips ----------
@@ -231,6 +326,7 @@ window.Insights = (function () {
         }
       });
       var countries = {};
+      var cities = {};
       var split = { "Flights": 0, "Hotels": 0, "Tickets & transfers": 0, "On the ground": 0 };
       var total = 0;
       rows.forEach(function (transaction) {
@@ -239,9 +335,12 @@ window.Insights = (function () {
         split[tripSplitBucket(transaction)] += amount;
         var country = transaction.category === "Travel" ? travelCountry(transaction) : "";
         if (country) countries[country] = (countries[country] || 0) + Math.abs(amount);
+        var city = travelCity(transaction);
+        if (city) cities[city] = (cities[city] || 0) + Math.abs(amount);
       });
       var known = Object.keys(countries).filter(function (c) { return c !== "Unknown"; })
         .sort(function (a, b) { return countries[b] - countries[a]; });
+      var cityList = Object.keys(cities).sort(function (a, b) { return cities[b] - cities[a]; });
       var days = daysApart(start, end) + 1;
       return {
         key: start + "|" + (known[0] || "Unknown"),
@@ -250,6 +349,8 @@ window.Insights = (function () {
         days: days,
         countries: known,
         primary: known[0] || "Unknown",
+        cities: cityList,
+        city: cityList[0] || "",
         ids: rows.map(function (transaction) { return transaction.id; }),
         count: rows.length,
         bookings: rows.filter(function (transaction) { return bookingsOf(transaction).length > 0; }).length,
@@ -866,6 +967,9 @@ window.Insights = (function () {
     money: money,
     monthLabel: label,
     travelCountry: travelCountry,
+    travelCity: travelCity,
+    destinations: destinations,
+    suggestedDestination: suggestedDestination,
     parseTravelDate: parseTravelDate,
     travelWindow: travelWindow,
     buildTrips: buildTrips,

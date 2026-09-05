@@ -834,6 +834,23 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   color: var(--text); font-weight: 600;
 }
 .transaction-breakdown-fill.unknown { background: var(--text-3); }
+/* Destination flags: drawn inline in flags.js, sized to sit in running text. */
+.flag {
+  display: inline-block; width: 18px; height: 12px; margin-right: 6px; flex: 0 0 auto;
+  border-radius: 2.5px; overflow: hidden; vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+.flag svg { display: block; width: 100%; height: 100%; }
+.flag-sm { width: 15px; height: 10px; margin-right: 5px; }
+.travel-country-inline .flag { vertical-align: -1px; }
+.travel-country-inline.muted { color: var(--text-3); font-style: italic; }
+.travel-unknown-hint { margin: 10px 0 0; color: var(--text-2); font-size: var(--fs-caption); line-height: 1.45; }
+.drawer-suggest {
+  align-self: flex-start; margin-top: 6px; padding: 4px 11px; border-radius: 999px;
+  border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+  font: inherit; font-size: var(--fs-small); font-weight: 600; cursor: pointer;
+}
+.drawer-suggest:hover { filter: brightness(1.08); }
 .travel-country-pills { flex: 1 1 100%; }
 .pill .pill-count {
   margin-left: 5px; padding: 0 5px; border-radius: 999px; font-size: var(--fs-micro);

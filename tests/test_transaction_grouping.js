@@ -1163,6 +1163,35 @@ function loadInsights() {
   return context.window.Insights;
 }
 
+test("names a destination from a saved override, the descriptor, or the currency", function () {
+  var insights = loadInsights();
+  var travel = function (overrides) {
+    return transaction(Object.assign({ category: "Travel", date: "2026-03-18", month: "2026-03" }, overrides));
+  };
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE" })), "Unknown");
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE", foreign: "CNY 120.00" })), "China");
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE", foreign: "USD 12.00" })), "Unknown");
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE", destination: "Japan" })), "Japan");
+  // The saved destination outranks the descriptor and the currency.
+  assert.equal(insights.travelCountry(travel({ description: "TOKYO DISNEY", foreign: "CNY 1.00", destination: "Taiwan" })), "Taiwan");
+  assert.equal(insights.travelCountry(travel({ description: "GRAB RIDES PETALING JAYA" })), "Malaysia");
+  assert.equal(insights.travelCountry(transaction({ category: "Food & dining", description: "TOKYO DISNEY" })), "");
+  assert.equal(insights.travelCity(travel({ description: "Singapore (SIN) => Chengdu (TFU)" })), "Chengdu");
+  assert.equal(insights.travelCity(travel({ description: "AGODA BERLIN" })), "Berlin");
+  assert.equal(insights.travelCity(travel({ description: "KLOOK TRAVEL SINGAPORE" })), "");
+
+  var rows = [
+    travel({ id: "k", description: "KLOOK TRAVEL SINGAPORE", date: "2026-03-14", amount: 90 }),
+    travel({ id: "h", description: "TOY STORY HOTEL SHANGHAI", date: "2026-03-17", amount: 300 }),
+    travel({ id: "j", description: "TOKYO DISNEY", date: "2026-03-30", amount: 80 }),
+    travel({ id: "far", description: "PARIS METRO", date: "2026-02-01", amount: 5 })
+  ];
+  var suggestion = insights.suggestedDestination(rows[0], rows);
+  assert.equal(suggestion.country, "China");
+  assert.equal(suggestion.gap, 3);
+  assert.equal(insights.suggestedDestination(rows[3], rows), null);
+});
+
 test("parses Trip.com travel dates, taking a dropped year from the booking", function () {
   var insights = loadInsights();
   assert.equal(insights.parseTravelDate("18:45, October 17, 2023"), "2023-10-17");
@@ -1227,6 +1256,7 @@ test("builds trips from booking travel dates and gathers the spend around them",
   assert.equal(trips[0].anchored, false);
   var china = trips[1];
   assert.equal(china.primary, "China");
+  assert.equal(china.city, "Shanghai");
   assert.equal(china.start, "2026-03-15");
   assert.equal(china.end, "2026-03-23");
   assert.equal(china.days, 9);
