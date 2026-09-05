@@ -1163,6 +1163,83 @@ function loadInsights() {
   return context.window.Insights;
 }
 
+test("parses Trip.com travel dates, taking a dropped year from the booking", function () {
+  var insights = loadInsights();
+  assert.equal(insights.parseTravelDate("18:45, October 17, 2023"), "2023-10-17");
+  assert.equal(insights.parseTravelDate("October 18, 2023"), "2023-10-18");
+  assert.equal(insights.parseTravelDate("May 10", "April 20, 2026"), "2026-05-10");
+  // A travel day before the booking day cannot be in the booking year.
+  assert.equal(insights.parseTravelDate("April 5", "April 20, 2026"), "2027-04-05");
+  assert.equal(insights.parseTravelDate("09:41, May 10", "April 20, 2026"), "2026-05-10");
+  assert.equal(insights.parseTravelDate("February 30, 2026"), null);
+  assert.equal(insights.parseTravelDate("nonsense", "April 20, 2026"), null);
+  assert.equal(insights.parseTravelDate("May 10", "nonsense"), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(insights.travelWindow({
+    productType: "Flights", bookingDate: "January 30, 2026",
+    travelTime: "22:00, March 15, 2026\n15:05, March 23, 2026"
+  }))), { start: "2026-03-15", end: "2026-03-23" });
+  assert.equal(insights.travelWindow({ travelTime: "" }), null);
+});
+
+test("builds trips from booking travel dates and gathers the spend around them", function () {
+  var insights = loadInsights();
+  function travel(overrides) {
+    return transaction(Object.assign({ category: "Travel", owner: "Yx" }, overrides));
+  }
+  var rows = [
+    // Charged in January, flown in March: the booking's travel dates anchor it.
+    travel({ id: "flight", date: "2026-01-30", month: "2026-01", amount: 1000,
+      description: "TRIP.COM Singapore", tripBooking: {
+        productType: "Flights", bookingDate: "January 30, 2026",
+        productName: "Singapore (SIN) => Shanghai (PVG)",
+        travelTime: "22:00, March 15, 2026\n15:05, March 23, 2026"
+      } }),
+    // Hotel export drops the year; the booking date supplies it.
+    travel({ id: "hotel", date: "2026-02-20", month: "2026-02", amount: 300,
+      description: "TRIP.COM Singapore", tripBooking: {
+        productType: "Hotels", bookingDate: "February 20, 2026",
+        productName: "Toy Story Hotel", travelTime: "March 17"
+      } }),
+    // Bookingless charge with a known destination, six weeks ahead: joins.
+    travel({ id: "visa", date: "2026-02-01", month: "2026-02", amount: 40,
+      description: "CHINA VISA CENTRE SHANGHAI" }),
+    // Foreign-currency spend inside the window counts even outside Travel.
+    transaction({ id: "dinner", date: "2026-03-18", month: "2026-03", amount: 15,
+      category: "Food & dining", description: "SHANGHAI NOODLES", foreign: "CNY 69.00" }),
+    travel({ id: "metro", date: "2026-03-19", month: "2026-03", amount: 5,
+      description: "SHANGHAI METRO", foreign: "CNY 25.00" }),
+    // Local groceries the same week are not part of the trip.
+    transaction({ id: "groceries", date: "2026-03-18", month: "2026-03", amount: 40,
+      category: "Groceries", description: "CORNER STORE" }),
+    // A separate journey later in the year.
+    travel({ id: "tokyo", date: "2026-06-01", month: "2026-06", amount: 80,
+      description: "TOKYO DISNEY RESORT" }),
+    travel({ id: "narita", date: "2026-06-03", month: "2026-06", amount: 30,
+      description: "NARITA EXPRESS" })
+  ];
+  var trips = insights.buildTrips(rows);
+  assert.equal(trips.length, 2);
+  assert.equal(trips[0].primary, "Japan");
+  assert.equal(trips[0].start, "2026-06-01");
+  assert.equal(trips[0].end, "2026-06-03");
+  assert.equal(trips[0].days, 3);
+  assert.equal(trips[0].count, 2);
+  assert.equal(trips[0].anchored, false);
+  var china = trips[1];
+  assert.equal(china.primary, "China");
+  assert.equal(china.start, "2026-03-15");
+  assert.equal(china.end, "2026-03-23");
+  assert.equal(china.days, 9);
+  assert.deepEqual(Array.from(china.ids).sort(), ["dinner", "flight", "hotel", "metro", "visa"]);
+  assert.equal(china.bookings, 2);
+  assert.equal(china.anchored, true);
+  assert.equal(china.total, 1360);
+  assert.equal(china.perDay, Math.round(1360 / 9 * 100) / 100);
+  assert.deepEqual(JSON.parse(JSON.stringify(china.split)), {
+    "Flights": 1000, "Hotels": 300, "Tickets & transfers": 0, "On the ground": 60
+  });
+});
+
 function accountRow(month, direction, flow, amount) {
   return {
     id: [month, direction, flow, amount].join("-"),

@@ -832,6 +832,23 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   color: var(--text); font-weight: 600;
 }
 .transaction-breakdown-fill.unknown { background: var(--text-3); }
+.travel-country-pills { flex: 1 1 100%; }
+.pill .pill-count {
+  margin-left: 5px; padding: 0 5px; border-radius: 999px; font-size: var(--fs-micro);
+  font-weight: 600; color: var(--text-3); background: var(--surface-2);
+}
+.pill.active .pill-count { color: var(--accent); background: transparent; }
+.trips { margin: 4px 0 18px; }
+.trips-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 8px;
+}
+.trips-head .transaction-summary-label { margin-bottom: 0; }
+.trip-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.trip-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.trip-split { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
+.trip-split .transaction-breakdown-row { grid-template-columns: 108px minmax(30px, 1fr) 60px; min-height: 18px; }
+.trips-more { margin: 10px 0 0; color: var(--text-3); font-size: var(--fs-caption); }
 .travel-country-inline {
   display: block; margin-top: 3px; color: var(--text-3); font-size: var(--fs-micro);
   white-space: nowrap;
@@ -1991,8 +2008,13 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   }
   .source-filter-strip::-webkit-scrollbar { display: none; }
   .source-filter-strip > * { flex: 0 0 auto; white-space: nowrap; }
-  .filters > #category-filter,
-  .filters > #travel-country-filter { flex: 1 1 auto; min-width: 0; }
+  .filters > #category-filter { flex: 1 1 auto; min-width: 0; }
+  .travel-country-pills {
+    flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none;
+    overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  }
+  .travel-country-pills::-webkit-scrollbar { display: none; }
+  .travel-country-pills > * { flex: 0 0 auto; white-space: nowrap; }
   /* Ledger: the fixed Remarks column left the description one letter wide.
      Remarks stay editable in the drawer and, when present, read under the
      description; grouped rows fold their count the same way. Only the

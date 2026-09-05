@@ -52,6 +52,217 @@ window.Insights = (function () {
     }
     return "Unknown";
   }
+
+  // ---------- Trips ----------
+  //
+  // A trip is the cluster of travel charges that belong to one journey. The
+  // statement date is a poor anchor for that: flights are charged months
+  // ahead and hotels weeks ahead. Trip.com bookings carry the travel date, so
+  // a matched charge is anchored there and only bookingless rows fall back to
+  // the statement date. Rows whose anchors sit within TRIP_GAP_DAYS of each
+  // other form one trip; a lone known-country charge within TRIP_ATTACH_DAYS of
+  // a trip to the same place (a visa, a ticket bought early) joins it, and any
+  // foreign-currency charge dated inside a trip's window counts as spend on
+  // the ground even when it was categorised as food or transport.
+  var TRIP_GAP_DAYS = 5;
+  var TRIP_ATTACH_DAYS = 60;
+  var MONTH_INDEX = {
+    january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6,
+    august: 7, september: 8, october: 9, november: 10, december: 11
+  };
+  var TRAVEL_DATE = /^(?:\d{1,2}:\d{2},?\s*)?([A-Za-z]+)\s+(\d{1,2})(?:,?\s*(\d{4}))?$/;
+
+  function isoDate(year, month, day) {
+    var date = new Date(Date.UTC(year, month, day));
+    if (date.getUTCMonth() !== month || date.getUTCDate() !== day) return null;
+    return date.toISOString().slice(0, 10);
+  }
+  function dayNumber(iso) {
+    return Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
+  }
+  function daysApart(a, b) { return Math.abs(dayNumber(a) - dayNumber(b)); }
+
+  // Trip.com exports travel dates as display text, and drops the year when
+  // the travel falls in the booking year. "18:45, October 17, 2023" and
+  // "May 10" both resolve; a date that would land before the booking is
+  // taken to be in the following year.
+  function parseTravelDate(text, bookingDate) {
+    var match = TRAVEL_DATE.exec(String(text || "").trim());
+    if (!match) return null;
+    var month = MONTH_INDEX[match[1].toLowerCase()];
+    if (month === undefined) return null;
+    var day = parseInt(match[2], 10);
+    if (match[3]) return isoDate(parseInt(match[3], 10), month, day);
+    var booked = parseTravelDate(bookingDate, null);
+    if (!booked) return null;
+    var year = parseInt(booked.slice(0, 4), 10);
+    var candidate = isoDate(year, month, day);
+    if (!candidate) return null;
+    return candidate < booked ? isoDate(year + 1, month, day) : candidate;
+  }
+
+  // The first and last travel date on a booking: one date for a hotel or a
+  // ticket, two for a return flight.
+  function travelWindow(booking) {
+    if (!booking) return null;
+    var dates = String(booking.travelTime || "").split(/\n+/).map(function (part) {
+      return parseTravelDate(part, booking.bookingDate);
+    }).filter(Boolean).sort();
+    if (!dates.length) return null;
+    return { start: dates[0], end: dates[dates.length - 1] };
+  }
+
+  function bookingsOf(transaction) {
+    if (Array.isArray(transaction.tripBookings) && transaction.tripBookings.length) {
+      return transaction.tripBookings;
+    }
+    return transaction.tripBooking ? [transaction.tripBooking] : [];
+  }
+
+  function tripSplitBucket(transaction) {
+    var types = bookingsOf(transaction).map(function (booking) {
+      return String(booking.productType || "");
+    });
+    if (types.indexOf("Flights") !== -1) return "Flights";
+    if (types.indexOf("Hotels") !== -1) return "Hotels";
+    if (types.length) return "Tickets & transfers";
+    return "On the ground";
+  }
+
+  function isForeign(transaction) {
+    var text = String(transaction.foreign || "").trim();
+    return Boolean(text) && text.slice(0, 3).toUpperCase() !== "SGD";
+  }
+
+  function buildTrips(transactions) {
+    var anchored = [];
+    var foreignOnly = [];
+    (transactions || []).forEach(function (transaction) {
+      if (!transaction || !transaction.date) return;
+      if (transaction.category === "Travel") {
+        var windows = bookingsOf(transaction).map(travelWindow).filter(Boolean);
+        var start = transaction.date, end = transaction.date;
+        if (windows.length) {
+          start = windows.map(function (w) { return w.start; }).sort()[0];
+          end = windows.map(function (w) { return w.end; }).sort().reverse()[0];
+        }
+        anchored.push({
+          transaction: transaction, start: start, end: end,
+          booked: windows.length > 0, country: travelCountry(transaction)
+        });
+      } else if (isForeign(transaction)) {
+        foreignOnly.push(transaction);
+      }
+    });
+    anchored.sort(function (a, b) {
+      return a.start.localeCompare(b.start) || a.transaction.date.localeCompare(b.transaction.date);
+    });
+
+    var clusters = [];
+    anchored.forEach(function (item) {
+      var last = clusters[clusters.length - 1];
+      // Items arrive sorted by start, so a row belongs to the open trip when
+      // it starts before that trip's last day plus the gap.
+      if (last && dayNumber(item.start) - dayNumber(last.end) <= TRIP_GAP_DAYS) {
+        last.items.push(item);
+        if (item.end > last.end) last.end = item.end;
+      } else {
+        clusters.push({ start: item.start, end: item.end, items: [item] });
+      }
+    });
+
+    // Charges with no booking but a known destination join the nearest
+    // booking-anchored trip to the same place: visas, tickets bought early,
+    // a hotel paid on another platform.
+    function knownCountry(cluster) {
+      var totals = {};
+      cluster.items.forEach(function (item) {
+        if (item.country && item.country !== "Unknown") {
+          totals[item.country] = (totals[item.country] || 0) + Math.abs(item.transaction.amount);
+        }
+      });
+      var best = "";
+      Object.keys(totals).forEach(function (country) {
+        if (!best || totals[country] > totals[best]) best = country;
+      });
+      return best;
+    }
+    var merged = [];
+    clusters.forEach(function (cluster) {
+      cluster.primary = knownCountry(cluster);
+      cluster.anchoredBy = cluster.items.some(function (item) { return item.booked; });
+    });
+    clusters.forEach(function (cluster, index) {
+      if (!cluster.anchoredBy && cluster.primary) {
+        var target = null, targetGap = Infinity;
+        clusters.forEach(function (other, otherIndex) {
+          if (otherIndex === index || other.merged || !other.anchoredBy) return;
+          if (other.primary !== cluster.primary) return;
+          var gap = Math.min(daysApart(cluster.start, other.end), daysApart(other.start, cluster.end));
+          if (gap <= TRIP_ATTACH_DAYS && gap < targetGap) { target = other; targetGap = gap; }
+        });
+        if (target) {
+          target.items = target.items.concat(cluster.items);
+          cluster.merged = true;
+          return;
+        }
+      }
+      merged.push(cluster);
+    });
+
+    var trips = merged.map(function (cluster) {
+      var ids = {};
+      var rows = [];
+      cluster.items.forEach(function (item) {
+        if (!ids[item.transaction.id]) { ids[item.transaction.id] = true; rows.push(item.transaction); }
+      });
+      // The trip's dates come from its bookings when it has any, so a visa or
+      // a ticket bought weeks ahead joins the trip without stretching it.
+      var spanItems = cluster.anchoredBy
+        ? cluster.items.filter(function (item) { return item.booked; })
+        : cluster.items;
+      var start = spanItems.map(function (item) { return item.start; }).sort()[0];
+      var end = spanItems.map(function (item) { return item.end; }).sort().reverse()[0];
+      // Foreign-currency spend dated inside the window is part of the trip.
+      foreignOnly.forEach(function (transaction) {
+        if (transaction.date >= start && transaction.date <= end && !ids[transaction.id]) {
+          ids[transaction.id] = true;
+          rows.push(transaction);
+        }
+      });
+      var countries = {};
+      var split = { "Flights": 0, "Hotels": 0, "Tickets & transfers": 0, "On the ground": 0 };
+      var total = 0;
+      rows.forEach(function (transaction) {
+        var amount = signed(transaction);
+        total += amount;
+        split[tripSplitBucket(transaction)] += amount;
+        var country = transaction.category === "Travel" ? travelCountry(transaction) : "";
+        if (country) countries[country] = (countries[country] || 0) + Math.abs(amount);
+      });
+      var known = Object.keys(countries).filter(function (c) { return c !== "Unknown"; })
+        .sort(function (a, b) { return countries[b] - countries[a]; });
+      var days = daysApart(start, end) + 1;
+      return {
+        key: start + "|" + (known[0] || "Unknown"),
+        start: start,
+        end: end,
+        days: days,
+        countries: known,
+        primary: known[0] || "Unknown",
+        ids: rows.map(function (transaction) { return transaction.id; }),
+        count: rows.length,
+        bookings: rows.filter(function (transaction) { return bookingsOf(transaction).length > 0; }).length,
+        total: Math.round(total * 100) / 100,
+        perDay: Math.round(total / days * 100) / 100,
+        split: split,
+        anchored: cluster.anchoredBy
+      };
+    });
+    trips.sort(function (a, b) { return b.start.localeCompare(a.start); });
+    return trips;
+  }
+
   function salaryStreamKey(description) {
     return String(description || "")
       .toUpperCase()
@@ -655,6 +866,9 @@ window.Insights = (function () {
     money: money,
     monthLabel: label,
     travelCountry: travelCountry,
+    parseTravelDate: parseTravelDate,
+    travelWindow: travelWindow,
+    buildTrips: buildTrips,
     incomeForecast: incomeForecast
   };
 })();

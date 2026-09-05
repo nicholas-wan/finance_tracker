@@ -71,6 +71,8 @@
     idFilter: null,
     idFilterLabel: "",
     idFilterCount: 0,
+    // Key of the trip card whose charges the id filter is showing.
+    tripFocus: null,
     ledgerLimit: LEDGER_CAP,
     period: { mode: "month", year: null, month: null }
   };
@@ -1656,29 +1658,191 @@
       ? "Filter by bank flow" : "Filter by category");
   }
 
+  function selectTravelCountry(country) {
+    state.travelCountry = country;
+    if (country !== "All") {
+      state.category = "Travel";
+      populateTransactionCategoryFilter();
+    }
+    if (state.reviewMode !== "suspicious") state.reviewMode = null;
+    state.ledgerLimit = LEDGER_CAP;
+    populateTravelCountryFilter();
+    renderLedger();
+  }
+
+  // Destination pills with all-time counts, shown once Travel is in view. A
+  // hidden dropdown used to carry this and nobody found it.
   function populateTravelCountryFilter() {
-    var select = document.getElementById("travel-country-filter");
-    clear(select);
-    var countries = {};
+    var wrap = document.getElementById("travel-country-pills");
+    clear(wrap);
+    var counts = {};
     (data && data.transactions || []).forEach(function (transaction) {
       var country = window.Insights.travelCountry(transaction);
-      if (country) countries[country] = true;
+      if (country) counts[country] = (counts[country] || 0) + 1;
     });
-    var options = ["All"].concat(Object.keys(countries).sort(function (left, right) {
+    var options = ["All"].concat(Object.keys(counts).sort(function (left, right) {
       if (left === "Unknown") return 1;
       if (right === "Unknown") return -1;
       return left.localeCompare(right);
     }));
     if (options.indexOf(state.travelCountry) === -1) state.travelCountry = "All";
     options.forEach(function (country) {
-      var option = document.createElement("option");
-      option.value = country;
-      option.textContent = country === "All" ? "All countries" : country;
-      select.appendChild(option);
+      var active = country === state.travelCountry;
+      var pill = el("button", "pill" + (active ? " active" : ""),
+        country === "All" ? "All countries" : country);
+      pill.type = "button";
+      if (country !== "All") {
+        pill.appendChild(el("span", "pill-count", String(counts[country])));
+        pill.title = counts[country] + " travel charge" + (counts[country] === 1 ? "" : "s") +
+          " across all statements";
+      }
+      setPressed(pill, active);
+      pill.addEventListener("click", function () { selectTravelCountry(country); });
+      wrap.appendChild(pill);
     });
-    select.value = state.travelCountry;
-    select.classList.toggle("hidden", state.transactionSource === "bank" ||
+    wrap.classList.toggle("hidden", state.transactionSource === "bank" ||
       (state.category !== "Travel" && !state.tripOnly && state.travelCountry === "All"));
+  }
+
+  var TRIP_SPLIT = [
+    { key: "Flights", color: "var(--series-income)" },
+    { key: "Hotels", color: "var(--accent)" },
+    { key: "Tickets & transfers", color: "var(--series-invested)" },
+    { key: "On the ground", color: "var(--series-spent)" }
+  ];
+
+  function tripDateRange(trip) {
+    function day(iso) { return String(parseInt(iso.slice(8, 10), 10)); }
+    function mon(iso) { return MONTH_NAMES[parseInt(iso.slice(5, 7), 10) - 1]; }
+    var s = trip.start, e = trip.end;
+    if (s === e) return day(s) + " " + mon(s) + " " + s.slice(0, 4);
+    if (s.slice(0, 7) === e.slice(0, 7)) {
+      return day(s) + "\u2013" + day(e) + " " + mon(s) + " " + s.slice(0, 4);
+    }
+    if (s.slice(0, 4) === e.slice(0, 4)) {
+      return day(s) + " " + mon(s) + " \u2013 " + day(e) + " " + mon(e) + " " + s.slice(0, 4);
+    }
+    return day(s) + " " + mon(s) + " " + s.slice(0, 4) + " \u2013 " +
+      day(e) + " " + mon(e) + " " + e.slice(0, 4);
+  }
+
+  function tripLabel(trip) {
+    if (trip.primary === "Unknown") return "Unknown destination";
+    return trip.primary + (trip.countries.length > 1 ? " +" + (trip.countries.length - 1) : "");
+  }
+
+  // One card per trip, newest first, over the whole history: a trip is a
+  // fact about the past, not about the statement month in view.
+  function renderTrips() {
+    var wrap = document.getElementById("trips");
+    clear(wrap);
+    var show = state.transactionSource === "card" &&
+      (state.category === "Travel" || state.travelCountry !== "All" || Boolean(state.tripFocus));
+    wrap.classList.toggle("hidden", !show);
+    if (!show) return;
+
+    var allTrips = window.Insights.buildTrips(data.transactions);
+    function standsAlone(trip) { return trip.total >= 0.5 && (trip.anchored || trip.count >= 2); }
+    // The median is over every trip, so a country filter compares its trips
+    // against the whole history rather than against each other.
+    var medianPerDay = median(allTrips.filter(function (trip) {
+      return standsAlone(trip) && trip.days >= 2 && trip.perDay > 0;
+    }).map(function (trip) { return trip.perDay; }));
+    var trips = allTrips.filter(function (trip) {
+      return state.travelCountry === "All" || trip.countries.indexOf(state.travelCountry) !== -1;
+    });
+    var listed = trips.filter(standsAlone);
+    var rest = trips.filter(function (trip) { return listed.indexOf(trip) === -1; });
+
+    var head = el("div", "trips-head");
+    head.appendChild(el("span", "transaction-summary-label", "Trips \u00b7 all time" +
+      (state.travelCountry !== "All" ? " \u00b7 " + state.travelCountry : "")));
+    head.appendChild(el("span", "hint",
+      "grouped by booking travel dates, otherwise by charges within 5 days of each other"));
+    wrap.appendChild(head);
+
+    if (!listed.length) {
+      wrap.appendChild(emptyState("No trips yet",
+        "A trip appears once a Trip.com booking or two travel charges within five days exist.",
+        "plane"));
+      return;
+    }
+
+    var cards = el("div", "trip-cards");
+    listed.forEach(function (trip) {
+      var label = tripLabel(trip);
+      var active = state.tripFocus === trip.key;
+      var card = el("div", "kpi trip-card" + (active ? " active" : ""));
+      var title = el("p", "label");
+      title.appendChild(icon("plane"));
+      title.appendChild(document.createTextNode(label));
+      if (trip.countries.length > 1) title.title = trip.countries.join(", ");
+      card.appendChild(title);
+      card.appendChild(el("p", "value", fmt0(trip.total)));
+      card.appendChild(el("p", "delta", tripDateRange(trip) + " \u00b7 " +
+        trip.days + (trip.days === 1 ? " day" : " days") + " \u00b7 " + fmt0(trip.perDay) + "/day"));
+      if (medianPerDay > 0 && trip.days >= 2 && trip.perDay > 0) {
+        var pc = ((trip.perDay - medianPerDay) / medianPerDay) * 100;
+        var tone = Math.abs(pc) < 5 ? "" : pc > 0 ? "up" : "down";
+        card.appendChild(el("p", "delta " + tone, Math.abs(pc) < 5
+          ? "in line with your trip median"
+          : Math.abs(pc).toFixed(0) + "% " + (pc > 0 ? "above" : "below") +
+            " your trip median of " + fmt0(medianPerDay) + "/day"));
+      }
+      var split = el("div", "trip-split");
+      var maxPart = TRIP_SPLIT.reduce(function (largest, part) {
+        return Math.max(largest, Math.abs(trip.split[part.key] || 0));
+      }, 0.01);
+      TRIP_SPLIT.forEach(function (part) {
+        var amount = trip.split[part.key] || 0;
+        if (Math.abs(amount) < 0.01) return;
+        var row = el("div", "transaction-breakdown-row");
+        row.appendChild(el("span", "transaction-breakdown-name", part.key));
+        var track = el("span", "transaction-breakdown-track");
+        var fill = el("span", "transaction-breakdown-fill" + (amount < 0 ? " refund" : ""));
+        fill.style.width = Math.max(3, Math.abs(amount) / maxPart * 100) + "%";
+        if (amount >= 0) fill.style.backgroundColor = part.color;
+        track.appendChild(fill);
+        row.appendChild(track);
+        row.appendChild(el("strong", amount < 0 ? "credit" : "", fmt0(amount)));
+        split.appendChild(row);
+      });
+      card.appendChild(split);
+      card.appendChild(el("p", "delta sub", trip.count + " charge" + (trip.count === 1 ? "" : "s") +
+        (trip.bookings ? " \u00b7 " + trip.bookings + " Trip.com booking" + (trip.bookings === 1 ? "" : "s") : "")));
+      makeActionable(card, "Show the " + trip.count + " charges for " + label + ", " + tripDateRange(trip),
+        function () {
+          if (active) {
+            setIdFilter(null);
+            state.category = "Travel";
+          } else {
+            setIdFilter(trip.ids, "Trip \u00b7 " + label + " \u00b7 " + tripDateRange(trip));
+            state.tripFocus = trip.key;
+            state.category = "All";
+            state.travelCountry = "All";
+            state.search = "";
+            document.getElementById("search").value = "";
+            state.period = { mode: "all", year: state.period.year, month: state.period.month };
+            renderPeriod();
+          }
+          if (state.reviewMode !== "suspicious") state.reviewMode = null;
+          state.ledgerLimit = LEDGER_CAP;
+          populateTransactionCategoryFilter();
+          populateTravelCountryFilter();
+          renderLedger();
+        });
+      setPressed(card, active);
+      cards.appendChild(card);
+    });
+    wrap.appendChild(cards);
+
+    if (rest.length) {
+      var restTotal = rest.reduce(function (total, trip) { return total + trip.total; }, 0);
+      var restCount = rest.reduce(function (total, trip) { return total + trip.count; }, 0);
+      wrap.appendChild(el("p", "trips-more", restCount + " other travel charge" +
+        (restCount === 1 ? "" : "s") + " not tied to a trip \u00b7 " + fmt(restTotal) +
+        " \u00b7 single charges without a booking, or trips that were fully refunded"));
+    }
   }
 
   // The bank rules describe configuration, so they are written from it rather
@@ -1856,6 +2020,7 @@
       state.idFilter = null;
       state.idFilterLabel = "";
       state.idFilterCount = 0;
+      state.tripFocus = null;
     } else {
       var map = {};
       ids.forEach(function (id) { map[id] = true; });
@@ -2651,6 +2816,10 @@
     {
       label: "Transport", icon: "bus", category: "Transport",
       match: function (t) { return t.category === "Transport"; }
+    },
+    {
+      label: "Travel", icon: "plane", category: "Travel",
+      match: function (t) { return t.category === "Travel"; }
     },
     {
       label: "Grab + Foodpanda", icon: "bike", reviewMode: "delivery-rides",
@@ -4963,13 +5132,7 @@
         if (refunded) amountNode.title = "Charges fully refunded";
         row.appendChild(amountNode);
         makeActionable(row, "Filter travel to " + entry.country, function () {
-          state.category = "Travel";
-          state.travelCountry = entry.country;
-          if (state.reviewMode !== "suspicious") state.reviewMode = null;
-          state.ledgerLimit = LEDGER_CAP;
-          populateTransactionCategoryFilter();
-          populateTravelCountryFilter();
-          renderLedger();
+          selectTravelCountry(entry.country);
         });
         setPressed(row, active);
         yearBlock.appendChild(row);
@@ -5392,6 +5555,8 @@
 
   function renderGroupedLedger(body, rows, showYear) {
     var groups = groupedPurchases(rows);
+    var rowById = {};
+    rows.forEach(function (t) { rowById[t.id] = t; });
     document.getElementById("ledger-date-head").textContent = "Latest";
     document.getElementById("ledger-description-head").textContent = "Merchant";
     document.getElementById("ledger-remark-head").textContent = "Purchases";
@@ -5419,6 +5584,20 @@
       tr.appendChild(description);
       var category = el("td", "col-cat");
       category.appendChild(el("span", "cat-pill " + catClass(group.category), group.category));
+      // A merchant group spanning several destinations says so rather than
+      // dropping the label the individual rows carry.
+      var destinations = {};
+      (group.ids || []).forEach(function (id) {
+        var country = rowById[id] ? window.Insights.travelCountry(rowById[id]) : "";
+        if (country && country !== "Unknown") destinations[country] = true;
+      });
+      var names = Object.keys(destinations).sort();
+      if (names.length) {
+        var inline = el("small", "travel-country-inline",
+          names.length === 1 ? names[0] : names.length + " destinations");
+        if (names.length > 1) inline.title = names.join(", ");
+        category.appendChild(inline);
+      }
       tr.appendChild(category);
       var owner = el("td", "col-owner");
       owner.appendChild(buildOwnerPicker(group.ids || [], group.owner, group.label));
@@ -5492,6 +5671,7 @@
 
   function renderLedger() {
     syncSuspiciousFilterButton();
+    renderTrips();
     var body = document.getElementById("ledger-body");
     clear(body);
     if (state.transactionSource === "bank") {
@@ -5935,18 +6115,7 @@
       renderLedger();
     });
 
-    var countrySel = document.getElementById("travel-country-filter");
     populateTravelCountryFilter();
-    countrySel.addEventListener("change", function () {
-      state.travelCountry = countrySel.value;
-      if (state.travelCountry !== "All") {
-        state.category = "Travel";
-        populateTransactionCategoryFilter();
-      }
-      if (state.reviewMode !== "suspicious") state.reviewMode = null;
-      state.ledgerLimit = LEDGER_CAP;
-      renderLedger();
-    });
 
     var searchInput = document.getElementById("search");
     var chip = el("button", "pill active hidden", "");

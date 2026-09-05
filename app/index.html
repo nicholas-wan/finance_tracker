@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260905-36">
+<link rel="stylesheet" href="css/styles.css?v=20260905-37">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -353,7 +353,7 @@
         </div>
         <div class="pills" id="owner-pills"></div>
         <select id="category-filter" aria-label="Filter by category"></select>
-        <select class="hidden" id="travel-country-filter" aria-label="Filter travel by country"></select>
+        <div class="pills travel-country-pills hidden" id="travel-country-pills" aria-label="Filter travel by country / region"></div>
         <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label>
         <div class="bank-review-controls hidden" id="bank-review-controls">
           <div class="pills bank-direction-pills" id="bank-direction-pills"
@@ -402,6 +402,7 @@
       </details>
       <section class="transaction-summary" id="transaction-summary"
         aria-label="Transaction cost breakdown"></section>
+      <section class="trips hidden" id="trips" aria-label="Trips"></section>
       <table class="ledger">
         <thead>
           <tr><th class="col-date" id="ledger-date-head">Date</th><th id="ledger-description-head">Description</th><th class="col-cat" id="ledger-category-head">Category</th><th class="col-owner" id="ledger-owner-head">Owner</th><th class="col-remark" id="ledger-remark-head">Remarks</th><th class="col-amt" id="ledger-amount-head">Amount</th></tr>
@@ -471,8 +472,8 @@
 
 <script src="js/server-lifecycle.js?v=20260812-1"></script>
 <script src="js/charts.js?v=20260905-2"></script>
-<script src="js/insights.js?v=20260905-5"></script>
+<script src="js/insights.js?v=20260905-6"></script>
 <script src="js/transaction-grouping.js?v=20260812-1"></script>
-<script src="js/app.js?v=20260905-55"></script>
+<script src="js/app.js?v=20260905-56"></script>
 </body>
 </html>

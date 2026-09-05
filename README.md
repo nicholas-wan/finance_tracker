@@ -200,14 +200,26 @@ review-status filters.
   Trip.com row. The quality summary counts matched bookings, charges, refunds,
   cancellations, ambiguous charges, and unmatched rows; the validator
   re-derives every published link.
-- Selecting the **Travel** category adds a country/region filter and replaces the
-  ordinary category summary with a year-by-country/region breakdown. Destination
-  evidence comes from matched booking names, flight airport codes, or an explicit
-  transaction location; `Singapore` in a platform's billing descriptor is not
-  treated as the destination. Refunds net inside the same statement year and
-  country/region, each individual travel row shows the inferred destination, and
-  generic Klook, KKday, Airbnb, and platform-only charges remain visibly grouped as
-  **Unknown** until stronger evidence exists.
+- Selecting the **Travel** category (or the Travel card on the Overview) adds a
+  row of country/region pills with all-time counts, replaces the ordinary
+  category summary with a year-by-country/region breakdown, offers **All time**
+  in one click, and lists **Trips**. A trip is the cluster of travel charges
+  belonging to one journey: a charge matched to a Trip.com booking is anchored
+  at the booking's travel dates rather than the statement date, so a flight
+  charged months ahead lands on the trip it belongs to; bookingless charges use
+  their statement date; charges within five days of each other form one trip;
+  a bookingless charge with a known destination joins the nearest
+  booking-anchored trip to the same place within 60 days; and foreign-currency
+  charges dated inside a trip count as spend on the ground whatever their
+  category. Each card shows total, dates, days, cost per day against the median
+  of your other trips, and a flights / hotels / tickets / on-the-ground split;
+  clicking one shows exactly its charges. Destination evidence comes from
+  matched booking names, flight airport codes, or an explicit transaction
+  location; `Singapore` in a platform's billing descriptor is not treated as
+  the destination. Refunds net inside the same statement year and
+  country/region, individual and grouped rows show the inferred destination,
+  and generic Klook, KKday, Airbnb, and platform-only charges remain visibly
+  grouped as **Unknown** until stronger evidence exists.
 - **Grab only** shows every Grab statement charge. Safely matched food rows lead
   with the stall name, while rides use friendly saved location names where
   configured. Food item lines and delivery addresses stay out of the interface;
