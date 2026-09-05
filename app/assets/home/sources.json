@@ -117,5 +117,35 @@
     "imageSource": "https://i02.appmifile.com/39_operatorx_operatorx_opx/23/10/2024/6c8bdc0a0166ad6939c777073708a7b1.png",
     "model": "Xiaomi Blender 600W 1.75L",
     "processing": "Transparent official product image resized and WebP compressed."
+  },
+  "levoit-core200s": {
+    "source": "https://levoit.com/products/core-200s-smart-true-hepa-air-purifier",
+    "imageSource": "http://levoit.com/cdn/shop/files/levoit-core-200s-p-smart-air-purifier-8992236.png?v=1765316587",
+    "model": "Levoit Core 200S",
+    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+  },
+  "levoit-vital100s": {
+    "source": "https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier",
+    "imageSource": "http://levoit.com/cdn/shop/products/vital-100s-smart-true-hepa-air-purifier-295620.jpg?v=1762284249",
+    "model": "Levoit Vital 100S",
+    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+  },
+  "neakasa-m1": {
+    "source": "https://neakasa.com/products/neakasa-m1-cat-litter-box",
+    "imageSource": "http://neakasa.com/cdn/shop/files/neakasam1_litter_box_4.webp?v=1781513540&width=2048",
+    "model": "Neakasa M1",
+    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+  },
+  "kdk-15wud": {
+    "source": "https://www.kdk.sg/products/ventilating-fan-15wud",
+    "imageSource": "http://www.kdk.sg/cdn/shop/files/15WUD_c9831afd-eb9c-4360-b18a-9c46f1bc51f1.jpg?v=1772503601&width=1200",
+    "model": "KDK 15WUD",
+    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+  },
+  "smartdoor-slidearm": {
+    "source": "https://www.smart-home.com.sg/slidearm",
+    "imageSource": "https://static.wixstatic.com/media/817066_6a67f680647147439a44562aae19662d~mv2.jpg/v1/fill/w_865,h_615,al_c/817066_6a67f680647147439a44562aae19662d~mv2.jpg",
+    "model": "Smart Door slide arm",
+    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
   }
 }

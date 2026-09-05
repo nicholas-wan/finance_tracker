@@ -175,7 +175,8 @@ category or zone and follows the section in view while scrolling. Each item
 carries one primary warranty state (Covered, Expiring within 90 days, Expired,
 Unverified, No warranty, Not tracked); finer detail stays in the item view.
 
-Items can be filtered into **Appliances**, **Fixtures**, and **Furniture**, with
+Items can be filtered into **Appliances**, **Fixtures**, **Furniture**, and **Pet**
+(pet appliances such as a self-cleaning litter box), with
 separate cost-source and funding fields. Warranty filters distinguish **Covered**,
 **Expired**, **Unconfirmed**, **No details**, and **Not tracked**. The last state is
 for household goods where warranty follow-up is not useful, so they do not inflate

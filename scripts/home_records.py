@@ -76,8 +76,8 @@ def validate_record(record, transactions):
         raise ValueError("Choose a valid record type and status.")
     if not result.get("name"):
         raise ValueError("A name is required.")
-    if result.get("category", "") not in {"", "Appliances", "Fixtures", "Furniture"}:
-        raise ValueError("Choose Appliances, Fixtures or Furniture.")
+    if result.get("category", "") not in {"", "Appliances", "Fixtures", "Furniture", "Pet"}:
+        raise ValueError("Choose Appliances, Fixtures, Furniture or Pet.")
     if result.get("sourceUrl"):
         url = urlparse(result["sourceUrl"])
         if url.scheme != "https" or not url.netloc or url.username or url.password:

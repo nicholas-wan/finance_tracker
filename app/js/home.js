@@ -59,7 +59,7 @@
   var titles = { appliance: 'Items & fixtures', insurance: 'Home & fire insurance', mortgage: 'Mortgage', maintenance: 'Maintenance' };
   var labels = { appliance: 'appliance or furnishing', insurance: 'home policy', mortgage: 'mortgage', maintenance: 'maintenance task' };
   var fields = {
-    appliance: [['category','Category','select','Appliances,Fixtures,Furniture'],['provider','Retailer / supplier'],['room','Room'],['roomDetail','Location detail'],['brand','Brand'],['model','Model'],['serial','Serial number'],['cost','Recorded cost (S$)','number'],['itemCost','Original item cost (S$)','number'],['warrantyCost','Extended warranty cost (S$)','number'],['deliveryCost','Delivery cost (S$)','number'],['costBasis','Cost source','select','Receipt / sales order,House sheet,Sheet allocation,Gift,Mixed sources'],['funding','Paid / gifted by'],['delivered','Delivery date','date'],['deliveryDetails','Delivery details'],['deliverySource','Delivery date source'],['installed','Installation date','date'],['installationType','Installation event'],['installationSource','Installation date source'],['warrantyStart','Warranty start','date'],['warrantyStartBasis','Warranty start basis'],['expires','Warranty end','date'],['warrantyTerms','Warranty terms'],['warrantyCertificate','Warranty certificate'],['warrantySourceUrl','Warranty terms URL'],['coverage','Coverage & exclusions'],['secondaryWarranty','Additional cover (e.g. compressor)'],['secondaryExpiry','Additional cover ends','date']],
+    appliance: [['category','Category','select','Appliances,Fixtures,Furniture,Pet'],['provider','Retailer / supplier'],['room','Room'],['roomDetail','Location detail'],['brand','Brand'],['model','Model'],['serial','Serial number'],['cost','Recorded cost (S$)','number'],['itemCost','Original item cost (S$)','number'],['warrantyCost','Extended warranty cost (S$)','number'],['deliveryCost','Delivery cost (S$)','number'],['costBasis','Cost source','select','Receipt / sales order,House sheet,Sheet allocation,Gift,Mixed sources'],['funding','Paid / gifted by'],['delivered','Delivery date','date'],['deliveryDetails','Delivery details'],['deliverySource','Delivery date source'],['installed','Installation date','date'],['installationType','Installation event'],['installationSource','Installation date source'],['warrantyStart','Warranty start','date'],['warrantyStartBasis','Warranty start basis'],['expires','Warranty end','date'],['warrantyTerms','Warranty terms'],['warrantyCertificate','Warranty certificate'],['warrantySourceUrl','Warranty terms URL'],['coverage','Coverage & exclusions'],['secondaryWarranty','Additional cover (e.g. compressor)'],['secondaryExpiry','Additional cover ends','date']],
     insurance: [['provider','Insurer'],['coverage','Coverage summary'],['premium','Premium per payment (S$)','number'],['cadence','Payment frequency','select','Yearly,Monthly,One-off'],['starts','Policy start','date'],['expires','Policy end','date']],
     mortgage: [['provider','Bank'],['balance','Outstanding balance (S$)','number'],['balanceDate','Balance as of','date'],['instalment','Monthly instalment (S$)','number'],['rate','Current annual rate (%)','number'],['rateSchedule','Rate schedule'],['lockInEnd','Lock-in ends','date'],['noticeDays','Notice period (days)','integer'],['reviewDate','Review date','date']],
     maintenance: [['room','Room / area'],['provider','Service provider'],['cost','Cost per service (S$)','number'],['installed','Setup / installation date','date'],['installationType','Event type'],['installationSource','Date source'],['lastService','Last serviced','date'],['frequencyMonths','Repeat every (months)','integer'],['nextService','Next service (optional override)','date']]
@@ -107,7 +107,7 @@
   var ICONS={grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',external:'<path d="M14 4h6v6M20 4l-9 9M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"/>',chevronRight:'<path d="m9 5 7 7-7 7"/>',close:'<path d="M6 6l12 12M18 6 6 18"/>',check:'<path d="m5 12 4 4L19 7"/>',up:'<path d="m6 14 6-6 6 6"/>',down:'<path d="m6 10 6 6 6-6"/>',room:'<path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6"/>'};
   function icon(name, cls) { return '<svg class="home-icon '+(cls||'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ICONS[name]+'</svg>'; }
   function homeIcon(category) {
-    var paths = category === 'Furniture' ? '<path d="M5 11V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4M5 16v3m14-3v3M4 11a2 2 0 0 0-2 2v3h20v-3a2 2 0 0 0-4 0H6a2 2 0 0 0-2-2Z"/>' : category === 'Fixtures' ? '<path d="M9 18h6m-5 3h4M8 13a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/>' : '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 8h14m-10-3h2"/><circle cx="12" cy="15" r="4"/>';
+    var paths = category === 'Pet' ? '<path d="M12 20c-3 0-5-1.6-5-3.8 0-2.4 2.4-5.2 5-5.2s5 2.8 5 5.2c0 2.2-2 3.8-5 3.8Z"/><circle cx="6" cy="9.5" r="1.7"/><circle cx="18" cy="9.5" r="1.7"/><circle cx="9.3" cy="5.5" r="1.7"/><circle cx="14.7" cy="5.5" r="1.7"/>' : category === 'Furniture' ? '<path d="M5 11V7a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2v4M5 16v3m14-3v3M4 11a2 2 0 0 0-2 2v3h20v-3a2 2 0 0 0-4 0H6a2 2 0 0 0-2-2Z"/>' : category === 'Fixtures' ? '<path d="M9 18h6m-5 3h4M8 13a6 6 0 1 1 8 0c-1 1-1 2-1 3H9c0-1 0-2-1-3Z"/>' : '<rect x="5" y="2" width="14" height="20" rx="2"/><path d="M5 8h14m-10-3h2"/><circle cx="12" cy="15" r="4"/>';
     return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+paths+'</svg>';
   }
   function roomOf(r) { return r.room||'Unassigned'; }
@@ -123,7 +123,7 @@
     return names.sort(function(a,b){if(a==='Unassigned')return 1;if(b==='Unassigned')return -1;return counts[b]-counts[a]||a.localeCompare(b);}).map(function(n){return {name:n,count:counts[n]};});
   }
   function categoryNav(assets) {
-    return '<nav class="home-category-nav" aria-label="Item categories">'+['All','Appliances','Fixtures','Furniture'].map(function(c) {
+    return '<nav class="home-category-nav" aria-label="Item categories">'+['All','Appliances','Fixtures','Furniture','Pet'].map(function(c) {
       var items=assets.filter(function(r){return c==='All'||r.category===c;});
       var zones=c==='All'?[]:zonesFor(items);
       var open=c===category;
@@ -180,7 +180,13 @@
     home_airfryer:{files:['russell-taylors-z7'],label:'Russell Taylors Z7 6.5L air fryer',url:'https://shopee.sg/Russell-Taylors-3D-Visible-Window-Digital-Air-Fryer-Extra-Large-(6.5L)-Z7-i.234952174.24430709673'},
     home_microwave:{files:['cornell-microwave'],label:'Cornell 25L microwave',url:'https://www.harveynorman.com.sg/home-appliances/kitchen-appliances-en/microwave-ovens-en/cornell-25l-microwave-oven-black-cmos25bk.html'},
     home_switches:{files:['legrand-galion'],label:'Legrand Galion dark silver switch',url:'https://www.legrand.com/ecatalogue/en/catalog/products/galion-2-gangs-1-way-switch-16ax-dark-silver-282402-c3?category_id=43406'},
-    home_study_tables:{files:['omnidesk-classic'],label:'Omnidesk Classic Wildwood desk',url:'https://theomnidesk.com/products/classic-wildwood'},
+    home_omnidesk:{files:['omnidesk-classic'],label:'Omnidesk Classic Wildwood desk',url:'https://theomnidesk.com/products/classic-wildwood'},
+    home_levoit_core200s:{files:['levoit-core200s'],label:'Levoit Core 200S',url:'https://levoit.com/products/core-200s-smart-true-hepa-air-purifier'},
+    home_levoit_vital100s_1:{files:['levoit-vital100s'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
+    home_levoit_vital100s_2:{files:['levoit-vital100s'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
+    home_neakasa_m1:{files:['neakasa-m1'],label:'Neakasa M1',url:'https://neakasa.com/products/neakasa-m1-cat-litter-box'},
+    home_ventilation:{files:['kdk-15wud'],label:'KDK 15WUD ventilating fan',url:'https://www.kdk.sg/products/ventilating-fan-15wud'},
+    'home_door-stopper':{files:['smartdoor-slidearm'],label:'Slide arm door stopper',url:'https://www.smart-home.com.sg/slidearm'},
     home_switchbot_hub:{files:['switchbot-hub-mini'],label:'SwitchBot Hub Mini',url:'https://www.switch-bot.com/products/switchbot-hub-mini'},
     home_spot_cleaner:{files:['russell-taylors-sc10'],label:'Russell Taylors SC10 spot cleaner',url:'https://russelltaylors.sg/products/russell-taylors-portable-spot-cleaner-fabric-sofa-carpet-upholstery-cleaner-sc10'},
     home_monitor_arm:{files:['prism-arc-lite'],label:'PRISM+ Arc Lite dual monitor arm',url:'https://prismplus.sg/products/arc-lite'},
@@ -228,7 +234,7 @@
       else if(/water dispenser/.test(n))path=itemDrawings.home_water_dispenser;
       else if(/air fryer/.test(n))path=itemDrawings.home_airfryer;
       else if(/ventilation/.test(n))path=itemDrawings.home_ventilation;
-      else if(/study tables/.test(n))path=itemDrawings.home_study_tables;
+      else if(/study table|standing desk|adjustable table/.test(n))path=itemDrawings.home_study_tables;
       else if(/item details to confirm/.test(n))path='<path d="M3 4h10l8 8-9 9-9-9Z"/><circle cx="7" cy="8" r="1"/><path d="M11 9c2-2 5 0 3 2l-1 1m-1 3h.01"/>';
     }
     return path?'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+path+'</svg>':homeIcon(r.category);
@@ -244,7 +250,7 @@
     }).join('')+'</div>';
   }
   var toneRank={expired:0,unconfirmed:1,missing:2,covered:3,not_applicable:4};
-  var CATEGORIES=['Appliances','Fixtures','Furniture'];
+  var CATEGORIES=['Appliances','Fixtures','Furniture','Pet'];
   function coverEnd(r) { return r.expires||r.secondaryExpiry||''; }
   var defaultDir={newest:'desc',cost:'desc'};
   function setSort(key, toggle) {
@@ -325,7 +331,9 @@
       return {r:r,start:start,end:ends[ends.length-1],first:r.expires||ends[0]};
     }).sort(function(a,b){return a.first.localeCompare(b.first)||a.r.name.localeCompare(b.r.name);});
     var undated=sortItems(rows.filter(function(r){return !r.expires&&!r.secondaryExpiry;}));
-    if(!dated.length)return '<div class="home-empty"><h4>No dated warranty cover to chart</h4><p>Items without an end date are listed in the list and grid views.</p></div>';
+    var rest=undated.length?'<details class="home-gantt-rest"'+(dated.length?'':' open')+'><summary><strong>Without a dated end</strong><span>'+undated.length+' items</span></summary><div class="home-gantt-rest-list">'+undated.map(function(r){return '<button type="button" class="home-gantt-rest-item" data-open="'+esc(r.id)+'">'+itemCell(r)+primaryChip(r)+'</button>';}).join('')+'</div></details>':'';
+    // With no dated cover among the matching items, still list them so a filter never appears empty.
+    if(!dated.length)return '<div class="home-empty"><h4>No dated warranty cover to chart</h4><p>'+(undated.length?'The matching items have no warranty end date; they are listed below.':'Change the search or filters.')+'</p></div>'+rest;
     var nowYear=+now.slice(0,4);
     var minYear=Math.min.apply(null,dated.map(function(d){return +d.start.slice(0,4);}).concat(nowYear));
     var fullMax=Math.max.apply(null,dated.map(function(d){return +d.end.slice(0,4);}).concat(nowYear));
@@ -349,7 +357,6 @@
       if(r.secondaryExpiry){var from=r.expires&&r.expires<r.secondaryExpiry?r.expires:d.start;var st2=warrantyState(r.secondaryExpiry,now);bars+=bar('secondary '+(st2==='expired'?'expired':'covered'),from,r.secondaryExpiry,(r.secondaryWarranty||'Additional cover')+' · '+date(r.secondaryExpiry),(r.secondaryWarranty||'Additional cover')+' · to '+date(r.secondaryExpiry),false);}
       return '<div class="home-gantt-row" data-open="'+esc(r.id)+'" tabindex="0" role="button" aria-label="Open '+esc(r.name)+'"><div class="home-gantt-label">'+itemCell(r)+'</div><div class="home-gantt-track">'+grid+'<i class="home-gantt-today" style="left:'+pct(now)+'%"></i>'+bars+'</div></div>';
     }).join('');
-    var rest=undated.length?'<details class="home-gantt-rest"><summary><strong>Without a dated end</strong><span>'+undated.length+' items</span></summary><div class="home-gantt-rest-list">'+undated.map(function(r){return '<button type="button" class="home-gantt-rest-item" data-open="'+esc(r.id)+'">'+itemCell(r)+primaryChip(r)+'</button>';}).join('')+'</div></details>':'';
     return '<div class="home-gantt" aria-label="Warranty coverage timeline">'+axis+body+'</div><p class="home-muted home-gantt-note">Bars run from the recorded warranty start (or installation, delivery or purchase date) to the recorded end, labelled with the term length.'+(fullMax>maxYear?' Cover running past '+maxYear+' is cut at the right edge with an arrow to its end year.':'')+' Thin lower bars are additional cover such as a compressor or mattress. Dashed bars are dates from unverified documents.</p>'+rest;
   }
   function collectionHTML(rows) {
