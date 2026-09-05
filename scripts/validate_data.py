@@ -381,6 +381,68 @@ TRIP_DETAIL_FIELDS = (
 )
 
 
+def validate_wallet_travel(manual_data, output, final_by_id, errors):
+    """Published wallet charges must come from the manual WeChat file with the
+    same CNY amount, date and direction, an SGD figure equal to that amount at
+    the stated rate, and ids that never collide with a transaction."""
+    published = output.get("walletTravel")
+    if not manual_data and published is None:
+        return
+    if not isinstance(published, dict) or not isinstance(published.get("charges"), list):
+        errors.append("walletTravel must be an object with a charges list")
+        return
+    payments = manual_data.get("payments") if isinstance(manual_data, dict) else None
+    if not isinstance(payments, list):
+        if published["charges"]:
+            errors.append("walletTravel is published without a manual source")
+        return
+    by_id = {p["id"]: p for p in payments if isinstance(p, dict) and p.get("id")}
+    seen = set()
+    for index, row in enumerate(published["charges"], 1):
+        label = "wallet charge %d" % index
+        if not isinstance(row, dict) or not row.get("id"):
+            errors.append("%s is malformed" % label)
+            continue
+        if row["id"] in seen:
+            errors.append("%s repeats id %s" % (label, row["id"]))
+        seen.add(row["id"])
+        if row["id"] in final_by_id:
+            errors.append("%s collides with a transaction id" % label)
+        source = by_id.get(row["id"])
+        if source is None:
+            errors.append("%s (%s) is not in manual/wechat_payments.json" % (label, row["id"]))
+            continue
+        if row.get("date") != source.get("date") or not is_date_key(row.get("date")):
+            errors.append("%s date was changed in publishing" % label)
+        try:
+            if abs(float(row.get("amountCny")) - float(source.get("amountCny"))) > 0.005:
+                errors.append("%s CNY amount was changed in publishing" % label)
+            if abs(round(float(row.get("amountCny")) * float(row.get("rate")), 2) - float(row.get("amount"))) > 0.011:
+                errors.append("%s SGD estimate does not follow its rate" % label)
+        except (TypeError, ValueError):
+            errors.append("%s has an invalid amount or rate" % label)
+        expected_type = "debit" if source.get("direction") == "expense" else "refund"
+        if row.get("type") != expected_type:
+            errors.append("%s direction was changed in publishing" % label)
+        if row.get("estimated") is not True:
+            errors.append("%s must be marked as an estimate" % label)
+    for row in output.get("transactions", []):
+        wechat = row.get("wechat") if isinstance(row, dict) else None
+        if not wechat:
+            continue
+        source = by_id.get(wechat.get("id"))
+        if source is None:
+            errors.append("transaction %s carries a WeChat payment that is not in the manual file" % row.get("id"))
+            continue
+        foreign = str(row.get("foreign") or "")
+        try:
+            if not foreign.upper().startswith("CNY") or \
+                    abs(float(foreign[3:].replace(",", "").strip()) - float(source.get("amountCny"))) > 0.005:
+                errors.append("transaction %s WeChat evidence does not match its CNY amount" % row.get("id"))
+        except (TypeError, ValueError):
+            errors.append("transaction %s WeChat evidence has an unreadable amount" % row.get("id"))
+
+
 def validate_klook(manual_data, output, final_by_id, errors):
     """Every Klook order on a published row must exist in the manual file,
     match the row's amount and direction, and be used no more often than it
@@ -853,6 +915,8 @@ def main():
         os.path.join(MANUAL_DIR, "partner_travel.json"), {})
     klook_data = load_optional(
         os.path.join(MANUAL_DIR, "klook_orders.json"), {"orders": []})
+    wechat_data = load_optional(
+        os.path.join(MANUAL_DIR, "wechat_payments.json"), {})
     owner_rules_data = load_optional(
         os.path.join(MANUAL_DIR, "owner_rules.json"), {"rules": {}, "confirmed": []})
     manual_settlements = load_optional(
@@ -985,6 +1049,7 @@ def main():
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
     validate_partner_travel(partner_travel_data, output, final_by_id, errors)
     validate_klook(klook_data, output, final_by_id, errors)
+    validate_wallet_travel(wechat_data, output, final_by_id, errors)
     if (os.path.exists(insurance_path) or "insurance" in output) and \
             output.get("insurance") != prepare_insurance(insurance_data):
         errors.append("published insurance data does not match the manual source")

@@ -629,6 +629,161 @@ def prepare_klook_orders(order_data, card_rows, partner_charges=(), earliest_mon
     return orders, matches, stats
 
 
+WECHAT_EVIDENCE_WINDOW_DAYS = 3
+WALLET_STATUS_OK = ("支付成功",)
+
+
+def prepare_wechat_payments(raw, card_rows, sgd_per_cny=None):
+    """Read manual/wechat_payments.json, copied by import_wechat_statement.py.
+
+    A payment on a tracked card is evidence for the statement row carrying
+    the same CNY amount within a few days. A payment on any other card is
+    spending the statements never show: it is published beside them as paid
+    via that card with an SGD estimate, since the card's own conversion is
+    not on hand. The estimate uses the rate of this tracker's nearest CNY
+    charge by date, or the sgdPerCny the file states, and is marked as such.
+    Returns (wallet charges, evidence links by row id, quality summary).
+    """
+    if not raw:
+        return [], {}, {"payments": 0, "wallet": 0, "evidence": 0, "unmappedMethods": [],
+                        "cnyTotal": 0.0, "sgdEstimate": 0.0, "rate": None}
+    if not isinstance(raw, dict) or not isinstance(raw.get("payments"), list):
+        raise SystemExit("manual/wechat_payments.json must hold a payments list")
+    instruments = raw.get("instruments") if isinstance(raw.get("instruments"), dict) else {}
+    tracked_cards = {str(row.get("card") or "").strip().upper() for row in card_rows}
+    tracked_cards.add("UOB ONE CARD")
+    override_rate = raw.get("sgdPerCny")
+    if override_rate is not None:
+        if isinstance(override_rate, bool) or not isinstance(override_rate, (int, float)) \
+                or not math.isfinite(override_rate) or override_rate <= 0:
+            raise SystemExit("manual/wechat_payments.json sgdPerCny must be a positive number")
+
+    # The tracker's own CNY charges, as (date, rate) for the estimate.
+    cny_rows = []
+    for row in card_rows:
+        foreign = str(row.get("foreign") or "")
+        if foreign.upper().startswith("CNY"):
+            try:
+                cny = float(foreign[3:].replace(",", "").strip())
+                if cny > 0 and row.get("amount"):
+                    cny_rows.append((str(row.get("date")), round(float(row["amount"]) / cny, 4), cny))
+            except (TypeError, ValueError):
+                continue
+
+    def nearest_rate(date_value):
+        if override_rate:
+            return float(override_rate), "manual sgdPerCny"
+        if not cny_rows:
+            return None, ""
+        target = datetime.strptime(date_value, "%Y-%m-%d")
+        best = min(cny_rows, key=lambda item: abs((datetime.strptime(item[0], "%Y-%m-%d") - target).days))
+        return best[1], "this tracker's CNY charge on %s" % best[0]
+
+    def order_like(text):
+        return bool(re.search(r"\d{8,}", text)) or not text
+
+    charges = []
+    evidence = {}
+    used_rows = set()
+    unmapped = set()
+    seen = set()
+    cny_total = 0.0
+    sgd_total = 0.0
+    for index, payment in enumerate(raw["payments"], 1):
+        label = "WeChat payment %d" % index
+        if not isinstance(payment, dict):
+            raise SystemExit("%s must be an object" % label)
+        pay_id = str(payment.get("id") or "")
+        if not pay_id.startswith("wx_") or pay_id in seen:
+            raise SystemExit("%s needs a unique id starting with wx_" % label)
+        seen.add(pay_id)
+        try:
+            datetime.strptime(str(payment.get("date")), "%Y-%m-%d")
+        except (TypeError, ValueError):
+            raise SystemExit("%s has an invalid date %r" % (label, payment.get("date")))
+        amount_cny = payment.get("amountCny")
+        if isinstance(amount_cny, bool) or not isinstance(amount_cny, (int, float)) \
+                or not math.isfinite(amount_cny) or amount_cny < 0:
+            raise SystemExit("%s has an invalid amountCny %r" % (label, amount_cny))
+        direction = str(payment.get("direction") or "")
+        if direction not in ("expense", "income", "neutral"):
+            raise SystemExit("%s has an invalid direction %r" % (label, direction))
+        for field in ("method", "status", "counterparty", "product", "type", "time", "remark"):
+            if payment.get(field) is not None and not isinstance(payment.get(field), str):
+                raise SystemExit("%s %s must be text" % (label, field))
+        if direction == "neutral" or str(payment.get("status") or "") not in WALLET_STATUS_OK or amount_cny <= 0:
+            continue
+        method = str(payment.get("method") or "").strip()
+        instrument = str(instruments.get(method) or "").strip()
+        if not instrument:
+            # Until the method is mapped with --instrument nobody knows
+            # whether this card is one of the statements or another wallet.
+            unmapped.add(method or "unknown")
+            continue
+        counterparty = str(payment.get("counterparty") or "").strip()
+        product = str(payment.get("product") or "").strip()
+        name = counterparty if order_like(product) else product
+        if instrument.upper() in tracked_cards:
+            # Evidence for a statement row: same CNY amount within the window.
+            candidates = [
+                row for row in card_rows
+                if row.get("id") not in used_rows
+                and str(row.get("foreign") or "").upper().startswith("CNY")
+                and abs(float(str(row.get("foreign"))[3:].replace(",", "").strip() or 0) - amount_cny) < 0.005
+                and abs((datetime.strptime(str(row.get("date")), "%Y-%m-%d")
+                         - datetime.strptime(str(payment.get("date")), "%Y-%m-%d")).days)
+                <= WECHAT_EVIDENCE_WINDOW_DAYS
+            ]
+            if len(candidates) == 1:
+                used_rows.add(candidates[0]["id"])
+                evidence[candidates[0]["id"]] = {
+                    "id": pay_id, "counterparty": counterparty, "product": product,
+                    "name": name, "amountCny": round(float(amount_cny), 2),
+                    "method": method, "time": str(payment.get("time") or ""),
+                }
+            continue
+        rate, rate_source = nearest_rate(str(payment.get("date")))
+        if rate is None:
+            raise SystemExit("%s cannot be estimated: no CNY charge in the statements and no sgdPerCny" % label)
+        sgd = round(float(amount_cny) * rate, 2)
+        cny_total += float(amount_cny)
+        sgd_total += sgd
+        charges.append({
+            "id": pay_id,
+            "date": str(payment.get("date")),
+            "month": str(payment.get("date"))[:7],
+            "description": counterparty or name,
+            "displayName": name,
+            "amount": sgd,
+            "amountCny": round(float(amount_cny), 2),
+            "foreign": "CNY %.2f" % float(amount_cny),
+            "estimated": True,
+            "rate": rate,
+            "rateSource": rate_source,
+            "type": "debit" if direction == "expense" else "refund",
+            "category": "Travel",
+            "paidBy": instrument,
+            "method": method,
+            "status": str(payment.get("status") or ""),
+            "time": str(payment.get("time") or ""),
+            "transactionNo": str(payment.get("transactionNo") or ""),
+            "ownerTag": "",
+            "reason": "wechat",
+        })
+    charges.sort(key=lambda record: (record["date"], record["id"]))
+    stats = {
+        "payments": len(raw["payments"]),
+        "wallet": len(charges),
+        "evidence": len(evidence),
+        "unmappedMethods": sorted(unmapped),
+        "cnyTotal": round(cny_total, 2),
+        "sgdEstimate": round(sgd_total, 2),
+        "rate": float(override_rate) if override_rate else (cny_rows and round(
+            sorted(item[1] for item in cny_rows)[len(cny_rows) // 2], 4) or None),
+    }
+    return charges, evidence, stats
+
+
 def attach_klook(record, match, name_allowed):
     """Put a Klook link on a published row. The order name is derived
     evidence like a Trip.com product name, so it carries its own source."""
@@ -1769,6 +1924,14 @@ def main():
         manual("trip_booking_reconciliation.json", {"links": []}),
     )
     partner_travel = prepare_partner_travel(manual("partner_travel.json", {}))
+    wechat_raw = manual("wechat_payments.json", {})
+    wallet_charges, wechat_by_transaction, wallet_stats = prepare_wechat_payments(
+        wechat_raw, rows)
+    wallet_travel = {
+        "source": (wechat_raw.get("source") if isinstance(wechat_raw, dict) else None) or {},
+        "instruments": (wechat_raw.get("instruments") if isinstance(wechat_raw, dict) else None) or {},
+        "charges": wallet_charges,
+    }
     # Klook orders belong to this account, so a charge on the other person's
     # card can be one of them too; both sets are linked in one pass so an
     # amount is never claimed twice.
@@ -1975,6 +2138,14 @@ def main():
             }
         if r["id"] in klook_by_transaction:
             attach_klook(record, klook_by_transaction[r["id"]], not trip_booking)
+        if r["id"] in wechat_by_transaction:
+            # A WeChat payment on this card names the merchant behind a bare
+            # CNY charge; derived evidence, so it carries its own source.
+            wechat = wechat_by_transaction[r["id"]]
+            record["wechat"] = wechat
+            if not record.get("displayName") and wechat.get("name"):
+                record["displayName"] = wechat["name"]
+                record["displayNameSource"] = "wechat-payment"
         # A hand-set destination for a travel charge whose descriptor names
         # only the platform's billing entity; the dashboard reads it before
         # its own inference.
@@ -2237,6 +2408,7 @@ def main():
         },
         "trip": trip_stats,
         "klook": klook_stats,
+        "wallet": wallet_stats,
         "grab": {
             "receipts": len(grab_receipts),
             "webHistoryRecords": grab_history_stats["records"],
@@ -2301,6 +2473,9 @@ def main():
                 # Charges the other tracker paid for shared travel; read by
                 # the Travel tab, never by the ledger.
                 "partnerTravel": partner_travel,
+                # Spending on cards the statements never show (WeChat Pay on
+                # YouTrip and the like), SGD estimated; read by the Travel tab.
+                "walletTravel": wallet_travel,
                 "transactions": transactions,
             }, f, indent=1)
         for attempt in range(5):
@@ -2329,6 +2504,11 @@ def main():
     print("Klook orders %d (%d expired): %d charges and %d refunds linked, %d paid orders awaiting a statement"
           % (klook_stats["orders"], klook_stats["expired"], klook_stats["matchedCharges"],
              klook_stats["matchedRefunds"], len(klook_stats["awaiting"])))
+    print("WeChat payments %d: %d on other cards (CNY %.2f, about S$%.2f), %d as evidence for statement rows%s"
+          % (wallet_stats["payments"], wallet_stats["wallet"], wallet_stats["cnyTotal"],
+             wallet_stats["sgdEstimate"], wallet_stats["evidence"],
+             "; unmapped methods " + ", ".join(wallet_stats["unmappedMethods"])
+             if wallet_stats["unmappedMethods"] else ""))
     print("Partner travel charges %d paid by %s"
           % (len(partner_travel["charges"]), partner_travel["paidBy"] or "nobody"))
     print("Salary steps %d, annual rows %d, game sales %d"

@@ -248,6 +248,21 @@ review-status filters.
   own line in the summary and footer, outside your net cost; the grouped view
   leaves them out. Re-run the import after Nic's tracker rebuilds, then
   `python scripts/import_all.py`.
+- WeChat Pay: `python scripts/import_wechat_statement.py <export.xlsx>
+  --instrument "MASTERCARD(7975)=YouTrip"` copies a WeChat Pay statement
+  export (微信支付账单) into `manual/wechat_payments.json` (Git-ignored),
+  keyed by WeChat transaction number so overlapping exports add nothing
+  twice, with each payment method mapped to a card. A payment on a tracked
+  card (map it to the card's statement name, e.g. `UOB ONE CARD`) becomes
+  evidence for the statement row with the same CNY amount within three days,
+  naming the merchant behind a bare CNY charge. A payment on any other card
+  is spending the statements never show: the build publishes it as
+  `walletTravel`, paid via that card, with an SGD estimate at the rate of this
+  tracker's nearest CNY charge by date (or `sgdPerCny` in the file) and marked
+  as such; it joins trips by date, and the Travel tab and travel ledger show
+  it with a "≈", the payer filter gains a pill per card, and its own panel
+  lists every payment with its rate. Expense and income rows with status
+  支付成功 are used; neutral transactions (top-ups, repayments) are skipped.
 - Klook orders: `manual/klook_orders.json` (Git-ignored) is captured by hand
   from the account's bookings page at klook.com/bookings, one entry per order
   with `name`, `package`, `activityDate`, `quantity`, `amount`, `currency` and

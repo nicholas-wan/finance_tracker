@@ -417,6 +417,9 @@ window.Insights = (function () {
       // give destination evidence, but their money is kept apart: the total,
       // the split and the per-day figure stay this tracker's own.
       var partnerTotal = 0, partnerCount = 0, paidBy = "";
+      // One entry per other payer (a partner's card, a wallet card), each
+      // with its own total and count, and whether its figures are estimates.
+      var payers = {};
       rows.forEach(function (transaction) {
         var amount = signed(transaction);
         var country = transaction.category === "Travel" ? travelCountry(transaction) : "";
@@ -425,8 +428,15 @@ window.Insights = (function () {
         if (city) cities[city] = (cities[city] || 0) + Math.abs(amount);
         if (transaction.paidBy) {
           partnerTotal += amount;
-          if (isConfirmedCharge(transaction, hidden)) partnerCount += 1;
+          var confirmed = isConfirmedCharge(transaction, hidden);
+          if (confirmed) partnerCount += 1;
           paidBy = paidBy || transaction.paidBy;
+          var entry = payers[transaction.paidBy] ||
+            (payers[transaction.paidBy] = { total: 0, count: 0, estimated: false, via: false });
+          entry.total = Math.round((entry.total + amount) * 100) / 100;
+          if (confirmed) entry.count += 1;
+          if (transaction.estimated) entry.estimated = true;
+          if (transaction.via) entry.via = true;
           return;
         }
         total += amount;
@@ -456,6 +466,7 @@ window.Insights = (function () {
         partnerTotal: Math.round(partnerTotal * 100) / 100,
         partnerCount: partnerCount,
         paidBy: paidBy,
+        payers: payers,
         guessedIds: guessedIds,
         guessedCount: guessedIds.length,
         total: Math.round(total * 100) / 100,
