@@ -851,6 +851,30 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   font: inherit; font-size: var(--fs-small); font-weight: 600; cursor: pointer;
 }
 .drawer-suggest:hover { filter: brightness(1.08); }
+/* What the other person paid: grouped by trip, read-only. */
+.trip-card .delta.partner-paid { color: var(--accent); }
+.partner-group { margin-top: 12px; }
+.partner-group:first-child { margin-top: 0; }
+.partner-group-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 6px 5px; margin: 0 -5px 2px; border-radius: 6px; border-bottom: 1px solid var(--border);
+  font-size: var(--fs-small); color: var(--text-2);
+}
+.partner-group-head strong { color: var(--text); font-weight: 650; }
+.partner-group-head strong .flag { vertical-align: -1px; }
+.partner-group-head.actionable:hover { background: var(--surface-2); }
+.partner-row {
+  display: grid; grid-template-columns: 74px minmax(0, 1fr) 90px; gap: 10px; align-items: baseline;
+  padding: 5px 0; font-size: var(--fs-caption); border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.partner-row:last-child { border-bottom: 0; }
+.partner-row.reversed { opacity: 0.55; }
+.partner-date { color: var(--text-3); white-space: nowrap; }
+.partner-desc { min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.partner-desc small { display: block; color: var(--text-3); font-size: var(--fs-micro); white-space: normal; }
+.partner-amt { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.partner-amt.credit { color: var(--green); }
+#travel-kpis.kpis-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .travel-country-pills { flex: 1 1 100%; }
 .pill .pill-count {
   margin-left: 5px; padding: 0 5px; border-radius: 999px; font-size: var(--fs-micro);
@@ -2227,6 +2251,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .tabs { gap: 2px; }
   #travel-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #travel-kpis.kpis-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #travel-kpis.kpis-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 }
 @media (max-width: 760px) {
   .pill { min-height: 34px; }
@@ -2239,6 +2264,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
   .kpi { padding: 12px 12px; }
   .kpi .value { font-size: var(--fs-stat-sm); }
-  #travel-kpis, #travel-kpis.kpis-five { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #travel-kpis, #travel-kpis.kpis-five, #travel-kpis.kpis-six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   #travel-kpis.kpis-five .kpi:last-child { grid-column: 1 / -1; }
+  .partner-row { grid-template-columns: 62px minmax(0, 1fr) 80px; }
 }

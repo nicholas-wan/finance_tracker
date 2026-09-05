@@ -155,12 +155,13 @@ window.Insights = (function () {
   // ahead and hotels weeks ahead. Trip.com bookings carry the travel date, so
   // a matched charge is anchored there and only bookingless rows fall back to
   // the statement date. Rows whose anchors sit within TRIP_GAP_DAYS of each
-  // other form one trip; a lone known-country charge within TRIP_ATTACH_DAYS of
-  // a trip to the same place (a visa, a ticket bought early) joins it, and any
+  // other form one trip; a known-country charge within TRIP_ATTACH_DAYS of a
+  // trip to the same place (a visa or flight bought up to a quarter ahead)
+  // joins it, and any
   // foreign-currency charge dated inside a trip's window counts as spend on
   // the ground even when it was categorised as food or transport.
   var TRIP_GAP_DAYS = 5;
-  var TRIP_ATTACH_DAYS = 60;
+  var TRIP_ATTACH_DAYS = 90;
   var MONTH_INDEX = {
     january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6,
     august: 7, september: 8, october: 9, november: 10, december: 11
@@ -245,7 +246,8 @@ window.Insights = (function () {
   function confirmedTravelCharges(transactions) {
     var hidden = reversedIds(transactions);
     return (transactions || []).filter(function (transaction) {
-      return transaction.category === "Travel" && isConfirmedCharge(transaction, hidden);
+      return transaction.category === "Travel" && !transaction.paidBy &&
+        isConfirmedCharge(transaction, hidden);
     });
   }
 
@@ -355,14 +357,24 @@ window.Insights = (function () {
       var cities = {};
       var split = { "Flights": 0, "Hotels": 0, "Tickets & transfers": 0, "On the ground": 0 };
       var total = 0;
+      // Rows another person paid (transaction.paidBy) belong to the trip and
+      // give destination evidence, but their money is kept apart: the total,
+      // the split and the per-day figure stay this tracker's own.
+      var partnerTotal = 0, partnerCount = 0, paidBy = "";
       rows.forEach(function (transaction) {
         var amount = signed(transaction);
-        total += amount;
-        split[tripSplitBucket(transaction)] += amount;
         var country = transaction.category === "Travel" ? travelCountry(transaction) : "";
         if (country) countries[country] = (countries[country] || 0) + Math.abs(amount);
         var city = travelCity(transaction);
         if (city) cities[city] = (cities[city] || 0) + Math.abs(amount);
+        if (transaction.paidBy) {
+          partnerTotal += amount;
+          if (isConfirmedCharge(transaction, hidden)) partnerCount += 1;
+          paidBy = paidBy || transaction.paidBy;
+          return;
+        }
+        total += amount;
+        split[tripSplitBucket(transaction)] += amount;
       });
       var known = Object.keys(countries).filter(function (c) { return c !== "Unknown"; })
         .sort(function (a, b) { return countries[b] - countries[a]; });
@@ -378,11 +390,16 @@ window.Insights = (function () {
         cities: cityList,
         city: cityList[0] || "",
         ids: rows.map(function (transaction) { return transaction.id; }),
-        rowCount: rows.length,
-        count: rows.filter(function (transaction) { return isConfirmedCharge(transaction, hidden); }).length,
-        bookings: rows.filter(function (transaction) {
-          return isConfirmedCharge(transaction, hidden) && hasConfirmedBooking(transaction);
+        rowCount: rows.filter(function (transaction) { return !transaction.paidBy; }).length,
+        count: rows.filter(function (transaction) {
+          return !transaction.paidBy && isConfirmedCharge(transaction, hidden);
         }).length,
+        bookings: rows.filter(function (transaction) {
+          return !transaction.paidBy && isConfirmedCharge(transaction, hidden) && hasConfirmedBooking(transaction);
+        }).length,
+        partnerTotal: Math.round(partnerTotal * 100) / 100,
+        partnerCount: partnerCount,
+        paidBy: paidBy,
         total: Math.round(total * 100) / 100,
         perDay: Math.round(total / days * 100) / 100,
         split: split,

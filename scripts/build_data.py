@@ -248,6 +248,76 @@ def manual(name, default=None):
     return load(os.path.join(MANUAL_DIR, name), default)
 
 
+PARTNER_CHARGE_FIELDS = (
+    "id", "sourceId", "date", "postedDate", "month", "description", "displayName",
+    "amount", "type", "category", "foreign", "card", "ownerTag", "reason",
+)
+
+
+def prepare_partner_travel(raw):
+    """Travel charges another tracker paid, copied by import_partner_travel.py.
+
+    They are published beside the transactions, never inside them: the ledger,
+    its totals and every source-to-output check stay this tracker's own money.
+    The dashboard clusters them into trips and labels each as paid by the
+    other person. Fails closed on anything malformed, like every manual file.
+    """
+    if not raw:
+        return {"paidBy": "", "source": {}, "charges": []}
+    if not isinstance(raw, dict):
+        raise SystemExit("manual/partner_travel.json must be an object")
+    paid_by = str(raw.get("paidBy") or "").strip()
+    if not paid_by:
+        raise SystemExit("manual/partner_travel.json needs paidBy")
+    charges = raw.get("charges")
+    if not isinstance(charges, list):
+        raise SystemExit("manual/partner_travel.json charges must be a list")
+    source = raw.get("source") if isinstance(raw.get("source"), dict) else {}
+    seen = set()
+    published = []
+    for index, row in enumerate(charges, 1):
+        label = "partner charge %d" % index
+        if not isinstance(row, dict):
+            raise SystemExit("%s must be an object" % label)
+        tx_id = str(row.get("id") or "").strip()
+        prefix = paid_by.lower() + "_"
+        if not tx_id.startswith(prefix) or tx_id in seen:
+            raise SystemExit("%s needs a unique id starting with %r" % (label, prefix))
+        seen.add(tx_id)
+        try:
+            datetime.strptime(str(row.get("date")), "%Y-%m-%d")
+        except (TypeError, ValueError):
+            raise SystemExit("%s has an invalid date %r" % (label, row.get("date")))
+        if not re.fullmatch(r"\d{4}-\d{2}", str(row.get("month") or "")):
+            raise SystemExit("%s has an invalid month %r" % (label, row.get("month")))
+        amount = row.get("amount")
+        if isinstance(amount, bool) or not isinstance(amount, (int, float)) \
+                or not math.isfinite(amount) or amount <= 0:
+            raise SystemExit("%s has an invalid amount %r" % (label, amount))
+        if row.get("type") not in ("debit", "refund"):
+            raise SystemExit("%s has an invalid type %r" % (label, row.get("type")))
+        for field in ("description", "category"):
+            if not str(row.get(field) or "").strip():
+                raise SystemExit("%s has no %s" % (label, field))
+        for field in ("displayName", "foreign", "card", "ownerTag", "reason", "sourceId", "postedDate"):
+            if row.get(field) is not None and not isinstance(row.get(field), str):
+                raise SystemExit("%s %s must be text" % (label, field))
+        record = {field: row[field] for field in PARTNER_CHARGE_FIELDS if row.get(field) not in (None, "")}
+        record["amount"] = round(float(amount), 2)
+        published.append(record)
+    published.sort(key=lambda record: (record["date"], record["id"]))
+    return {
+        "paidBy": paid_by,
+        "source": {
+            "tracker": str(source.get("tracker") or paid_by),
+            "generationId": source.get("generationId"),
+            "generatedAt": source.get("generatedAt"),
+            "importedAt": source.get("importedAt"),
+        },
+        "charges": published,
+    }
+
+
 def padded(description):
     """The description as the rule tables expect to see it.
 
@@ -1791,6 +1861,7 @@ def main():
     months = sorted({t["month"] for t in transactions})
     salary = manual("salary.json", {})
     sales = manual("game_sales.json", {}).get("sales", [])
+    partner_travel = prepare_partner_travel(manual("partner_travel.json", {}))
     settlements = manual("settlements.json", {"openingBalances": []})
     # Only the two fields the dashboard actually reads are published. The
     # holder's name and the fixed-deposit account numbers stay in manual/,
@@ -2031,6 +2102,9 @@ def main():
                 # reader in the dashboard and stays in manual/.
                 "grabReceipts": grab_receipts,
                 "insurance": insurance,
+                # Charges the other tracker paid for shared travel; read by
+                # the Travel tab, never by the ledger.
+                "partnerTravel": partner_travel,
                 "transactions": transactions,
             }, f, indent=1)
         for attempt in range(5):
@@ -2056,6 +2130,8 @@ def main():
              100.0 * other / max(len(transactions), 1)))
     print("Owner: %d by stable ID, %d from legacy exact tags, %d from merchant rules, %d untagged"
           % (tagged_id, tagged_exact, tagged_rule, untagged))
+    print("Partner travel charges %d paid by %s"
+          % (len(partner_travel["charges"]), partner_travel["paidBy"] or "nobody"))
     print("Salary steps %d, annual rows %d, game sales %d"
           % (len(salary.get("steps", [])), len(salary.get("years", [])), len(sales)))
     print("Remarks %d" % len(remarks_by_id))

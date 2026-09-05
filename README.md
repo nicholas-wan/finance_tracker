@@ -224,6 +224,20 @@ review-status filters.
   reversed, and a booking that was not cancelled. Each card and bar opens the
   Transactions tab already filtered; a country bar keeps the year the tab was
   showing.
+- Charges the other tracker paid for shared travel appear on the Travel tab
+  too. `python scripts/import_partner_travel.py` copies every Travel row and
+  every foreign-currency everyday row from the Nic tracker's published
+  `app/data/transactions.json` into `manual/partner_travel.json` (Git-ignored;
+  pass another path or `--paid-by` for a different tracker). The build
+  publishes them as `partnerTravel` beside the transactions, never inside
+  them, and the validator checks the copy against the manual file. The trip
+  builder clusters them with your own rows by date and destination, so a
+  visa, insurance or flight on Nic's card joins the trip it paid for; each
+  card then shows "+ S$X paid by Nic · trip cost S$Y" while its own figure,
+  the split and the per-day cost stay your money. A **Paid by Nic** card and
+  panel list every copied charge under its trip with Nic's own owner tag, and
+  charges no trip claimed sit under "Not tied to one of your trips". Re-run
+  the import after Nic's tracker rebuilds, then `python scripts/import_all.py`.
 - Selecting the **Travel** category (or the Travel card on the Overview) adds a
   row of country/region pills with all-time counts, replaces the ordinary
   category and owner summary with a year-by-country/region breakdown, offers
@@ -234,7 +248,7 @@ review-status filters.
   charged months ahead lands on the trip it belongs to; bookingless charges use
   their statement date; charges within five days of each other form one trip;
   a bookingless charge with a known destination joins the nearest
-  booking-anchored trip to the same place within 60 days; and foreign-currency
+  booking-anchored trip to the same place within 90 days; and foreign-currency
   charges dated inside a trip count as spend on the ground whatever their
   category. Each card shows total, dates, days, cost per day against the median
   of your other trips, and a flights / hotels / tickets / on-the-ground split;

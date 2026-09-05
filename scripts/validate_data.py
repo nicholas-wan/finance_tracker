@@ -381,6 +381,57 @@ TRIP_DETAIL_FIELDS = (
 )
 
 
+def validate_partner_travel(manual_data, output, final_by_id, errors):
+    """Copied partner charges must match their manual source and stay outside
+    the transactions list, so nothing of the other person's leaks into totals."""
+    published = output.get("partnerTravel")
+    if not manual_data and published is None:
+        return
+    if not isinstance(published, dict) or not isinstance(published.get("charges"), list):
+        errors.append("partnerTravel must be an object with a charges list")
+        return
+    source_charges = manual_data.get("charges") if isinstance(manual_data, dict) else None
+    if not isinstance(source_charges, list):
+        if published["charges"]:
+            errors.append("partnerTravel is published without a manual source")
+        return
+    if published.get("paidBy") != str(manual_data.get("paidBy") or "").strip():
+        errors.append("partnerTravel paidBy does not match the manual file")
+    by_source = {}
+    for row in source_charges:
+        if isinstance(row, dict) and row.get("id"):
+            by_source[row["id"]] = row
+    seen = set()
+    for index, row in enumerate(published["charges"], 1):
+        label = "partner charge %d" % index
+        if not isinstance(row, dict) or not row.get("id"):
+            errors.append("%s is malformed" % label)
+            continue
+        tx_id = row["id"]
+        if tx_id in seen:
+            errors.append("%s repeats id %s" % (label, tx_id))
+        seen.add(tx_id)
+        if tx_id in final_by_id:
+            errors.append("%s collides with a transaction id" % label)
+        source = by_source.get(tx_id)
+        if source is None:
+            errors.append("%s (%s) is not in manual/partner_travel.json" % (label, tx_id))
+            continue
+        for field in ("date", "month", "type", "category", "description"):
+            if row.get(field) != source.get(field):
+                errors.append("%s %s was changed in publishing" % (label, field))
+        try:
+            if round(float(source.get("amount")), 2) != row.get("amount"):
+                errors.append("%s amount was changed in publishing" % label)
+        except (TypeError, ValueError):
+            errors.append("%s has an invalid source amount" % label)
+        if not is_date_key(row.get("date")) or not is_month_key(row.get("month")):
+            errors.append("%s has an invalid date or month" % label)
+    if len(seen) != len(by_source):
+        errors.append("partnerTravel publishes %d charge(s) but the manual file holds %d"
+                      % (len(seen), len(by_source)))
+
+
 def validate_trip(manual_data, output, final_by_id, errors, reconciliation_data=None):
     """Re-derive exact and reviewed Trip.com links from their private sources."""
     source = manual_data.get("bookings", []) if isinstance(manual_data, dict) else None
@@ -740,6 +791,8 @@ def main():
         os.path.join(MANUAL_DIR, "salary.json"), {"steps": [], "years": []})
     game_sales_data = load_optional(
         os.path.join(MANUAL_DIR, "game_sales.json"), {"sales": []})
+    partner_travel_data = load_optional(
+        os.path.join(MANUAL_DIR, "partner_travel.json"), {})
     owner_rules_data = load_optional(
         os.path.join(MANUAL_DIR, "owner_rules.json"), {"rules": {}, "confirmed": []})
     manual_settlements = load_optional(
@@ -870,6 +923,7 @@ def main():
         trip_data, output, final_by_id, errors, trip_reconciliation_data
     )
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
+    validate_partner_travel(partner_travel_data, output, final_by_id, errors)
     if (os.path.exists(insurance_path) or "insurance" in output) and \
             output.get("insurance") != prepare_insurance(insurance_data):
         errors.append("published insurance data does not match the manual source")

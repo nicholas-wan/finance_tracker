@@ -1808,8 +1808,11 @@
     if (tripCatalogueCache && tripCatalogueCache.source === data.transactions) {
       return tripCatalogueCache.value;
     }
-    var all = window.Insights.buildTrips(data.transactions);
-    function standsAlone(trip) { return trip.total >= 0.5 && (trip.anchored || trip.count >= 2); }
+    var all = window.Insights.buildTrips(data.transactions.concat(partnerRows()));
+    function standsAlone(trip) {
+      return (trip.total >= 0.5 || trip.partnerTotal >= 0.5) &&
+        (trip.anchored || trip.count + trip.partnerCount >= 2);
+    }
     var listed = all.filter(standsAlone);
     var value = {
       all: all,
@@ -1821,6 +1824,16 @@
     };
     tripCatalogueCache = { source: data.transactions, value: value };
     return value;
+  }
+
+  // Charges the other tracker paid for shared travel, each stamped with who
+  // paid so the trip builder keeps their money apart from this tracker's.
+  function partnerRows() {
+    var partner = data && data.partnerTravel;
+    if (!partner || !partner.paidBy || !Array.isArray(partner.charges)) return [];
+    return partner.charges.map(function (charge) {
+      return Object.assign({}, charge, { paidBy: partner.paidBy });
+    });
   }
 
   // Today's local date as a "YYYY-MM-DD" key comparable with row dates.
@@ -1974,6 +1987,10 @@
         split.appendChild(row);
       });
       card.appendChild(split);
+      if (Math.abs(trip.partnerTotal) >= 0.5) {
+        card.appendChild(el("p", "delta partner-paid", "+ " + fmt0(trip.partnerTotal) + " paid by " +
+          trip.paidBy + " \u00b7 trip cost " + fmt0(trip.total + trip.partnerTotal)));
+      }
       card.appendChild(el("p", "delta sub", trip.count + " confirmed charge" + (trip.count === 1 ? "" : "s") +
         (trip.bookings ? " \u00b7 " + trip.bookings + " booking" + (trip.bookings === 1 ? "" : "s") : "") +
         (trip.rowCount > trip.count ? " \u00b7 " + (trip.rowCount - trip.count) + " refund" +
@@ -5898,7 +5915,21 @@
       });
       kpis.appendChild(nextCard);
     }
+    var partner = data.partnerTravel;
+    var partnerPaid = catalogue.all.reduce(function (total, trip) { return total + trip.partnerTotal; }, 0);
+    var partnerCharges = catalogue.all.reduce(function (total, trip) { return total + trip.partnerCount; }, 0);
+    if (partner && partner.paidBy && partner.charges.length) {
+      var partnerCard = metric("Paid by " + partner.paidBy, fmt0(partnerPaid),
+        partnerCharges + " confirmed charge" + (partnerCharges === 1 ? "" : "s") + " on " +
+        partner.paidBy + "'s card, across every trip", null, "users");
+      makeActionable(partnerCard, "Show what " + partner.paidBy + " paid", function () {
+        var panel = document.getElementById("partner-travel-panel");
+        if (panel && panel.scrollIntoView) panel.scrollIntoView({ behavior: "smooth", block: "start" });
+      });
+      kpis.appendChild(partnerCard);
+    }
     kpis.classList.toggle("kpis-five", kpis.children.length === 5);
+    kpis.classList.toggle("kpis-six", kpis.children.length === 6);
 
     renderTravelTrips(catalogue);
 
@@ -5974,6 +6005,96 @@
           period: { mode: "year", year: year, month: state.period.month } });
       });
       yearsWrap.appendChild(row);
+    });
+
+    renderPartnerTravel(catalogue);
+  }
+
+  // What the other person paid, grouped under the trip each charge joined,
+  // with the charges no trip claimed listed last. Read-only: these rows are
+  // edited in the other tracker and copied here by import_partner_travel.py.
+  function renderPartnerTravel(catalogue) {
+    var panel = document.getElementById("partner-travel-panel");
+    if (!panel) return;
+    var partner = data.partnerTravel;
+    var rows = partnerRows();
+    var show = Boolean(partner && partner.paidBy && rows.length);
+    panel.classList.toggle("hidden", !show);
+    if (!show) return;
+    document.getElementById("partner-travel-name").textContent = partner.paidBy;
+    var source = partner.source || {};
+    document.getElementById("partner-travel-hint").textContent =
+      "from " + partner.paidBy + "'s tracker" +
+      (source.importedAt ? ", copied " + source.importedAt : "") +
+      " \u00b7 amounts are not part of your totals";
+    var wrap = document.getElementById("partner-travel");
+    clear(wrap);
+
+    var tripOf = {};
+    catalogue.all.forEach(function (trip) {
+      trip.ids.forEach(function (id) { tripOf[id] = trip; });
+    });
+    var groups = [];
+    var byTrip = {};
+    var loose = [];
+    rows.forEach(function (row) {
+      var trip = tripOf[row.id];
+      if (!trip) {
+        // A foreign-currency row outside every trip is everyday spending
+        // abroad by the other person, not travel of yours.
+        if (row.category === "Travel") loose.push(row);
+        return;
+      }
+      if (!byTrip[trip.key]) {
+        byTrip[trip.key] = { trip: trip, rows: [] };
+        groups.push(byTrip[trip.key]);
+      }
+      byTrip[trip.key].rows.push(row);
+    });
+    groups.sort(function (a, b) { return b.trip.start.localeCompare(a.trip.start); });
+    if (loose.length) groups.push({ trip: null, rows: loose });
+
+    var hidden = window.FinanceGrouping.reversedPairs(rows).hidden || {};
+    function tagLabel(row) {
+      if (row.ownerTag === "Shared") return "tagged Shared";
+      if (row.ownerTag === "Yx") return "tagged for you";
+      if (row.ownerTag) return "tagged " + row.ownerTag;
+      return "";
+    }
+    groups.forEach(function (group) {
+      var block = el("div", "partner-group");
+      var head = el("div", "partner-group-head");
+      if (group.trip) {
+        var trip = group.trip;
+        var title = el("strong", "");
+        title.appendChild(trip.primary === "Unknown" ? icon("plane") : window.Flags.node(trip.primary, "sm"));
+        title.appendChild(document.createTextNode(tripLabel(trip) + " \u00b7 " + tripDateRange(trip)));
+        head.appendChild(title);
+        head.appendChild(el("span", "", fmt(trip.partnerTotal) + " paid by " + partner.paidBy +
+          (trip.total >= 0.5 ? " \u00b7 you paid " + fmt(trip.total) : " \u00b7 nothing on your card")));
+        makeActionable(head, "Show your charges for " + tripLabel(trip), function () {
+          openTripInTransactions(trip);
+        });
+      } else {
+        head.appendChild(el("strong", "", "Not tied to one of your trips"));
+        head.appendChild(el("span", "", fmt(group.rows.reduce(function (total, row) {
+          return total + signed(row);
+        }, 0)) + " \u00b7 " + partner.paidBy + "'s own travel, or a trip your statements do not cover"));
+      }
+      block.appendChild(head);
+      group.rows.slice().sort(function (a, b) { return b.date.localeCompare(a.date); }).forEach(function (row) {
+        var line = el("div", "partner-row" + (hidden[row.id] ? " reversed" : ""));
+        line.appendChild(el("span", "partner-date", dateLabel(row.date)));
+        var desc = el("span", "partner-desc", row.displayName || row.description);
+        var tag = [tagLabel(row), row.foreign ? row.foreign : "", hidden[row.id] ? "reversed by a refund" : ""]
+          .filter(Boolean).join(" \u00b7 ");
+        if (tag) desc.appendChild(el("small", "", tag));
+        line.appendChild(desc);
+        line.appendChild(el("span", "partner-amt" + (row.type === "refund" ? " credit" : ""),
+          (row.type === "refund" ? "+" : "") + fmt(row.amount)));
+        block.appendChild(line);
+      });
+      wrap.appendChild(block);
     });
   }
 

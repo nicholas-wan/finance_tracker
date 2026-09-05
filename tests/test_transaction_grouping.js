@@ -1253,6 +1253,13 @@ test("builds trips from booking travel dates and gathers the spend around them",
         productType: "Hotels", status: "Cancelled", bookingDate: "February 25, 2026",
         productName: "Some Hotel Shanghai", travelTime: "March 18"
       } }),
+    // Charges the other person paid: a flight for the same trip, and a
+    // dinner in CNY inside the window. They join the trip and name it, but
+    // their money is reported apart from this tracker's own.
+    travel({ id: "nic_flight", paidBy: "Nic", date: "2026-03-16", month: "2026-03", amount: 500,
+      description: "SINGAPOREAIR 1234567890" }),
+    transaction({ id: "nic_dinner", paidBy: "Nic", date: "2026-03-19", month: "2026-03", amount: 15,
+      category: "Food & dining", description: "SHANGHAI DUMPLINGS", foreign: "CNY 70.00" }),
     // A separate journey later in the year.
     travel({ id: "tokyo", date: "2026-06-01", month: "2026-06", amount: 80,
       description: "TOKYO DISNEY RESORT" }),
@@ -1274,10 +1281,13 @@ test("builds trips from booking travel dates and gathers the spend around them",
   assert.equal(china.end, "2026-03-23");
   assert.equal(china.days, 9);
   assert.deepEqual(Array.from(china.ids).sort(),
-    ["cancelled", "dinner", "flight", "hotel", "metro", "refund", "visa"]);
+    ["cancelled", "dinner", "flight", "hotel", "metro", "nic_dinner", "nic_flight", "refund", "visa"]);
   assert.equal(china.rowCount, 7);
   assert.equal(china.count, 5);
   assert.equal(china.bookings, 2);
+  assert.equal(china.partnerTotal, 515);
+  assert.equal(china.partnerCount, 2);
+  assert.equal(china.paidBy, "Nic");
   assert.equal(insights.confirmedTravelCharges(rows).map(function (t) { return t.id; }).sort().join(","),
     "flight,hotel,metro,narita,tokyo,visa");
   assert.equal(china.anchored, true);
