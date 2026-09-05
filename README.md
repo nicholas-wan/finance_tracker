@@ -108,6 +108,65 @@ preserved.
 
 ## Dashboard
 
+The **Home** tab keeps appliances/furnishings, home and fire policies, mortgage
+details, and maintenance in a local household register. The collection uses
+compact, dark-mode-compatible cards and locally bundled product thumbnails;
+selecting a card opens its costs, dates, warranty coverage, document link, and
+notes, and selecting the backdrop closes it. Appliance records are maintained in
+the private data file rather than edited in the browser. Insurance, mortgage, and
+maintenance records remain editable. Existing payments can be linked to those
+records by searching card or bank transactions, without creating spending or
+changing ownership.
+
+Purchase, delivery, installation, and warranty-start dates are separate. The
+collection keeps purchase dates in the detail data while cards lead with delivery
+or installation. Warranty start can explicitly follow installation, delivery, or
+a marketplace delivery date. Unknown values stay blank; purchase totals cover
+only priced, non-archived appliances and are not estimates of current value.
+
+**Needs attention** lists past or upcoming policy, mortgage-review, and service
+dates through the next 90 days, plus a collapsible list of unverified records.
+Verified appliance warranties appear when they expire within 90 days. A policy
+date from an unverified document prompts a renewal check, not a coverage claim.
+Mortgage reminders use the explicit review date, or suggest the earlier of 90
+days or the recorded notice period before lock-in ends. Maintenance uses an
+explicit next date, or the last service plus the recorded interval (clamped to
+month-end). These reminders appear in the dashboard, not desktop notifications.
+
+Home records live in Git-ignored `manual/home.json`. Saves use the server's local
+origin checks, write lock, atomic replacement and rotating backups, and reject
+stale edits from another tab. A failed snapshot write restores the previous
+register. `app/data/home.json` is the read-only snapshot, regenerated on server
+startup and each Home save. Back up `manual/home.json` with the other private
+inputs. The Wi-Fi copy can read records but cannot edit them. Set status to
+**Archived** to retain an old record while excluding it from totals and reminders.
+Keep personal insurance in the existing Insurance register and home policies in
+Home to avoid entering the same policy twice.
+
+Items can be filtered into **Appliances**, **Fixtures**, and **Furniture**, with
+separate cost-source and funding fields. Warranty filters distinguish **Covered**,
+**Expired**, **Unconfirmed**, **No details**, and **Not tracked**. The last state is
+for household goods where warranty follow-up is not useful, so they do not inflate
+the missing-information count. A record may also carry manually confirmed status
+when an exact expiry date is unavailable. Additional cover, such as a compressor,
+extended warranty, or mattress cover, has its own name and expiry. Item details
+can include covered parts, exclusions, an original-item/extended-warranty cost
+breakdown, and a link to official warranty terms.
+
+A **House sheet comparison** preserves the original spreadsheet categories and
+historical totals, alongside live comparisons with the item register. Its
+Renovation and HDB figures are not added to the item total or treated as the
+current loan balance. The snapshot is stored as `costReference` inside
+`manual/home.json` and is preserved by subsequent item saves.
+
+The item collection is intentionally read-only in the dashboard: no Add, Edit,
+or Save controls for appliances, fixtures, or furniture. The owner asks the
+assistant to maintain these records. Insurance, loan, and maintenance records
+retain their forms. Thumbnail attribution and source URLs are recorded in
+`app/assets/home/sources.json`. The downloaded warranty archive was rechecked on
+5 September 2026; the private file inventory and review findings are in
+`manual/warranty_review_20260905.json`.
+
 The Transactions page supports period, search, category/flow, owner, direction, and
 review-status filters.
 

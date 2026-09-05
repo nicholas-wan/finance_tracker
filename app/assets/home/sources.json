@@ -1,0 +1,121 @@
+{
+  "yale": {
+    "source": "https://www.yalehome.com/sg/en/products/smart-door-locks/metal-gate-smart-locks/ydr50ga",
+    "model": "YDR50GA (gate lock component of bundle)"
+  },
+  "dreame-base": {
+    "source": "https://www.dreametech.com/products/x40-master-robot-vacuum",
+    "model": "X40 Master base"
+  },
+  "dreame-robot": {
+    "source": "https://www.dreametech.com/products/x40-master-robot-vacuum",
+    "model": "X40 Master robot"
+  },
+  "hitachi": {
+    "source": "https://www.hitachi-homeappliances.com/sg/promo/oneforeveryone/",
+    "model": "R-VG695P9MSX, glass black"
+  },
+  "daikin": {
+    "source": "https://www.daikin-bim-library.daikin.com/DKG-BIMDOWNLOAD/en/item/detail?categoryID=1400000&id=20430000&parentCategoryId=1400000&type=category",
+    "model": "CTKM25VVMG indoor unit",
+    "processing": "Original product image embedded in SVG with outline clipping; WebP compression."
+  },
+  "rinnai": {
+    "source": "https://www.rinnai.sg/product-page/rb-7032h-cfb",
+    "model": "RB-7032H CFB hob (component of hob/hood bundle)",
+    "processing": "Original product image embedded in SVG with rectangular clipping; WebP compression."
+  },
+  "bosch-washer": {
+    "source": "https://www.bosch-home.com/us/en/productservice/WGG254A0SG-01",
+    "model": "WGG254A0SG",
+    "processing": "Original transparent manufacturer photo, resized and WebP compressed."
+  },
+  "bosch-dryer": {
+    "source": "https://www.bosch-home.com.sg/en/product/washersanddryers/tumbledryers/heatpumpdryers/WQG24200SG",
+    "model": "WQG24200SG",
+    "processing": "Original transparent manufacturer photo, resized and WebP compressed."
+  },
+  "fotile": {
+    "source": "https://fotile.com.bd/product/fotile-bd2b-g1-built-in-dishwasher/",
+    "model": "BD2B-G1",
+    "processing": "Original product photo in SVG with outline clipping; WebP compression."
+  },
+  "happie-joy": {
+    "source": "https://happie.sg/products/joy-water-purifier/",
+    "imageSource": "https://happie.sg/wp-content/uploads/2026/02/Joy_Model_TitaniumSilver-600x900.avif",
+    "model": "Joy, silver; current official silver product photography",
+    "processing": "Original photo in SVG crop, retaining dark background and glass; WebP compression."
+  },
+  "champs-sylphy": {
+    "source": "https://champs.com.sg/product/instant-water-heater-sylphy/",
+    "imageSource": "https://champs.com.sg/wp-content/uploads/2018/10/Sylphy-White-1-scaled.jpg",
+    "model": "Champs Sylphy instant water heater (component of the bathroom fittings bundle)",
+    "processing": "Edge-connected white background removed; resized and WebP compressed."
+  },
+  "woosa-mysa": {
+    "source": "https://woosasleep.co/products/mysa",
+    "imageSource": "https://woosasleep.co/cdn/shop/files/woosa-mysa-mattress-product-image-01.jpg?v=1727191964",
+    "model": "Woosa Mysa mattress",
+    "processing": "Official lifestyle image resized and WebP compressed."
+  },
+  "bestar-star5": {
+    "source": "https://intertech-hardware.com/products/bestar-star-5",
+    "imageSource": "https://intertech-hardware.com/cdn/shop/files/matt-white-with-lights--1.jpg?v=1744868273",
+    "model": "Bestar Star 5 ceiling fan",
+    "processing": "Edge-connected white background removed; resized and WebP compressed."
+  },
+  "sony-x90l": {
+    "source": "https://electronics.sony.com/tv-video/televisions/all-tvs/p/xr65x90l",
+    "imageSource": "https://d1ncau8tqf99kp.cloudfront.net/converted/112243_original_local_1200x1050_v3_converted.webp",
+    "model": "Sony BRAVIA X90L series, used for the 65- and 55-inch records",
+    "processing": "Official product image resized and WebP compressed."
+  },
+  "russell-taylors-z7": {
+    "source": "https://shopee.sg/Russell-Taylors-3D-Visible-Window-Digital-Air-Fryer-Extra-Large-(6.5L)-Z7-i.234952174.24430709673",
+    "imageSource": "https://down-sg.img.susercontent.com/file/sg-11134207-825bb-mfrycv4itr0u7e@resize_w450_nl.webp",
+    "model": "Russell Taylors Z7 6.5L air fryer",
+    "processing": "Exact listing image resized and WebP compressed."
+  },
+  "cornell-microwave": {
+    "source": "https://www.harveynorman.com.sg/home-appliances/kitchen-appliances-en/microwave-ovens-en/cornell-25l-microwave-oven-black-cmos25bk.html",
+    "imageSource": "https://hnsgsfp.imgix.net/4/images/detailed/154/Cornell_25L_Microwave_Oven_-_Black_(CMOS25BK).jpg",
+    "model": "Cornell 25L microwave; CMOS25BK is the public product match",
+    "processing": "Edge-connected white background removed; resized and WebP compressed."
+  },
+  "legrand-galion": {
+    "source": "https://www.legrand.com/ecatalogue/en/catalog/products/galion-2-gangs-1-way-switch-16ax-dark-silver-282402-c3?category_id=43406",
+    "imageSource": "https://www.legrand.com/ecatalogue/sites/g/files/ocwmcr1676/files/ecat_assets/10-11-2023/16-15/LG-282402-C3-WEB-F.jpg",
+    "model": "Legrand Galion dark silver switch",
+    "processing": "Official image acquired from the rendered product page, background removed, resized and WebP compressed."
+  },
+  "omnidesk-classic": {
+    "source": "https://theomnidesk.com/products/classic-wildwood",
+    "imageSource": "https://theomnidesk.com/cdn/shop/files/Classic-Acacia__850x850_d7482308-7d5f-4e6d-a553-31f12cf17835.jpg?v=1754545675",
+    "model": "Omnidesk Classic Wildwood",
+    "processing": "Edge-connected white background removed; resized and WebP compressed."
+  },
+  "switchbot-hub-mini": {
+    "source": "https://www.switch-bot.com/products/switchbot-hub-mini",
+    "imageSource": "https://www.switch-bot.com/cdn/shop/products/switchbot-hub-mini-783528_1200x1200.jpg?v=1701944768",
+    "model": "SwitchBot Hub Mini",
+    "processing": "Edge-connected white background removed; resized and WebP compressed."
+  },
+  "russell-taylors-sc10": {
+    "source": "https://russelltaylors.sg/products/russell-taylors-portable-spot-cleaner-fabric-sofa-carpet-upholstery-cleaner-sc10",
+    "imageSource": "https://russelltaylors.sg/cdn/shop/files/SC10.png?v=1752656116",
+    "model": "Russell Taylors SC10 spot cleaner",
+    "processing": "Transparent product image resized and WebP compressed."
+  },
+  "prism-arc-lite": {
+    "source": "https://prismplus.sg/products/arc-lite",
+    "imageSource": "https://prismplus.sg/cdn/shop/files/ArcLite-V2-web1_1024x1024.jpg?v=1757488026",
+    "model": "PRISM+ Arc Lite dual monitor arm",
+    "processing": "Edge-connected white background removed; resized and WebP compressed."
+  },
+  "xiaomi-blender": {
+    "source": "https://www.mi.com/global/product/xiaomi-blender/",
+    "imageSource": "https://i02.appmifile.com/39_operatorx_operatorx_opx/23/10/2024/6c8bdc0a0166ad6939c777073708a7b1.png",
+    "model": "Xiaomi Blender 600W 1.75L",
+    "processing": "Transparent official product image resized and WebP compressed."
+  }
+}

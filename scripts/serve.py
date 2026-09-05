@@ -27,10 +27,13 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 from file_lock import FinanceWriteLock
+from home_records import validate_record
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "app"
+HOME_PATH = REPO_ROOT / "manual" / "home.json"
+HOME_PUBLIC_PATH = APP_DIR / "data" / "home.json"
 OWNER_PATH = REPO_ROOT / "manual" / "owner_tags.json"
 RISK_REVIEW_PATH = REPO_ROOT / "manual" / "risk_reviews.json"
 ACCOUNT_REVIEW_PATH = REPO_ROOT / "manual" / "account_reviews.json"
@@ -129,6 +132,49 @@ def atomic_write_bytes(path, content):
 def atomic_write_json(path, payload):
     content = (json.dumps(payload, indent=1) + "\n").encode("utf-8")
     atomic_write_bytes(path, content)
+
+
+def read_home():
+    return load_json(HOME_PATH) if HOME_PATH.exists() else {"revision": 0, "records": []}
+
+
+def save_home(payload):
+    if not isinstance(payload, dict) or type(payload.get("revision")) is not int:
+        raise ValueError("A Home revision is required.")
+    with WRITE_LOCK:
+        current = read_home()
+        if payload["revision"] != current["revision"]:
+            raise ValueError("Home changed in another tab. Close this form and reload before saving.")
+        transactions = set()
+        for source, path in [("card", TRANSACTIONS_PATH), ("bank", ACCOUNT_TRANSACTIONS_PATH)]:
+            if path.exists():
+                transactions.update((source, row.get("id")) for row in load_json(path).get("transactions", []))
+        record = validate_record(payload.get("record"), transactions)
+        records = list(current["records"])
+        index = next((i for i, row in enumerate(records) if row["id"] == record["id"]), None)
+        if index is None:
+            records.append(record)
+        else:
+            records[index] = record
+        updated = {"revision": current["revision"] + 1,
+                   "updatedAt": datetime.now().isoformat(timespec="seconds"), "records": records}
+        if "costReference" in current:
+            updated["costReference"] = current["costReference"]
+        paths = [HOME_PATH, HOME_PUBLIC_PATH]
+        originals = {path: path.read_bytes() if path.exists() else None for path in paths}
+        snapshot_backups([HOME_PATH] if HOME_PATH.exists() else [])
+        try:
+            for path in paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(path, updated)
+        except Exception:
+            for path, original in originals.items():
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_write_bytes(path, original)
+            raise
+        return dict(updated, ok=True)
 
 
 def manual_file_defaults():
@@ -1183,6 +1229,13 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             self.send_json(403, {"ok": False, "error": "Local requests only."})
             return
         endpoint = self.path.split("?", 1)[0]
+        if endpoint == "/api/home":
+            try:
+                with WRITE_LOCK:
+                    self.send_json(200, dict(read_home(), ok=True))
+            except Exception as error:
+                self.send_json(500, {"ok": False, "error": str(error)})
+            return
         if endpoint == "/api/status":
             self.send_json(200, {
                 "ok": True,
@@ -1191,6 +1244,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "riskReviews": True,
                 "remarks": True,
                 "transactionDetails": True,
+                "homeRecords": True,
                 "auditHistory": True,
                 "accountReviews": True,
                 # How many bank rows one /api/account-review may carry.
@@ -1267,6 +1321,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             return
         endpoint = self.path.split("?", 1)[0]
         if endpoint not in {
+            "/api/home",
             "/api/client-heartbeat",
             "/api/client-disconnect",
             "/api/owner",
@@ -1283,12 +1338,14 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length <= 0 or length > 4096:
+        if length <= 0 or length > (16384 if endpoint == "/api/home" else 4096):
             self.send_json(400, {"ok": False, "error": "Invalid request size."})
             return
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            if endpoint in {"/api/client-heartbeat", "/api/client-disconnect"}:
+            if endpoint == "/api/home":
+                result = save_home(payload)
+            elif endpoint in {"/api/client-heartbeat", "/api/client-disconnect"}:
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object.")
                 try:
@@ -1571,6 +1628,13 @@ class ShareHandler(SimpleHTTPRequestHandler):
             self.refuse()
             return
         path = urlparse(self.path).path
+        if path == "/api/home":
+            try:
+                with WRITE_LOCK:
+                    self.send_json(200, dict(read_home(), ok=True))
+            except Exception:
+                self.send_json(500, {"ok": False, "error": "Could not read Home records."})
+            return
         if path in SHARE_READ_ONLY_API:
             self.send_json(200, SHARE_READ_ONLY_API[path])
             return
@@ -1712,6 +1776,10 @@ def main():
     # before any request can read one that is not there.
     for created in ensure_manual_files():
         print("Created empty %s" % created.relative_to(REPO_ROOT))
+    # Recreate the static/read-only Home snapshot from its private source.
+    with WRITE_LOCK:
+        HOME_PUBLIC_PATH.parent.mkdir(parents=True, exist_ok=True)
+        atomic_write_json(HOME_PUBLIC_PATH, read_home())
     server = ThreadingHTTPServer(("127.0.0.1", args.port), FinanceHandler)
     server.auto_stop = args.auto_stop
     lifecycle = DashboardLifecycle(server) if args.auto_stop else None
