@@ -875,6 +875,14 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .partner-desc small { display: block; color: var(--text-3); font-size: var(--fs-micro); white-space: normal; }
 .partner-amt { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
 .partner-amt.credit { color: var(--green); }
+.partner-owner {
+  display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: var(--fs-micro);
+  font-weight: 650; letter-spacing: 0.02em; color: var(--accent); background: var(--accent-soft);
+}
+.ledger tr.partner-ledger-row td { background: color-mix(in srgb, var(--accent-soft) 28%, transparent); }
+.paid-by-inline { color: var(--accent); }
+.partner-summary-line { display: block; margin-top: 4px; color: var(--accent); }
+.drawer-note { margin: 10px 0 0; color: var(--text-3); font-size: var(--fs-caption); line-height: 1.45; }
 #travel-kpis.kpis-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
 .travel-country-pills { flex: 1 1 100%; }
 .pill .pill-count {

@@ -1020,6 +1020,47 @@
       showToast(error.message, "error");
     });
   }
+  // A charge copied from the other tracker: facts only, no editors. It is
+  // changed there and copied again, so nothing here can drift from it.
+  function renderPartnerTransactionDrawer(t) {
+    var title = document.getElementById("transaction-drawer-title");
+    var eyebrow = document.getElementById("transaction-drawer-eyebrow");
+    var body = document.getElementById("transaction-drawer-body");
+    clear(body);
+    title.textContent = t.displayName || t.description;
+    eyebrow.textContent = dateLabel(t.date) + " \u00b7 paid by " + t.paidBy;
+
+    var summary = el("section", "drawer-summary");
+    summary.appendChild(el("strong", "drawer-amount " + (t.type === "debit" ? "" : "credit"),
+      (t.type === "debit" ? "\u2212" : "+") + fmt(t.amount)));
+    var tags = el("div", "drawer-summary-tags");
+    tags.appendChild(el("span", "cat-pill " + catClass(t.category), t.category));
+    tags.appendChild(el("span", "partner-owner", t.paidBy));
+    summary.appendChild(tags);
+    body.appendChild(summary);
+
+    var section = el("section", "drawer-section");
+    section.appendChild(el("h3", "", "Paid by " + t.paidBy));
+    var meta = el("div", "drawer-meta");
+    meta.appendChild(drawerMetaRow("Paid on", t.paidBy + "'s card" + (t.card ? " (" + t.card + ")" : "")));
+    if (t.ownerTag) meta.appendChild(drawerMetaRow("Tagged there as", t.ownerTag));
+    var destination = rowCountry(t);
+    if (destination) {
+      meta.appendChild(drawerMetaRow("Destination", destination +
+        (countryGuessed(t) ? " (guessed from the trip dates)" : "")));
+    }
+    if (t.foreign) meta.appendChild(drawerMetaRow("Foreign amount", t.foreign));
+    meta.appendChild(drawerMetaRow("Original description", t.description));
+    meta.appendChild(drawerMetaRow("Statement", statementLabel(t.month) + " on " + t.paidBy + "'s card"));
+    var source = (data.partnerTravel && data.partnerTravel.source) || {};
+    meta.appendChild(drawerMetaRow("Copied", source.importedAt || "unknown date"));
+    meta.appendChild(drawerMetaRow("Transaction ID", t.id, true));
+    section.appendChild(meta);
+    section.appendChild(el("p", "drawer-note", "Read-only here. Edit it in " + t.paidBy +
+      "'s tracker, then run scripts/import_partner_travel.py and the import again."));
+    body.appendChild(section);
+  }
+
   function renderTransactionDrawer(t) {
     var title = document.getElementById("transaction-drawer-title");
     var eyebrow = document.getElementById("transaction-drawer-eyebrow");
@@ -1450,7 +1491,8 @@
     if (editor.drawerCloseTimer) window.clearTimeout(editor.drawerCloseTimer);
     if (!editor.drawerTransactionId) editor.drawerLastFocus = document.activeElement;
     editor.drawerTransactionId = t.id;
-    if (t.direction) renderAccountTransactionDrawer(t);
+    if (t.paidBy) renderPartnerTransactionDrawer(t);
+    else if (t.direction) renderAccountTransactionDrawer(t);
     else renderTransactionDrawer(t);
     shell.classList.remove("hidden");
     shell.setAttribute("aria-hidden", "false");
@@ -1852,8 +1894,17 @@
     var partner = data && data.partnerTravel;
     if (!partner || !partner.paidBy || !Array.isArray(partner.charges)) return [];
     return partner.charges.map(function (charge) {
-      return Object.assign({}, charge, { paidBy: partner.paidBy });
+      // The owner column reads who paid; the tag they gave it stays beside.
+      return Object.assign({}, charge, { paidBy: partner.paidBy, owner: partner.paidBy });
     });
+  }
+
+  // The Transactions pane is in a travel view when the ledger is narrowed to
+  // travel: by category, by destination, or to one trip's charges. Only then
+  // do the other person's charges join the ledger.
+  function travelView() {
+    return state.transactionSource === "card" &&
+      (state.category === "Travel" || state.travelCountry !== "All" || Boolean(state.tripFocus));
   }
 
   // Today's local date as a "YYYY-MM-DD" key comparable with row dates.
@@ -1869,8 +1920,7 @@
   function renderTrips() {
     var wrap = document.getElementById("trips");
     clear(wrap);
-    var show = state.transactionSource === "card" &&
-      (state.category === "Travel" || state.travelCountry !== "All" || Boolean(state.tripFocus));
+    var show = travelView();
     wrap.classList.toggle("hidden", !show);
     if (!show) return;
 
@@ -5147,7 +5197,9 @@
   }
 
   function filteredLedger() {
-    return splitShopeeLedgerRows(data.transactions).filter(function (t) {
+    var rows = splitShopeeLedgerRows(data.transactions);
+    if (travelView()) rows = rows.concat(partnerRows());
+    return rows.filter(function (t) {
       return matchesLedgerFilters(t, false);
     }).sort(function (a, b) { return (b.date || b.month).localeCompare(a.date || a.month); });
   }
@@ -5264,10 +5316,16 @@
     foot.appendChild(toggle);
   }
   function appendLedgerNet(foot, rows) {
-    var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
+    var own = rows.filter(function (t) { return !t.paidBy; });
+    var partner = rows.filter(function (t) { return t.paidBy; });
+    var totals = window.FinanceGrouping.summarize(own, EXCLUDED);
     var text = "Net cost " + fmt(totals.netCost);
     if (totals.excludedCount) {
       text += " · excluded rows " + fmt(totals.excludedTotal);
+    }
+    if (partner.length) {
+      text += " \u00b7 + " + fmt(partner.reduce(function (total, t) { return total + signed(t); }, 0)) +
+        " paid by " + partner[0].paidBy;
     }
     foot.appendChild(el("span", "", text));
   }
@@ -5352,8 +5410,12 @@
     var summary = document.getElementById("transaction-summary");
     clear(summary);
     summary.classList.remove("bank-summary");
-    var travelView = state.category === "Travel" || state.tripOnly || state.travelCountry !== "All";
-    summary.classList.toggle("travel-summary", travelView);
+    var travelSummary = state.category === "Travel" || state.tripOnly || state.travelCountry !== "All";
+    summary.classList.toggle("travel-summary", travelSummary);
+    // The other person's charges are listed, not spent: they stay out of the
+    // net cost and the breakdowns and get one line of their own.
+    var partnerInView = rows.filter(function (t) { return t.paidBy; });
+    rows = rows.filter(function (t) { return !t.paidBy; });
     var totals = window.FinanceGrouping.summarize(rows, EXCLUDED);
     if (!totals.count) {
       summary.appendChild(el("div", "transaction-summary-empty",
@@ -5369,6 +5431,12 @@
       totals.count + " cost transaction" + (totals.count === 1 ? "" : "s") +
       " · after refunds"));
     appendAverageComparison(headline, totals.netCost);
+    if (partnerInView.length) {
+      var partnerSum = partnerInView.reduce(function (total, t) { return total + signed(t); }, 0);
+      headline.appendChild(el("small", "partner-summary-line", "+ " + fmt(partnerSum) + " paid by " +
+        partnerInView[0].paidBy + " \u00b7 " + partnerInView.length + " charge" +
+        (partnerInView.length === 1 ? "" : "s") + ", not in your net cost"));
+    }
     summary.appendChild(headline);
 
     function appendBreakdown(title, totals, order, limit, kind) {
@@ -5419,7 +5487,7 @@
       summary.appendChild(section);
     }
 
-    if (travelView) {
+    if (travelSummary) {
       // Travel here is one person's spending, so an owner column would only
       // repeat the total; the country breakdown takes the room instead.
       renderTravelYearCountryBreakdown(summary, rows);
@@ -6123,6 +6191,9 @@
   }
 
   function renderGroupedLedger(body, rows, showYear) {
+    // Grouping retags whole groups by owner; the other person's rows are
+    // not editable here, so they sit out of the grouped view.
+    rows = rows.filter(function (t) { return !t.paidBy; });
     var groups = groupedPurchases(rows);
     var rowById = {};
     rows.forEach(function (t) { rowById[t.id] = t; });
@@ -6360,6 +6431,12 @@
       }
       // Phones hide the Remarks column; a saved remark still shows here.
       if (t.remark) tdDesc.appendChild(el("small", "row-remark-inline", t.remark));
+      if (t.paidBy) {
+        // Phones hide the Owner column, so who paid also reads here.
+        tr.classList.add("partner-ledger-row");
+        tdDesc.appendChild(el("small", "row-remark-inline paid-by-inline", "Paid by " + t.paidBy +
+          (t.ownerTag && t.ownerTag !== t.paidBy ? " \u00b7 tagged " + t.ownerTag + " in " + t.paidBy + "'s tracker" : "")));
+      }
       addMerchantLogo(tdDesc, t);
       tr.appendChild(tdDesc);
       var tdCat = el("td", "col-cat");
@@ -6381,10 +6458,18 @@
       }
       tr.appendChild(tdCat);
       var tdOwner = el("td", "col-owner");
-      tdOwner.appendChild(buildOwnerPicker([t.id], t.owner, transactionName(t)));
+      if (t.paidBy) {
+        var ownerChip = el("span", "partner-owner", t.paidBy);
+        ownerChip.title = "Paid on " + t.paidBy + "'s card" +
+          (t.ownerTag ? "; tagged " + t.ownerTag + " in " + t.paidBy + "'s tracker" : "");
+        tdOwner.appendChild(ownerChip);
+      } else {
+        tdOwner.appendChild(buildOwnerPicker([t.id], t.owner, transactionName(t)));
+      }
       tr.appendChild(tdOwner);
       var tdRemark = el("td", "col-remark");
-      tdRemark.appendChild(buildRemarkInput(t));
+      if (t.paidBy) tdRemark.appendChild(el("small", "row-remark-inline muted", "from " + t.paidBy + "'s tracker"));
+      else tdRemark.appendChild(buildRemarkInput(t));
       tr.appendChild(tdRemark);
       var credit = t.type !== "debit";
       tr.appendChild(el("td", "col-amt" + (credit ? " credit" : ""),
@@ -6395,7 +6480,8 @@
         ["Posted", t.postedDate || t.date || statementLabel(t.month)],
         ["Statement", statementLabel(t.month)],
         ["Category", t.category],
-        ["Owner", t.owner === "Untagged" ? "Unassigned" : t.owner],
+        ["Owner", t.paidBy ? t.paidBy + " (paid on " + t.paidBy + "'s card)" :
+          t.owner === "Untagged" ? "Unassigned" : t.owner],
         ["Remark", t.remark || "—"],
         ["Card", t.card || "UOB ONE CARD"],
         ["Type", t.type],
@@ -6428,7 +6514,9 @@
     }
     var foot = document.getElementById("ledger-foot");
     clear(foot);
-    var left = rows.length + " transaction" + (rows.length === 1 ? "" : "s");
+    var partnerShown = rows.filter(function (t) { return t.paidBy; }).length;
+    var left = (rows.length - partnerShown) + " transaction" + (rows.length - partnerShown === 1 ? "" : "s") +
+      (partnerShown ? " \u00b7 " + partnerShown + " paid by " + partnerRows()[0].paidBy : "");
     var shown = Math.min(rows.length, state.ledgerLimit);
     if (rows.length > shown) left += " (showing " + shown + ")";
     foot.appendChild(el("span", "", left));

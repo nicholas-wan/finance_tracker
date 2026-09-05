@@ -236,8 +236,13 @@ review-status filters.
   card then shows "+ S$X paid by Nic · trip cost S$Y" while its own figure,
   the split and the per-day cost stay your money. A **Paid by Nic** card and
   panel list every copied charge under its trip with Nic's own owner tag, and
-  charges no trip claimed sit under "Not tied to one of your trips". Re-run
-  the import after Nic's tracker rebuilds, then `python scripts/import_all.py`.
+  charges no trip claimed sit under "Not tied to one of your trips". In the
+  Transactions pane's travel views (the Travel category, a destination, or a
+  focused trip) Nic's charges join the ledger with **Nic** in the Owner
+  column, "Paid by Nic" under the description, a read-only drawer, and their
+  own line in the summary and footer, outside your net cost; the grouped view
+  leaves them out. Re-run the import after Nic's tracker rebuilds, then
+  `python scripts/import_all.py`.
 - Selecting the **Travel** category (or the Travel card on the Overview) adds a
   row of country/region pills with all-time counts, replaces the ordinary
   category and owner summary with a year-by-country/region breakdown, offers
