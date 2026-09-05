@@ -162,6 +162,13 @@ window.Insights = (function () {
   // the ground even when it was categorised as food or transport.
   var TRIP_GAP_DAYS = 5;
   var TRIP_ATTACH_DAYS = 90;
+  // A charge with no destination evidence at all (a Klook or KKday ticket,
+  // a platform's Singapore billing entity) is guessed onto the nearest
+  // booking-anchored trip it precedes by up to this many days, or falls
+  // inside. Guessed rows are marked so the dashboard can say so, and a
+  // saved destination always outranks the guess.
+  var TRIP_GUESS_DAYS = 90;
+  var TRIP_GUESS_AFTER_DAYS = 3;
   var MONTH_INDEX = {
     january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6,
     august: 7, september: 8, october: 9, november: 10, december: 11
@@ -333,11 +340,41 @@ window.Insights = (function () {
       merged.push(cluster);
     });
 
+    // The smart guess: a cluster with no destination evidence joins the
+    // nearest anchored trip whose window it precedes or overlaps.
+    var kept = [];
+    merged.forEach(function (cluster) {
+      if (!cluster.primary) {
+        var target = null, targetGap = Infinity;
+        var from = dayNumber(cluster.start), to = dayNumber(cluster.end);
+        merged.forEach(function (other) {
+          if (other === cluster || !other.anchoredBy || !other.primary) return;
+          var start = dayNumber(other.start), end = dayNumber(other.end);
+          if (from > end + TRIP_GUESS_AFTER_DAYS) return;
+          var gap = start > to ? start - to : 0;
+          if (gap > TRIP_GUESS_DAYS) return;
+          if (gap < targetGap) { target = other; targetGap = gap; }
+        });
+        if (target) {
+          cluster.items.forEach(function (item) { item.guessed = true; });
+          target.items = target.items.concat(cluster.items);
+          return;
+        }
+      }
+      kept.push(cluster);
+    });
+    merged = kept;
+
     var trips = merged.map(function (cluster) {
       var ids = {};
       var rows = [];
+      var guessedIds = [];
       cluster.items.forEach(function (item) {
-        if (!ids[item.transaction.id]) { ids[item.transaction.id] = true; rows.push(item.transaction); }
+        if (!ids[item.transaction.id]) {
+          ids[item.transaction.id] = true;
+          rows.push(item.transaction);
+          if (item.guessed) guessedIds.push(item.transaction.id);
+        }
       });
       // The trip's dates come from its bookings when it has any, so a visa or
       // a ticket bought weeks ahead joins the trip without stretching it.
@@ -400,6 +437,8 @@ window.Insights = (function () {
         partnerTotal: Math.round(partnerTotal * 100) / 100,
         partnerCount: partnerCount,
         paidBy: paidBy,
+        guessedIds: guessedIds,
+        guessedCount: guessedIds.length,
         total: Math.round(total * 100) / 100,
         perDay: Math.round(total / days * 100) / 100,
         split: split,
@@ -408,6 +447,17 @@ window.Insights = (function () {
     });
     trips.sort(function (a, b) { return b.start.localeCompare(a.start); });
     return trips;
+  }
+
+  // Row id -> the country a guessed row was placed under, for every row the
+  // trip builder guessed. Rows with their own evidence are absent.
+  function guessedDestinations(transactions) {
+    var map = {};
+    buildTrips(transactions).forEach(function (trip) {
+      if (trip.primary === "Unknown") return;
+      trip.guessedIds.forEach(function (id) { map[id] = trip.primary; });
+    });
+    return map;
   }
 
   function salaryStreamKey(description) {
@@ -1020,6 +1070,7 @@ window.Insights = (function () {
     parseTravelDate: parseTravelDate,
     travelWindow: travelWindow,
     buildTrips: buildTrips,
+    guessedDestinations: guessedDestinations,
     incomeForecast: incomeForecast
   };
 })();

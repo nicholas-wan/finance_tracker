@@ -1300,13 +1300,14 @@
     // Destination: the country or region a travel charge belongs to. Most
     // rows infer it; a platform charge whose descriptor says only
     // "Singapore" needs a hand, and the nearest trip is offered as a start.
-    var inferredDestination = window.Insights.travelCountry(
+    var inferredDestination = rowCountry(
       Object.assign({}, t, { destination: "", category: "Travel" }));
     var destination = document.createElement("select");
     var inferredOption = document.createElement("option");
     inferredOption.value = "";
     inferredOption.textContent = "Inferred \u00b7 " +
-      (inferredDestination === "Unknown" ? "unknown" : inferredDestination);
+      (inferredDestination === "Unknown" ? "unknown" : inferredDestination) +
+      (countryGuessed(t) ? " (guessed from the trip dates)" : "");
     destination.appendChild(inferredOption);
     var destinationNames = window.Insights.destinations();
     if (t.destination && destinationNames.indexOf(t.destination) === -1) {
@@ -1733,7 +1734,7 @@
       confirmedIds[t.id] = true;
     });
     (data && data.transactions || []).forEach(function (transaction) {
-      var country = window.Insights.travelCountry(transaction);
+      var country = rowCountry(transaction);
       if (!country) return;
       if (!(country in counts)) counts[country] = 0;
       if (confirmedIds[transaction.id]) counts[country] += 1;
@@ -1822,8 +1823,27 @@
         return trip.days >= 2 && trip.perDay > 0;
       }).map(function (trip) { return trip.perDay; }))
     };
+    // Rows the trip builder placed by date alone, keyed by id, so every
+    // country reading on the dashboard agrees with the trip cards.
+    value.guesses = {};
+    all.forEach(function (trip) {
+      if (trip.primary === "Unknown") return;
+      trip.guessedIds.forEach(function (id) { value.guesses[id] = trip.primary; });
+    });
     tripCatalogueCache = { source: data.transactions, value: value };
     return value;
+  }
+
+  // The destination of a row as the dashboard shows it: its own evidence
+  // first (a saved destination, the descriptor, the currency), then the trip
+  // it was guessed onto by date, then Unknown.
+  function rowCountry(t) {
+    var country = window.Insights.travelCountry(t);
+    if (!country || country !== "Unknown" || !data) return country;
+    return tripCatalogue().guesses[t.id] || "Unknown";
+  }
+  function countryGuessed(t) {
+    return window.Insights.travelCountry(t) === "Unknown" && Boolean(tripCatalogue().guesses[t.id]);
   }
 
   // Charges the other tracker paid for shared travel, each stamped with who
@@ -1993,6 +2013,7 @@
       }
       card.appendChild(el("p", "delta sub", trip.count + " confirmed charge" + (trip.count === 1 ? "" : "s") +
         (trip.bookings ? " \u00b7 " + trip.bookings + " booking" + (trip.bookings === 1 ? "" : "s") : "") +
+        (trip.guessedCount ? " \u00b7 " + trip.guessedCount + " placed by date" : "") +
         (trip.rowCount > trip.count ? " \u00b7 " + (trip.rowCount - trip.count) + " refund" +
           (trip.rowCount - trip.count === 1 ? "" : "s") + " or reversed" : "")));
       makeActionable(card, "Show the " + trip.rowCount + " rows for " + label + ", " + tripDateRange(trip),
@@ -5103,7 +5124,7 @@
     if (state.owner !== "All" && t.owner !== state.owner) return false;
     if (state.category !== "All" && t.category !== state.category) return false;
     if (state.travelCountry !== "All" &&
-        window.Insights.travelCountry(t) !== state.travelCountry) return false;
+        rowCountry(t) !== state.travelCountry) return false;
     if (state.reviewMode === "lady-unconfirmed" &&
         ((t.card || "").toUpperCase().indexOf("LADY") === -1 || SETTLED[t.ownerSource])) return false;
     if (state.reviewMode === "split-by-rule" &&
@@ -5119,7 +5140,7 @@
     if (state.reviewMode === "suspicious" &&
         (!t.risk || t.risk.recognized || t.risk.primary === false)) return false;
     if (q && (transactionName(t) + " " + t.description + " " +
-      t.category + " " + window.Insights.travelCountry(t) + " " + t.owner + " " +
+      t.category + " " + rowCountry(t) + " " + t.owner + " " +
       (t.card || "") + " " + (t.foreign || "") + " " +
       (t.remark || "")).toLowerCase().indexOf(q) === -1) return false;
     return true;
@@ -5259,7 +5280,7 @@
     var byYear = {};
     travelRows.forEach(function (transaction) {
       var year = String(transaction.date || transaction.month || "Unknown").slice(0, 4);
-      var country = window.Insights.travelCountry(transaction) || "Unknown";
+      var country = rowCountry(transaction) || "Unknown";
       if (!byYear[year]) byYear[year] = {};
       byYear[year][country] = roundMoney((byYear[year][country] || 0) + signed(transaction));
     });
@@ -5837,14 +5858,14 @@
       // so a click on a year lands on exactly this figure.
       var year = String(t.month).slice(0, 4);
       byYear[year] = roundMoney((byYear[year] || 0) + signed(t));
-      var country = window.Insights.travelCountry(t) || "Unknown";
+      var country = rowCountry(t) || "Unknown";
       byCountry[country] = roundMoney((byCountry[country] || 0) + signed(t));
     });
     // Amounts net every refund; counts are of confirmed charges only, so a
     // cancelled booking and its refund add nothing to either.
     var confirmed = window.Insights.confirmedTravelCharges(data.transactions);
     confirmed.forEach(function (t) {
-      var country = window.Insights.travelCountry(t) || "Unknown";
+      var country = rowCountry(t) || "Unknown";
       countryRows[country] = (countryRows[country] || 0) + 1;
     });
     var allTime = Object.keys(byYear).reduce(function (total, year) { return total + byYear[year]; }, 0);
@@ -6086,7 +6107,10 @@
         var line = el("div", "partner-row" + (hidden[row.id] ? " reversed" : ""));
         line.appendChild(el("span", "partner-date", dateLabel(row.date)));
         var desc = el("span", "partner-desc", row.displayName || row.description);
-        var tag = [tagLabel(row), row.foreign ? row.foreign : "", hidden[row.id] ? "reversed by a refund" : ""]
+        var guessed = group.trip && group.trip.guessedIds.indexOf(row.id) !== -1;
+        var tag = [tagLabel(row), row.foreign ? row.foreign : "",
+          guessed ? "placed on this trip by date" : "",
+          hidden[row.id] ? "reversed by a refund" : ""]
           .filter(Boolean).join(" \u00b7 ");
         if (tag) desc.appendChild(el("small", "", tag));
         line.appendChild(desc);
@@ -6133,7 +6157,7 @@
       // dropping the label the individual rows carry.
       var destinations = {};
       (group.ids || []).forEach(function (id) {
-        var country = rowById[id] ? window.Insights.travelCountry(rowById[id]) : "";
+        var country = rowById[id] ? rowCountry(rowById[id]) : "";
         if (country && country !== "Unknown") destinations[country] = true;
       });
       var names = Object.keys(destinations).sort();
@@ -6340,14 +6364,18 @@
       tr.appendChild(tdDesc);
       var tdCat = el("td", "col-cat");
       tdCat.appendChild(el("span", "cat-pill " + catClass(t.category), t.category));
-      var rowCountry = window.Insights.travelCountry(t);
+      var rowDestination = rowCountry(t);
       // "Unknown" under every platform charge is noise; the details row and
       // the breakdown still say so where it matters.
-      if (rowCountry && rowCountry !== "Unknown") {
-        var inlineCountry = el("small", "travel-country-inline");
-        inlineCountry.appendChild(countryLabel(rowCountry, "sm"));
+      if (rowDestination && rowDestination !== "Unknown") {
+        var inlineCountry = el("small", "travel-country-inline" + (countryGuessed(t) ? " guessed" : ""));
+        inlineCountry.appendChild(countryLabel(rowDestination, "sm"));
+        if (countryGuessed(t)) {
+          inlineCountry.appendChild(document.createTextNode(" \u00b7 guess"));
+          inlineCountry.title = "Placed on this trip by date; set a destination in the drawer to confirm or change it.";
+        }
         tdCat.appendChild(inlineCountry);
-      } else if (rowCountry === "Unknown") {
+      } else if (rowDestination === "Unknown") {
         // An affordance rather than a label: the drawer can set it.
         tdCat.appendChild(el("small", "travel-country-inline muted", "set destination"));
       }
@@ -6379,7 +6407,10 @@
         ["Source status", t.provenance && t.provenance.verified ? "verified" : "needs review"],
         ["Transaction ID", t.id]
       ];
-      if (rowCountry) details.splice(4, 0, ["Country / region", rowCountry]);
+      if (rowDestination) {
+        details.splice(4, 0, ["Country / region",
+          rowDestination + (countryGuessed(t) ? " (guessed from the trip dates)" : "")]);
+      }
       if (t.risk) {
         details.splice(8, 0, [
           "Transaction check",

@@ -257,7 +257,12 @@ review-status filters.
   location; `Singapore` in a platform's billing descriptor is not treated as
   the destination. A foreign-currency charge in a single-country currency
   (CNY, MYR, HKD, JPY and so on) is read as that country; USD and EUR are not.
-  Any travel charge can be given a destination by hand in its drawer, which
+  A travel charge with no evidence at all is placed by date: it joins the
+  nearest booking-anchored trip it precedes by up to 90 days or falls inside,
+  counts under that trip's country everywhere, and is marked "guess" in the
+  ledger, "placed by date" on the trip card and in the drawer, where a saved
+  destination overrules it. Any travel charge can be given a destination by
+  hand in its drawer, which
   offers the nearest travel charge within a week as a starting point; the
   choice is saved as `destination` in `manual/transaction_overrides.json`, the
   build publishes it on the row and the validator checks it was applied.

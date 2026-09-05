@@ -1260,6 +1260,13 @@ test("builds trips from booking travel dates and gathers the spend around them",
       description: "SINGAPOREAIR 1234567890" }),
     transaction({ id: "nic_dinner", paidBy: "Nic", date: "2026-03-19", month: "2026-03", amount: 15,
       category: "Food & dining", description: "SHANGHAI DUMPLINGS", foreign: "CNY 70.00" }),
+    // Tickets with no destination evidence, bought six weeks before the trip
+    // and two hundred days before it: the first is guessed onto the trip and
+    // counted as China, the second is left alone.
+    travel({ id: "klook", date: "2026-02-10", month: "2026-02", amount: 90,
+      description: "Klook Travel Singapore" }),
+    travel({ id: "kkday", date: "2025-08-28", month: "2025-08", amount: 60,
+      description: "KKDAY SINGAPORE" }),
     // A separate journey later in the year.
     travel({ id: "tokyo", date: "2026-06-01", month: "2026-06", amount: 80,
       description: "TOKYO DISNEY RESORT" }),
@@ -1267,7 +1274,10 @@ test("builds trips from booking travel dates and gathers the spend around them",
       description: "NARITA EXPRESS" })
   ];
   var trips = insights.buildTrips(rows);
-  assert.equal(trips.length, 2);
+  assert.equal(trips.length, 3);
+  assert.equal(trips[2].primary, "Unknown");
+  assert.deepEqual(Array.from(trips[2].ids), ["kkday"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(insights.guessedDestinations(rows))), { klook: "China" });
   assert.equal(trips[0].primary, "Japan");
   assert.equal(trips[0].start, "2026-06-01");
   assert.equal(trips[0].end, "2026-06-03");
@@ -1281,20 +1291,22 @@ test("builds trips from booking travel dates and gathers the spend around them",
   assert.equal(china.end, "2026-03-23");
   assert.equal(china.days, 9);
   assert.deepEqual(Array.from(china.ids).sort(),
-    ["cancelled", "dinner", "flight", "hotel", "metro", "nic_dinner", "nic_flight", "refund", "visa"]);
-  assert.equal(china.rowCount, 7);
-  assert.equal(china.count, 5);
+    ["cancelled", "dinner", "flight", "hotel", "klook", "metro", "nic_dinner", "nic_flight", "refund", "visa"]);
+  assert.deepEqual(Array.from(china.guessedIds), ["klook"]);
+  assert.equal(china.rowCount, 8);
+  assert.equal(china.count, 6);
+  assert.equal(china.total, 1450);
   assert.equal(china.bookings, 2);
   assert.equal(china.partnerTotal, 515);
   assert.equal(china.partnerCount, 2);
   assert.equal(china.paidBy, "Nic");
   assert.equal(insights.confirmedTravelCharges(rows).map(function (t) { return t.id; }).sort().join(","),
-    "flight,hotel,metro,narita,tokyo,visa");
+    "flight,hotel,kkday,klook,metro,narita,tokyo,visa");
   assert.equal(china.anchored, true);
-  assert.equal(china.total, 1360);
-  assert.equal(china.perDay, Math.round(1360 / 9 * 100) / 100);
+  assert.equal(china.total, 1450);
+  assert.equal(china.perDay, Math.round(1450 / 9 * 100) / 100);
   assert.deepEqual(JSON.parse(JSON.stringify(china.split)), {
-    "Flights": 1000, "Hotels": 300, "Tickets & transfers": 0, "On the ground": 60
+    "Flights": 1000, "Hotels": 300, "Tickets & transfers": 0, "On the ground": 150
   });
 });
 

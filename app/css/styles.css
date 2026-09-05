@@ -844,6 +844,7 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .flag-sm { width: 15px; height: 10px; margin-right: 5px; }
 .travel-country-inline .flag { vertical-align: -1px; }
 .travel-country-inline.muted { color: var(--text-3); font-style: italic; }
+.travel-country-inline.guessed { color: var(--text-3); }
 .travel-unknown-hint { margin: 10px 0 0; color: var(--text-2); font-size: var(--fs-caption); line-height: 1.45; }
 .drawer-suggest {
   align-self: flex-start; margin-top: 6px; padding: 4px 11px; border-radius: 999px;
