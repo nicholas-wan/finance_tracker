@@ -47,3 +47,6 @@ Drive pages stall script injection after the first interaction. `navigate` +
 `wait` + `screenshot` works; a screenshot that times out usually succeeds on
 one retry. Search URLs (`/drive/search?q=...`) are the reliable way to find a
 file.
+
+- **Levoit filters**: owner confirmed 6 Sep 2026 that no servicing reminder is wanted. Maintenance entry archived; preserve filter purchase history. Never treat filter delivery as servicing.
+- **Aircon servicing**: last confirmed visit 10 May 2025. No confirmed repeat interval or next booking; do not infer an overdue date from the former assumed six-month interval.

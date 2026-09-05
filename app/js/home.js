@@ -97,8 +97,10 @@
     var expired=assets.filter(function(r){return warrantyTone(r)==='expired';}).length;
     var missing=assets.filter(function(r){return warrantyTone(r)==='missing';}).length;
     var notTracked=assets.filter(function(r){return warrantyTone(r)==='not_applicable';}).length;
+    var unconfirmed=assets.filter(function(r){return warrantyTone(r)==='unconfirmed';}).length;
+    var noActiveCover=expired+missing+notTracked+unconfirmed;
     var active=infoFilter==='needs'?'needs':warrantyFilter!=='all'?warrantyFilter:'all';
-    return '<nav class="home-overview" aria-label="Collection overview">'+[['all','All items',assets.length],['needs','Needs info',needs],['covered','Covered',covered],['expired','Expired',expired],['missing','No warranty details',missing],['not_applicable','Not tracked',notTracked]].map(function(q){
+    return '<nav class="home-overview" aria-label="Collection overview">'+[['all','All items',assets.length],['needs','Needs info',needs],['covered','Covered',covered],['inactive','No active cover',noActiveCover]].map(function(q){
       return '<button data-quick="'+q[0]+'" aria-pressed="'+(active===q[0])+'"><i class="home-dot '+q[0]+'" aria-hidden="true"></i><span>'+q[1]+'</span><strong>'+q[2]+'</strong></button>';
     }).join('')+'</nav>';
   }
@@ -140,7 +142,7 @@
   }
   function render() {
     var active=store.records.filter(function(r){return r.status!=='Archived';}), assets=active.filter(function(r){return r.kind==='appliance';});
-    var known=assets.filter(function(r){return r.cost!=null;}), todo=actions(active,today()), due=todo.filter(function(a){return a.date&&a.record.kind===section;}), checks=active.filter(needsInformation);
+    var known=assets.filter(function(r){return r.cost!=null;}), todo=actions(active,today()), due=todo.filter(function(a){return a.date&&a.record.kind===section&&!(section==='appliance'&&a.label==='Warranty ends');}), checks=active.filter(needsInformation);
     var infoRows=active.filter(function(r){return r.kind===section;}), needsInfo=infoRows.filter(needsInformation).length, completeInfo=infoRows.length-needsInfo;
     root.innerHTML='<header class="home-heading"><div><h2>Your home</h2><p>'+assets.length+' items · Purchases, warranties & care</p></div><div class="home-total"><span>Recorded home purchases</span><strong>'+money(known.reduce(function(n,r){return n+r.cost;},0))+'</strong><small>'+known.length+' priced · '+(assets.length-known.length)+' unpriced</small></div></header>'+
       '<div class="home-sections" role="group" aria-label="Home sections">'+Object.keys(titles).map(function(k){return '<button data-section="'+k+'" aria-pressed="'+(k===section)+'">'+({appliance:'Collection',insurance:'Insurance',mortgage:'Home loan',maintenance:'Care & maintenance'}[k])+'</button>';}).join('')+'</div>'+
@@ -158,38 +160,63 @@
     if(root.querySelector('#home-sort'))root.querySelector('#home-sort').onchange=function(e){setSort(e.target.value,false);renderRegister();};
     root.querySelectorAll('[data-view]').forEach(function(b){b.onclick=function(){view=b.dataset.view;try{localStorage.setItem('home-view',view);}catch(err){}root.querySelectorAll('[data-view]').forEach(function(n){n.setAttribute('aria-pressed',String(n===b));});renderRegister();};});
     root.querySelector('#home-archived').onchange=function(e){showArchived=e.target.checked;renderRegister();};
-    root.querySelectorAll('[data-quick]').forEach(function(b){b.onclick=function(){var v=b.dataset.quick;if(v==='all'){query='';category='All';room='All';showArchived=false;}infoFilter=v==='needs'?'needs':'all';warrantyFilter=['covered','expired','missing','not_applicable'].includes(v)?v:'all';render();};});
+    root.querySelectorAll('[data-quick]').forEach(function(b){b.onclick=function(){var v=b.dataset.quick;if(v==='all'){query='';category='All';room='All';showArchived=false;}infoFilter=v==='needs'?'needs':'all';warrantyFilter=['covered','inactive'].includes(v)?v:'all';render();};});
     if(root.querySelector('#home-add'))root.querySelector('#home-add').onclick=function(){openRecord({id:'home_'+crypto.randomUUID(),kind:section,name:'',status:'Needs checking',category:section==='appliance'&&category!=='All'?category:''});};
     root.querySelector('#home-refresh').onclick=load;
     root.querySelectorAll('[data-open]').forEach(bindOpen);
   }
   var homePhotos={
+    home_fwd_fire:{files:['fwd-logo-full.svg'],label:'FWD Singapore',url:'https://www.fwd.com.sg/',kind:'logo'},
+    home_fwd_home:{files:['fwd-logo-full.svg'],label:'FWD Singapore',url:'https://www.fwd.com.sg/',kind:'logo'},
+    home_water_dispenser_filter_package:{files:['happie-logo-full.avif'],label:'Happie Singapore',url:'https://happie.sg/',kind:'logo'},
+    home_oneisall_feeder:{files:['oneisall-feeder-full.jpg'],label:'oneisall 5L Wi-Fi feeder (Amazon)',url:'https://www.amazon.sg/dp/B0C5X4N132'},
+    home_shark_iq_plus:{files:['sharkninja-logo-full.svg'],kind:'logo',label:'SharkNinja',url:'https://sharkninja.sg/'},
+    home_tapo_c211_2024:{files:['tapo-logo-full.svg'],kind:'logo',label:'Tapo',url:'https://www.tapo.com/sg/'},
+    home_tapo_c211_2025:{files:['tapo-logo-full.svg'],kind:'logo',label:'Tapo',url:'https://www.tapo.com/sg/'},
+    "home_led":{"files":["azora-logo-full.png"],"label":"Azora (supplier)","url":"https://azora.com.sg/","kind":"logo","dark":false},
+    "home_settee-light":{"files":["azora-logo-full.png"],"label":"Azora (supplier)","url":"https://azora.com.sg/","kind":"logo","dark":false},
+    "home_curtain":{"files":["azora-logo-full.png"],"label":"Azora (supplier)","url":"https://azora.com.sg/","kind":"logo","dark":false},
+    "home_kitchen":{"files":["azora-logo-full.png"],"label":"Azora (supplier)","url":"https://azora.com.sg/","kind":"logo","dark":false},
+    "home_kinetic":{"files":["vlux-logo.webp"],"label":"VLUX Lighting (supplier)","url":"https://www.vlux.com.sg/","kind":"logo","dark":true},
+    "home_lights":{"files":["vlux-logo.webp"],"label":"VLUX Lighting (supplier)","url":"https://www.vlux.com.sg/","kind":"logo","dark":true},
+    "home_furniture":{"files":["furniture-boutique-logo.webp"],"label":"The Furniture Boutique (supplier)","url":"https://bestlah.sg/shopping/best-furniture-stores/","kind":"logo","dark":true},
+    "home_dining":{"files":["furniture-boutique-logo.webp"],"label":"The Furniture Boutique (supplier)","url":"https://bestlah.sg/shopping/best-furniture-stores/","kind":"logo","dark":true},
+    "home_irusu":{"files":["irusu-logo.svg"],"label":"Irusu","url":"https://irusu.sg/","kind":"logo","dark":false},
+    "home_zenith":{"files":["zenith-logo.webp"],"label":"Zenith Window Films","url":"https://zenithfilms.com.sg/","kind":"logo","dark":true},
+    "home_bedding":{"files":["hooga-logo.webp"],"label":"HOOGA","url":"https://findinghooga.com.sg/","kind":"logo","dark":false},
+    "home_fortytwo":{"files":["fortytwo-logo.webp"],"label":"FortyTwo","url":"https://www.fortytwo.sg/","kind":"logo","dark":false},
+    "home_main_door_mesh":{"files":["miss-mosquito-logo.webp"],"label":"Miss Mosquito Net","url":"https://www.missmosquitonet.com/","kind":"logo","dark":false},
+    "home_cat_mesh":{"files":["magic-cat-mesh-logo.webp"],"label":"Magic Cat Mesh","url":"https://magiccatmesh.com/","kind":"logo","dark":false},
+    "home_pawswing":{"files":["pawswing-logo-full.png"],"label":"PawSwing","url":"https://paw-swing.com/","kind":"logo","dark":false},
+    "home_singlife":{"files":["singlife-logo.webp"],"label":"Singlife","url":"https://singlife.com/en","kind":"logo","dark":false},
+    "home_aircon_service":{"files":["luce-logo.svg"],"label":"Luce","url":"https://www.luce.sg/","kind":"logo","dark":true},
+    "home_broadband_mesh":{"files":["myrepublic-logo.webp"],"label":"MyRepublic","url":"https://myrepublic.net/sg/","kind":"logo","dark":false},
     home_washerdryer:{files:['bosch-washer','bosch-dryer'],label:'Bosch WGG254A0SG washer and WQG24200SG dryer',url:'https://www.bosch-home.com.sg/en/product/washersanddryers/tumbledryers/heatpumpdryers/WQG24200SG'},
     home_dishwasher:{files:['fotile.svg'],label:'Fotile BD2B-G1',url:'https://fotile.com.bd/product/fotile-bd2b-g1-built-in-dishwasher/'},
-    home_water_dispenser:{files:['happie-joy.svg'],label:'Happie Joy in silver',url:'https://happie.sg/products/joy-water-purifier/'},
+    home_water_dispenser:{files:['happie-joy-silver-full.jpg'],label:'Happie Joy in silver (Jarrons & Co.)',url:'https://jarrons.com.sg/products/happie-joy-water-purifier-white-silver'},
     home_aircon:{files:['daikin.svg'],label:'Daikin CTKM25VVMG indoor unit',url:'https://www.daikin-bim-library.daikin.com/DKG-BIMDOWNLOAD/en/item/detail?categoryID=1400000&id=20430000&parentCategoryId=1400000&type=category'},
     home_hobhood:{files:['rinnai.svg'],label:'Rinnai RB-7032H CFB hob',url:'https://www.rinnai.sg/product-page/rb-7032h-cfb'},
     home_doorlock:{files:['yale'],label:'Yale YDR50GA gate lock',url:'https://www.yalehome.com/sg/en/products/smart-door-locks/metal-gate-smart-locks/ydr50ga'},
     home_vacuum:{files:['dreame-base','dreame-robot'],label:'Dreame X40 Master',url:'https://www.dreametech.com/products/x40-master-robot-vacuum'},
     home_fridge:{files:['hitachi'],label:'Hitachi R-VG695P9MSX',url:'https://www.hitachi-homeappliances.com/sg/promo/oneforeveryone/'},
-    home_fittings:{files:['champs-sylphy'],label:'Champs Sylphy instant water heater from the bathroom fittings bundle',url:'https://champs.com.sg/product/instant-water-heater-sylphy/'},
-    home_bed:{files:['woosa-mysa'],label:'Woosa Mysa mattress from the split-king bed bundle',url:'https://woosasleep.co/products/mysa'},
-    home_fans:{files:['bestar-star5'],label:'Bestar Star 5 ceiling fan from the fan bundle',url:'https://intertech-hardware.com/products/bestar-star-5'},
+    home_fittings:{files:['champs-sylphy-full.jpg'],label:'Champs Sylphy instant water heater from the bathroom fittings bundle',url:'https://champs.com.sg/product/instant-water-heater-sylphy/'},
+    home_bed:{files:['woosa-logo-full.svg'],kind:'logo',dark:true,label:'Woosa',url:'https://woosasleep.co/products/mysa'},
+    home_fans:{files:['bestar-star5-full.jpg'],label:'Bestar Star 5 ceiling fan from the fan bundle',url:'https://intertech-hardware.com/products/bestar-star-5'},
     home_tv:{files:['sony-x90l'],label:'Sony BRAVIA XR-65X90L',url:'https://electronics.sony.com/tv-video/televisions/all-tvs/p/xr65x90l'},
     home_tv55:{files:['sony-x90l'],label:'Sony BRAVIA XR-55X90L',url:'https://electronics.sony.com/tv-video/televisions/all-tvs/p/xr55x90l'},
-    home_airfryer:{files:['russell-taylors-z7'],label:'Russell Taylors Z7 6.5L air fryer',url:'https://shopee.sg/Russell-Taylors-3D-Visible-Window-Digital-Air-Fryer-Extra-Large-(6.5L)-Z7-i.234952174.24430709673'},
+    home_airfryer:{files:['russell-taylors-logo-full.svg'],kind:'logo',label:'Russell Taylors',url:'https://shopee.sg/Russell-Taylors-3D-Visible-Window-Digital-Air-Fryer-Extra-Large-(6.5L)-Z7-i.234952174.24430709673'},
     home_microwave:{files:['cornell-microwave'],label:'Cornell 25L microwave',url:'https://www.harveynorman.com.sg/home-appliances/kitchen-appliances-en/microwave-ovens-en/cornell-25l-microwave-oven-black-cmos25bk.html'},
     home_switches:{files:['legrand-galion'],label:'Legrand Galion dark silver switch',url:'https://www.legrand.com/ecatalogue/en/catalog/products/galion-2-gangs-1-way-switch-16ax-dark-silver-282402-c3?category_id=43406'},
-    home_omnidesk:{files:['omnidesk-classic'],label:'Omnidesk Classic Wildwood desk',url:'https://theomnidesk.com/products/classic-wildwood'},
-    home_levoit_core200s:{files:['levoit-core200s'],label:'Levoit Core 200S',url:'https://levoit.com/products/core-200s-smart-true-hepa-air-purifier'},
-    home_levoit_vital100s_1:{files:['levoit-vital100s'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
-    home_levoit_vital100s_2:{files:['levoit-vital100s'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
-    home_neakasa_m1:{files:['neakasa-m1'],label:'Neakasa M1',url:'https://neakasa.com/products/neakasa-m1-cat-litter-box'},
-    home_ventilation:{files:['kdk-15wud'],label:'KDK 15WUD ventilating fan',url:'https://www.kdk.sg/products/ventilating-fan-15wud'},
+    home_omnidesk:{files:['omnidesk-classic-full.jpg'],label:'Omnidesk Classic Wildwood desk',url:'https://theomnidesk.com/products/classic-wildwood'},
+    home_levoit_core200s:{files:['levoit-core200s-full.png'],label:'Levoit Core 200S',url:'https://levoit.com/products/core-200s-smart-true-hepa-air-purifier'},
+    home_levoit_vital100s_1:{files:['levoit-vital100s-full.jpg'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
+    home_levoit_vital100s_2:{files:['levoit-vital100s-full.jpg'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
+    home_neakasa_m1:{files:['neakasa-logo-full.png'],kind:'logo',label:'Neakasa M1',url:'https://neakasa.com/products/neakasa-m1-cat-litter-box'},
+    home_ventilation:{files:['kdk-logo-full.png'],kind:'logo',dark:false,label:'KDK',url:'https://www.kdk.sg/products/ventilating-fan-15wud'},
     'home_door-stopper':{files:['smartdoor-slidearm'],label:'Slide arm door stopper',url:'https://www.smart-home.com.sg/slidearm'},
-    home_switchbot_hub:{files:['switchbot-hub-mini'],label:'SwitchBot Hub Mini',url:'https://www.switch-bot.com/products/switchbot-hub-mini'},
+    home_switchbot_hub:{files:['switchbot-logo-full.svg'],kind:'logo',dark:false,label:'SwitchBot',url:'https://www.switch-bot.com/products/switchbot-hub-mini'},
     home_spot_cleaner:{files:['russell-taylors-sc10'],label:'Russell Taylors SC10 spot cleaner',url:'https://russelltaylors.sg/products/russell-taylors-portable-spot-cleaner-fabric-sofa-carpet-upholstery-cleaner-sc10'},
-    home_monitor_arm:{files:['prism-arc-lite'],label:'PRISM+ Arc Lite dual monitor arm',url:'https://prismplus.sg/products/arc-lite'},
+    home_monitor_arm:{files:['prism-logo-full.png'],kind:'logo',dark:true,label:'PRISM+',url:'https://prismplus.sg/products/arc-lite'},
     home_blender:{files:['xiaomi-blender'],label:'Xiaomi Blender 600W 1.75L',url:'https://www.mi.com/global/product/xiaomi-blender/'}
   };
   // These shapes follow the item descriptions in the receipts, not just their category.
@@ -241,7 +268,7 @@
   }
   function thumbnail(r, large) {
     var photo=homePhotos[r.id]||(r.linkedRecord&&homePhotos[r.linkedRecord]);
-    return '<span class="home-thumb '+(photo&&photo.files.length>1?'home-thumb-pair':'')+(large?' home-thumb-lg':'')+'" aria-hidden="true">'+(photo?photo.files.map(function(f){return '<img src="assets/home/'+f+(f.includes('.')?'':'.webp')+'" alt="" width="48" height="48" loading="lazy" decoding="async">';}).join(''):itemIcon(r))+'</span>';
+    return '<span class="home-thumb '+(photo&&photo.files.length>1?'home-thumb-pair':'')+(photo&&photo.files.some(function(f){return f.includes('-full.');})?' home-thumb-intact':'')+(photo&&photo.kind==='logo'?' home-thumb-logo'+(photo.dark?' home-thumb-logo-dark':''):'')+(large?' home-thumb-lg':'')+'" aria-hidden="true">'+(photo?photo.files.map(function(f){return '<img src="assets/home/'+f+(f.includes('.')?'':'.webp')+'" alt="" width="48" height="48" loading="lazy" decoding="async">';}).join(''):itemIcon(r))+'</span>';
   }
   var viewIcons={list:'<path d="M4 6h16M4 12h16M4 18h16"/>',grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',coverage:'<path d="M3 6h9M3 12h14M3 18h6"/><circle cx="18" cy="6" r="1"/><circle cx="20" cy="12" r="1"/><circle cx="12" cy="18" r="1"/>'};
   function viewToggle() {
@@ -287,14 +314,29 @@
   function primaryChip(r) {
     var tone=warrantyTone(r), end=r.expires, now=today();
     var label=tone==='covered'?(end&&days(end,now)<=90?'Expiring':'Covered'):tone==='expired'?'Expired':tone==='unconfirmed'?'Unverified':tone==='not_applicable'?'Not tracked':'No warranty';
+    if(tone==='covered'&&!end&&r.warrantyLabel)label=r.warrantyLabel;
     var cls=label==='Expiring'?'expiring':tone.replace('_','-');
     var unverified=tone==='covered'&&r.status!=='Verified'&&r.warrantyStatus!=='covered';
     return '<span class="home-chip '+cls+(unverified?' dashed':'')+'" title="'+esc(r.warrantyLabel||r.warrantyTerms||'')+'">'+label+'</span>';
   }
   function coverText(r) {
+    if(r.warrantyStatus==='covered'&&!r.expires){
+      if(r.secondaryExpiry)return (r.secondaryWarranty||'Additional cover')+(warrantyState(r.secondaryExpiry,today())==='expired'?' expired':' ends '+date(r.secondaryExpiry));
+      return '';
+    }
     var end=coverEnd(r);
     if(end)return (warrantyState(end,today())==='expired'?'Ended ':'Ends ')+date(end);
     return r.warrantyLabel||(r.warrantyTerms?'End date unknown':'Receipt or terms needed');
+  }
+  function listWarranty(r) {
+    var tone = warrantyTone(r);
+    if (tone === 'expired' || tone === 'not_applicable') {
+      var end = [r.expires, r.secondaryExpiry].filter(Boolean).sort().pop();
+      var month = end ? new Date(end + 'T00:00:00Z').toLocaleDateString('en-GB', { month: 'short', year: 'numeric', timeZone: 'UTC' }) : '';
+      var label = tone === 'expired' ? 'Expired' + (month ? ' · ' + month : '') : 'Not tracked';
+      return '<span class="home-warranty-quiet" title="' + esc(r.warrantyLabel || r.warrantyTerms || label) + '">' + esc(label) + '</span>';
+    }
+    return primaryChip(r) + '<small>' + esc(coverText(r)) + '</small>';
   }
   function itemCell(r) {
     var sub=[r.room,r.brand,r.model].filter(Boolean).join(' · ')||r.provider||'';
@@ -309,7 +351,7 @@
     var head=cols.map(function(c){var active=sortBy===c[0];return '<th class="'+(c[2]||'')+'" aria-sort="'+(active?(sortDir==='asc'?'ascending':'descending'):'none')+'"><button type="button" data-sort="'+c[0]+'">'+c[1]+(active?icon(sortDir==='asc'?'up':'down','home-sort-icon'):'')+'</button></th>';}).join('');
     function row(r){
       var reasons=attention(r), complete=!needsInformation(r);
-      return '<tr data-open="'+esc(r.id)+'"><td>'+itemButton(r)+'</td><td class="num">'+(r.cost==null?'<span class="home-muted">'+(r.costBasis==='Gift'?'Gift':'—')+'</span>':money(r.cost))+'</td><td>'+primaryChip(r)+'<small>'+esc(coverText(r))+'</small></td><td>'+(complete?'<span class="home-todo done">'+icon('check')+'Complete</span>':'<span class="home-todo" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+(reasons.length>1?' +'+(reasons.length-1):'')+'</span>')+'</td></tr>';
+      return '<tr data-open="'+esc(r.id)+'"><td>'+itemButton(r)+'</td><td class="num">'+(r.cost==null?'<span class="home-muted">'+(r.costBasis==='Gift'?'Gift':'—')+'</span>':money(r.cost))+'</td><td>'+listWarranty(r)+'</td><td>'+(complete?'':'<span class="home-todo" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+(reasons.length>1?' +'+(reasons.length-1):'')+'</span>')+'</td></tr>';
     }
     var body=groups(rows).map(function(g){
       var total=g.items.reduce(function(n,r){return n+(r.cost||0);},0);
@@ -415,15 +457,15 @@
     return [['Per replacement',money(r.cost)+(r.cost!=null&&items.length>1?'<small>'+items.length+'-visit package '+money(r.cost*items.length)+'</small>':'')],['Next replacement',date(next)+(next&&days(next,today())<0?'<small>Overdue</small>':'')],['Completed',done+' of '+items.length]];
   }
   function renderRegister() {
-    var rows = store.records.filter(function(r){var incomplete=needsInformation(r),infoMatches=infoFilter==='all'||(infoFilter==='needs'&&incomplete)||(infoFilter==='complete'&&!incomplete);var warrantyMatches=section!=='appliance'||warrantyFilter==='all'||warrantyTone(r)===warrantyFilter;return r.kind===section&&(section!=='appliance'||category==='All'||r.category===category)&&(section!=='appliance'||room==='All'||zoneOf(r)===room)&&infoMatches&&warrantyMatches&&(showArchived||r.status!=='Archived')&&JSON.stringify(r).toLowerCase().includes(query.toLowerCase());});
+    var rows = store.records.filter(function(r){var incomplete=needsInformation(r),infoMatches=infoFilter==='all'||(infoFilter==='needs'&&incomplete)||(infoFilter==='complete'&&!incomplete);var tone=warrantyTone(r),warrantyMatches=section!=='appliance'||warrantyFilter==='all'||tone===warrantyFilter||(warrantyFilter==='inactive'&&['expired','unconfirmed','missing','not_applicable'].includes(tone));return r.kind===section&&(section!=='appliance'||category==='All'||r.category===category)&&(section!=='appliance'||room==='All'||zoneOf(r)===room)&&infoMatches&&warrantyMatches&&(showArchived||r.status!=='Archived')&&JSON.stringify(r).toLowerCase().includes(query.toLowerCase());});
     var el=root.querySelector('#home-register');
     if (!rows.length) { bindScrollSpy(); var filtered=query||infoFilter!=='all'||(section==='appliance'&&(warrantyFilter!=='all'||category!=='All'||room!=='All'));el.innerHTML='<div class="home-empty"><h4>'+(filtered?'No matching records':'No '+titles[section].toLowerCase()+' recorded')+'</h4><p>'+(filtered?'Change the search, category or filters.':section==='mortgage'?'Add your loan letter to record the bank, rate and review dates.':'Add a record to keep costs, dates and documents together.')+'</p></div>';return; }
     if(section==='appliance'){el.innerHTML=collectionHTML(rows);el.querySelectorAll('[data-open]').forEach(bindOpen);el.querySelectorAll('[data-sort]').forEach(function(b){b.onclick=function(){setSort(b.dataset.sort,true);renderRegister();};});bindScrollSpy();return;}
     bindScrollSpy();
     rows.sort(function(a,b){var ka=section==='maintenance'?(nextService(a)||'9999'):(a.expires||'9999'), kb=section==='maintenance'?(nextService(b)||'9999'):(b.expires||'9999');return ka.localeCompare(kb)||a.name.localeCompare(b.name);});
-    el.innerHTML='<div class="home-service-grid">'+rows.map(function(r){
-      var facts=section==='insurance'?[['Premium',money(r.premium)+(r.cadence?' · '+esc(r.cadence):'')],['Policy end',warranty(r)],['Coverage',esc(r.coverage||'To add')]]:section==='mortgage'?[['Balance',money(r.balance)],['Balance as of',date(r.balanceDate)],['Monthly instalment',money(r.instalment)],['Annual rate',r.rate==null?'To add':esc(r.rate)+'%'],['Lock-in ends',date(r.lockInEnd)],['Review date',date(r.reviewDate)]]:r.installed?[['Setup date',date(r.installed)],['Event',esc(r.installationType||'Installation')],['Provider',esc(r.provider||'To add')]]:scheduleItems(r).length?scheduleFacts(r):[['Service cost',money(r.cost)],['Last service',date(r.lastService)],['Next service',date(nextService(r))]];
-      return '<article class="home-service-card"><header><div class="home-service-head">'+(section==='maintenance'?thumbnail(r):'')+'<div><span class="home-card-brand">'+esc(r.provider||r.room||titles[section])+'</span><h4>'+esc(r.name)+'</h4></div></div>'+badge(r)+'</header><dl>'+facts.map(function(f){return '<div><dt>'+f[0]+'</dt><dd>'+f[1]+'</dd></div>';}).join('')+'</dl>'+scheduleHTML(r)+(r.action?'<p class="home-service-note">'+esc(r.action)+'</p>':'')+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View details '+icon('chevronRight')+'</button></footer></article>';
+    el.innerHTML='<div class="home-service-grid'+(section==='insurance'||section==='maintenance'?' home-service-compact':'')+'">'+rows.map(function(r){
+      var facts=section==='insurance'?[['Premium',money(r.premium)+(r.cadence?' · '+esc(r.cadence):'')],['Policy end',warranty(r)],['Coverage',esc(r.coverage||'To add')]]:section==='mortgage'?[['Balance',money(r.balance)],['Balance as of',date(r.balanceDate)],['Monthly instalment',money(r.instalment)],['Annual rate',r.rate==null?'To add':esc(r.rate)+'%'],['Lock-in ends',date(r.lockInEnd)],['Review date',date(r.reviewDate)]]:r.installed?[['Setup date',date(r.installed)],['Event',esc(r.installationType||'Installation')],['Provider',esc(r.provider||'To add')]]:scheduleItems(r).length?scheduleFacts(r):[['Service cost',money(r.cost)],['Last service',date(r.lastService)],['Next service',nextService(r)?date(nextService(r)):'Not scheduled']];
+      return '<article class="home-service-card"><header><div class="home-service-head">'+(section==='maintenance'||section==='insurance'?thumbnail(r):'')+'<div><span class="home-card-brand">'+esc(r.provider||r.room||titles[section])+'</span><h4>'+esc(r.name)+'</h4></div></div>'+badge(r)+'</header><dl>'+facts.map(function(f){return '<div><dt>'+f[0]+'</dt><dd>'+f[1]+'</dd></div>';}).join('')+'</dl>'+(scheduleItems(r).length?'<details class="home-schedule-disclosure"><summary>Replacement schedule</summary>'+scheduleHTML(r)+'</details>':'')+(r.action?'<p class="home-service-note">'+esc(r.action)+'</p>':'')+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View details '+icon('chevronRight')+'</button></footer></article>';
     }).join('')+'</div>';
     el.querySelectorAll('[data-open]').forEach(bindOpen);
   }
@@ -485,8 +527,8 @@
     var costRows=[['Original item',record.itemCost],['Extended warranty',record.warrantyCost],['Delivery',record.deliveryCost]].filter(function(row){return row[1]!=null&&row[1]!=='';});
     var costBreakdown=costRows.length?'<section class="home-cost-breakdown"><h3>Purchase breakdown</h3><dl>'+costRows.map(function(row){return '<div><dt>'+row[0]+'</dt><dd>'+money(row[1])+'</dd></div>';}).join('')+'<div class="home-cost-total"><dt>Order total</dt><dd>'+money(record.cost)+'</dd></div></dl></section>':'';
     var services=store.records.filter(function(r){return r.kind==='maintenance'&&r.status!=='Archived'&&(r.linkedRecord===record.id||r.id.indexOf(record.id+'_filter_')===0);});
-    var serviceHTML=services.map(function(r){var items=scheduleItems(r);return '<section class="home-linked-service"><h3>'+esc(r.name)+'</h3>'+(items.length?'<p class="home-muted">'+items.length+' replacements'+(r.cost!=null?' · '+money(r.cost*items.length)+' paid once':'')+'. Next: '+date(nextService(r))+'.</p>'+scheduleHTML(r):'<dl><div><dt>Next service</dt><dd>'+date(nextService(r))+'</dd></div></dl>')+'<p>'+source(r)+'</p></section>';}).join('');
-    dialog.innerHTML='<header class="home-dialog-head"><div><h2 id="home-dialog-title">'+esc(record.name)+'</h2><p class="home-dialog-sub">'+esc([record.category||'Home collection',record.room].filter(Boolean).join(' · '))+'</p></div><button type="button" class="home-button home-close" id="home-close" aria-label="Close Home record">'+icon('close')+'</button></header><div class="home-dialog-body home-item-detail"><div class="home-detail-hero">'+thumbnail(record,true)+'<div><div class="home-detail-price"><strong>'+(record.cost==null?(record.costBasis==='Gift'?'Housewarming gift':'Cost not recorded'):money(record.cost))+'</strong>'+badge(record)+'</div>'+(subtitle?'<p class="home-detail-sub">'+esc(subtitle)+'</p>':'')+'</div></div>'+timeline()+'<p class="home-source">'+source(record)+'</p>'+(photo?'<p class="home-photo-credit"><a href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer">Product image: '+esc(photo.label)+icon('external')+'</a></p>':'')+costBreakdown+'<section><h3>About this item</h3><dl>'+facts('brand,model,room,roomDetail,serial')+'</dl></section>'+componentHTML+'<section><h3>Ownership, delivery & installation</h3><dl>'+facts('provider,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource,costBasis,funding')+'</dl></section><section><h3>Warranty & cover</h3><p class="home-warranty-basis tone-'+esc(warrantyTone(record)).replace('not_applicable','none')+'">'+esc(warrantyBasis)+'</p>'+(warrantyFacts?'<dl>'+warrantyFacts+'</dl>':record.warrantyStatus==='not_applicable'?'':'<p class="home-muted">Warranty details not yet recorded.</p>')+warrantySource+'</section>'+serviceHTML+(record.action?'<section><h3>To keep in mind</h3><p class="home-detail-note">'+esc(record.action)+'</p></section>':'')+(record.notes?'<details class="home-field-group"><summary>Documents & notes</summary><p class="home-detail-note">'+esc(record.notes)+'</p></details>':'')+'</div>';
+    var serviceHTML=services.map(function(r){var items=scheduleItems(r);return '<section class="home-linked-service"><h3>'+esc(r.name)+'</h3>'+(items.length?'<p class="home-muted">'+items.length+' replacements'+(r.cost!=null?' · '+money(r.cost*items.length)+' paid once':'')+'. Next: '+date(nextService(r))+'.</p>'+scheduleHTML(r):'<dl><div><dt>Next service</dt><dd>'+(nextService(r)?date(nextService(r)):'Not scheduled')+'</dd></div></dl>')+'<p>'+source(r)+'</p></section>';}).join('');
+    dialog.innerHTML='<header class="home-dialog-head"><div><h2 id="home-dialog-title">'+esc(record.name)+'</h2><p class="home-dialog-sub">'+esc([record.category||'Home collection',record.room].filter(Boolean).join(' · '))+'</p></div><button type="button" class="home-button home-close" id="home-close" aria-label="Close Home record">'+icon('close')+'</button></header><div class="home-dialog-body home-item-detail"><div class="home-detail-hero">'+thumbnail(record,true)+'<div><div class="home-detail-price"><strong>'+(record.cost==null?(record.costBasis==='Gift'?'Housewarming gift':'Cost not recorded'):money(record.cost))+'</strong>'+badge(record)+'</div>'+(subtitle?'<p class="home-detail-sub">'+esc(subtitle)+'</p>':'')+'</div></div>'+timeline()+'<p class="home-source">'+source(record)+'</p>'+(photo?'<p class="home-photo-credit"><a href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer">'+(photo.kind==='logo'?'Brand / supplier logo: ':'Product image: ')+esc(photo.label)+icon('external')+'</a></p>':'')+costBreakdown+'<section><h3>About this item</h3><dl>'+facts('brand,model,room,roomDetail,serial')+'</dl></section>'+componentHTML+'<section><h3>Ownership, delivery & installation</h3><dl>'+facts('provider,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource,costBasis,funding')+'</dl></section><section><h3>Warranty & cover</h3><p class="home-warranty-basis tone-'+esc(warrantyTone(record)).replace('not_applicable','none')+'">'+esc(warrantyBasis)+'</p>'+(warrantyFacts?'<dl>'+warrantyFacts+'</dl>':record.warrantyStatus==='not_applicable'?'':'<p class="home-muted">Warranty details not yet recorded.</p>')+warrantySource+'</section>'+serviceHTML+(record.action?'<section><h3>To keep in mind</h3><p class="home-detail-note">'+esc(record.action)+'</p></section>':'')+(record.notes?'<details class="home-field-group"><summary>Documents & notes</summary><p class="home-detail-note">'+esc(record.notes)+'</p></details>':'')+'</div>';
     dialog.querySelector('#home-close').onclick=function(){dialog.close();};
     dialog.querySelectorAll('[data-copy]').forEach(function(b){b.onclick=function(){if(!navigator.clipboard)return;navigator.clipboard.writeText(b.dataset.copy).then(function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},1500);});};});
     dialog.showModal();

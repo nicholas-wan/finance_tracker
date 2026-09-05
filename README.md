@@ -111,6 +111,9 @@ preserved.
 The **Home** tab keeps appliances/furnishings, home and fire policies, mortgage
 details, and maintenance in a local household register. The collection uses
 compact, dark-mode-compatible cards and locally bundled product thumbnails;
+items without a product photo use a brand or supplier logo when available,
+with item icons as the fallback. Logos retain readable backdrops in both themes,
+and their sources are credited separately from product photographs;
 selecting a card opens its costs, a key-dates timeline (purchase, delivery,
 installation, warranty start and end), warranty coverage, document link, and
 notes, and selecting the backdrop closes it. Each card names the first thing
@@ -158,6 +161,8 @@ inputs. The Wi-Fi copy can read records but cannot edit them. Set status to
 **Archived** to retain an old record while excluding it from totals and reminders.
 Keep personal insurance in the existing Insurance register and home policies in
 Home to avoid entering the same policy twice.
+
+In List view, expired warranties use quiet grey text (for example, `Expired · Sep 2025`), and complete records leave To-do empty. Expiry is neutral throughout Home; upcoming expiries retain amber emphasis.
 
 The collection has three views, remembered in the browser: **List** (the
 default, one row per item grouped by category with sortable Item, Cost,

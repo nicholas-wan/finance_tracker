@@ -41,16 +41,18 @@
     "processing": "Original product photo in SVG with outline clipping; WebP compression."
   },
   "happie-joy": {
-    "source": "https://happie.sg/products/joy-water-purifier/",
-    "imageSource": "https://happie.sg/wp-content/uploads/2026/02/Joy_Model_TitaniumSilver-600x900.avif",
-    "model": "Joy, silver; current official silver product photography",
-    "processing": "Original photo in SVG crop, retaining dark background and glass; WebP compression."
+    "source": "https://jarrons.com.sg/products/happie-joy-water-purifier-white-silver",
+    "imageSource": "https://jarrons.com.sg/cdn/shop/files/HappieJoyWaterPurifierSilver_Main.jpg?v=1692695052&width=1080",
+    "model": "Happie Joy, silver",
+    "processing": "Unmodified retailer product image: complete front view of silver Joy on white, blended into the grey tile in CSS.",
+    "file": "happie-joy-silver-full.jpg"
   },
   "champs-sylphy": {
     "source": "https://champs.com.sg/product/instant-water-heater-sylphy/",
     "imageSource": "https://champs.com.sg/wp-content/uploads/2018/10/Sylphy-White-1-scaled.jpg",
     "model": "Champs Sylphy instant water heater (component of the bathroom fittings bundle)",
-    "processing": "Edge-connected white background removed; resized and WebP compressed."
+    "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
+    "file": "champs-sylphy-full.jpg"
   },
   "woosa-mysa": {
     "source": "https://woosasleep.co/products/mysa",
@@ -62,7 +64,8 @@
     "source": "https://intertech-hardware.com/products/bestar-star-5",
     "imageSource": "https://intertech-hardware.com/cdn/shop/files/matt-white-with-lights--1.jpg?v=1744868273",
     "model": "Bestar Star 5 ceiling fan",
-    "processing": "Edge-connected white background removed; resized and WebP compressed."
+    "processing": "Unmodified original image; full framing and background preserved.",
+    "file": "bestar-star5-full.jpg"
   },
   "sony-x90l": {
     "source": "https://electronics.sony.com/tv-video/televisions/all-tvs/p/xr65x90l",
@@ -92,13 +95,15 @@
     "source": "https://theomnidesk.com/products/classic-wildwood",
     "imageSource": "https://theomnidesk.com/cdn/shop/files/Classic-Acacia__850x850_d7482308-7d5f-4e6d-a553-31f12cf17835.jpg?v=1754545675",
     "model": "Omnidesk Classic Wildwood",
-    "processing": "Edge-connected white background removed; resized and WebP compressed."
+    "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
+    "file": "omnidesk-classic-full.jpg"
   },
   "switchbot-hub-mini": {
     "source": "https://www.switch-bot.com/products/switchbot-hub-mini",
     "imageSource": "https://www.switch-bot.com/cdn/shop/products/switchbot-hub-mini-783528_1200x1200.jpg?v=1701944768",
     "model": "SwitchBot Hub Mini",
-    "processing": "Edge-connected white background removed; resized and WebP compressed."
+    "processing": "Unmodified original image; full framing and background preserved.",
+    "file": "switchbot-hub-mini-full.jpg"
   },
   "russell-taylors-sc10": {
     "source": "https://russelltaylors.sg/products/russell-taylors-portable-spot-cleaner-fabric-sofa-carpet-upholstery-cleaner-sc10",
@@ -110,7 +115,8 @@
     "source": "https://prismplus.sg/products/arc-lite",
     "imageSource": "https://prismplus.sg/cdn/shop/files/ArcLite-V2-web1_1024x1024.jpg?v=1757488026",
     "model": "PRISM+ Arc Lite dual monitor arm",
-    "processing": "Edge-connected white background removed; resized and WebP compressed."
+    "processing": "Unmodified original image; full framing and background preserved.",
+    "file": "prism-arc-lite-full.jpg"
   },
   "xiaomi-blender": {
     "source": "https://www.mi.com/global/product/xiaomi-blender/",
@@ -120,15 +126,17 @@
   },
   "levoit-core200s": {
     "source": "https://levoit.com/products/core-200s-smart-true-hepa-air-purifier",
-    "imageSource": "http://levoit.com/cdn/shop/files/levoit-core-200s-p-smart-air-purifier-8992236.png?v=1765316587",
+    "imageSource": "https://levoit.com/cdn/shop/files/levoit-core-200s-p-smart-air-purifier-8992236.png?v=1765316587",
     "model": "Levoit Core 200S",
-    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+    "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
+    "file": "levoit-core200s-full.png"
   },
   "levoit-vital100s": {
     "source": "https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier",
-    "imageSource": "http://levoit.com/cdn/shop/products/vital-100s-smart-true-hepa-air-purifier-295620.jpg?v=1762284249",
+    "imageSource": "https://levoit.com/cdn/shop/products/vital-100s-smart-true-hepa-air-purifier-295620.jpg?v=1762284249",
     "model": "Levoit Vital 100S",
-    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+    "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
+    "file": "levoit-vital100s-full.jpg"
   },
   "neakasa-m1": {
     "source": "https://neakasa.com/products/neakasa-m1-cat-litter-box",
@@ -138,14 +146,173 @@
   },
   "kdk-15wud": {
     "source": "https://www.kdk.sg/products/ventilating-fan-15wud",
-    "imageSource": "http://www.kdk.sg/cdn/shop/files/15WUD_c9831afd-eb9c-4360-b18a-9c46f1bc51f1.jpg?v=1772503601&width=1200",
+    "imageSource": "https://www.kdk.sg/cdn/shop/files/15WUD_c9831afd-eb9c-4360-b18a-9c46f1bc51f1.jpg?v=1772503601&width=1200",
     "model": "KDK 15WUD",
-    "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+    "processing": "Unmodified original image; full framing and background preserved.",
+    "file": "kdk-15wud-full.jpg"
   },
   "smartdoor-slidearm": {
     "source": "https://www.smart-home.com.sg/slidearm",
     "imageSource": "https://static.wixstatic.com/media/817066_6a67f680647147439a44562aae19662d~mv2.jpg/v1/fill/w_865,h_615,al_c/817066_6a67f680647147439a44562aae19662d~mv2.jpg",
     "model": "Smart Door slide arm",
     "processing": "Official product image cropped to the product, resized and WebP compressed; original white background kept."
+  },
+  "azora-logo": {
+    "source": "https://azora.com.sg/",
+    "imageSource": "https://azora.com.sg/wp-content/uploads/2024/07/Azora-Full-Logoo-1.png",
+    "kind": "logo",
+    "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
+    "file": "azora-logo-full.png"
+  },
+  "irusu-logo": {
+    "source": "https://irusu.sg/",
+    "imageSource": "https://irusu.sg/cdn/shop/files/irusu-14Jan-final_05_Artboard_22.svg?v=1707899586&width=600",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "irusu-logo.svg"
+  },
+  "fortytwo-logo": {
+    "source": "https://www.fortytwo.sg/",
+    "imageSource": "https://www.fortytwo.sg/_ipx/_/custom/footer/logo.png",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "fortytwo-logo.webp"
+  },
+  "miss-mosquito-logo": {
+    "source": "https://www.missmosquitonet.com/",
+    "imageSource": "https://static.wixstatic.com/media/9e61db_1a68ec31aaf2484ab9d2eba407715460~mv2.jpg",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "miss-mosquito-logo.webp"
+  },
+  "pawswing-logo": {
+    "source": "https://paw-swing.com/",
+    "imageSource": "https://paw-swing.com/cdn/shop/files/PawSwing_Logo_All_Variations-27_a3741f75-22de-4995-81fc-eedfc730bee0.png",
+    "kind": "logo",
+    "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
+    "file": "pawswing-logo-full.png"
+  },
+  "singlife-logo": {
+    "source": "https://singlife.com/en",
+    "imageSource": "https://singlife.com/etc.clientlibs/asl-public/clientlibs/clientlib-base/resources/assets/logo/sl-logo-singlife.png",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "singlife-logo.webp"
+  },
+  "luce-logo": {
+    "source": "https://www.luce.sg/",
+    "imageSource": "https://cdn.prod.website-files.com/647e01c6bc9b144cf70df6ff/648184dfebfcd0967253eb73_normal.svg",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "luce-logo.svg"
+  },
+  "myrepublic-logo": {
+    "source": "https://myrepublic.net/sg/",
+    "imageSource": "https://cdn-ilbgkhf.nitrocdn.com/purAKyjShVpiUUHKFExzGAxuRLXFYzrm/assets/images/optimized/rev-da29f92/myrepublic.net/sg/wp-content/uploads/2020/02/MyRepublic-Rocket-RGB-300x300.png",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "myrepublic-logo.webp"
+  },
+  "magic-cat-mesh-logo": {
+    "source": "https://magiccatmesh.com/",
+    "imageSource": "https://magiccatmesh.com/wp-content/uploads/2026/04/fevicon-catmesh-300x300.png",
+    "kind": "logo",
+    "processing": "Official brand or supplier logo; proportions and colours preserved.",
+    "file": "magic-cat-mesh-logo.webp"
+  },
+  "hooga-logo": {
+    "source": "https://findinghooga.com.sg/",
+    "imageSource": "https://findinghooga.com.sg/wp-content/themes/hooga/img/hooga-logo-2025.png",
+    "kind": "logo",
+    "processing": "Official logo acquired from rendered website, resized without changing colours or proportions."
+  },
+  "vlux-logo": {
+    "source": "https://www.vlux.com.sg/",
+    "imageSource": "https://www.vlux.com.sg/wp-content/uploads/vlux-logo.png",
+    "kind": "logo",
+    "processing": "Official logo acquired from rendered website, resized without changing colours or proportions."
+  },
+  "zenith-logo": {
+    "source": "https://zenithfilms.com.sg/",
+    "imageSource": "https://zenithfilms.com.sg/wp-content/uploads/2026/01/Zenith-window-films-logo-1024x319.webp",
+    "kind": "logo",
+    "processing": "Official logo resized, colours and proportions preserved."
+  },
+  "furniture-boutique-logo": {
+    "source": "https://bestlah.sg/shopping/best-furniture-stores/",
+    "imageSource": "https://bestlah.sg/wp-content/uploads/2024/07/The-Furniture-Boutique-Singapore.webp",
+    "kind": "logo",
+    "processing": "Supplier logo cropped from a published screenshot of its former official homepage; original dark background retained."
+  },
+  "neakasa-logo": {
+    "source": "https://neakasa.com/",
+    "imageSource": "https://neakasa.com/cdn/shop/files/neakasa_logo_6b188ba2-9ef5-461e-8b31-1170b3d95258.png?v=1700200477&width=360",
+    "file": "neakasa-logo-full.png",
+    "kind": "logo",
+    "processing": "Official complete logo; no crop."
+  },
+  "woosa-logo": {
+    "source": "https://woosasleep.co/",
+    "imageSource": "https://woosasleep.co/cdn/shop/files/woosa.svg?v=1738669866&width=600",
+    "file": "woosa-logo-full.svg",
+    "kind": "logo",
+    "processing": "Unmodified official brand logo."
+  },
+  "russell-taylors-logo": {
+    "source": "https://russelltaylors.sg/",
+    "imageSource": "https://russelltaylors.sg/cdn/shop/files/Russell_Taylor_LOGO.svg?v=1751551392&width=180",
+    "file": "russell-taylors-logo-full.svg",
+    "kind": "logo",
+    "processing": "Unmodified official brand logo."
+  },
+  "kdk-logo": {
+    "source": "https://www.kdk.sg/",
+    "imageSource": "https://www.kdk.sg/cdn/shop/files/logo-dark.png?v=1769064569&width=360",
+    "file": "kdk-logo-full.png",
+    "kind": "logo",
+    "processing": "Unmodified official brand logo."
+  },
+  "prism-logo": {
+    "source": "https://prismplus.sg/",
+    "imageSource": "https://prismplus.sg/cdn/shop/files/Prism_Logo_Transparent_White_100x.png?v=1726733592",
+    "file": "prism-logo-full.png",
+    "kind": "logo",
+    "processing": "Unmodified official brand logo."
+  },
+  "switchbot-logo": {
+    "source": "https://www.switch-bot.com/",
+    "imageSource": "https://www.switch-bot.com/cdn/shop/files/logo_120x.svg?v=1682672217",
+    "file": "switchbot-logo-full.svg",
+    "kind": "logo",
+    "processing": "Unmodified official brand logo."
+  },
+  "sharkninja-logo": {
+    "source": "https://sharkninja.sg/",
+    "imageSource": "https://cdn.shopify.com/s/files/1/0282/2625/6999/files/shark-ninja-logo.svg?v=1677022130",
+    "file": "sharkninja-logo-full.svg",
+    "kind": "logo",
+    "processing": "Unmodified official logo"
+  },
+  "tapo-logo": {
+    "source": "https://www.tapo.com/sg/",
+    "imageSource": "https://static.tapo.com/res/new-home/tapo.svg?v=202410101530",
+    "file": "tapo-logo-full.svg",
+    "kind": "logo",
+    "processing": "Unmodified official logo"
+  },
+  "oneisall-feeder": {
+    "source": "https://www.amazon.sg/dp/B0C5X4N132",
+    "imageSource": "https://m.media-amazon.com/images/W/BW_MEDIAX_AVIF_MEASUREMENT_1306696-T4/images/I/71m-vL8WL-L._AC_SX522_.jpg",
+    "file": "oneisall-feeder-full.jpg",
+    "model": "oneisall 5L Wi-Fi dual-bowl feeder B0C5X4N132",
+    "processing": "Unmodified product image from purchased Amazon listing, contained in grey tile."
+  },
+  "fwd-logo-full.svg": {
+    "source": "https://www.fwd.com.sg/wp-content/uploads/2025/08/FWD-logo-D.svg",
+    "model": "Official brand logo"
+  },
+  "happie-logo-full.avif": {
+    "source": "https://happie.sg/wp-content/uploads/2026/01/Happie_Logo_Blue.avif",
+    "model": "Official brand logo"
   }
 }
