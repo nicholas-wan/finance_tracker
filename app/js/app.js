@@ -5356,9 +5356,22 @@
     return true;
   }
 
+  // A wallet payment is travel only when a trip claimed it by date; a Taobao
+  // order on the same card in August is not. The other person's rows are
+  // travel by their own tracker's category and always qualify.
+  function tripClaimedIds() {
+    var claimed = {};
+    tripCatalogue().all.forEach(function (trip) {
+      trip.ids.forEach(function (id) { claimed[id] = true; });
+    });
+    return claimed;
+  }
   function filteredLedger() {
     var rows = splitShopeeLedgerRows(data.transactions);
-    if (travelView()) rows = rows.concat(partnerRows());
+    if (travelView()) {
+      var claimed = tripClaimedIds();
+      rows = rows.concat(partnerRows().filter(function (row) { return !row.via || claimed[row.id]; }));
+    }
     return rows.filter(function (t) {
       return matchesLedgerFilters(t, false);
     }).sort(function (a, b) { return (b.date || b.month).localeCompare(a.date || a.month); });
@@ -6131,7 +6144,10 @@
     if (!kpis) return;
     clear(kpis);
     var catalogue = tripCatalogue();
-    var sources = otherSources();
+    var claimedIds = tripClaimedIds();
+    var sources = otherSources().filter(function (source) {
+      return !source.via || source.rows.some(function (row) { return claimedIds[row.id]; });
+    });
     var sourceNames = sources.map(function (source) { return source.name; });
     if (state.travelPayer !== "All" && state.travelPayer !== OWN_NAME &&
         sourceNames.indexOf(state.travelPayer) === -1) {
@@ -6362,28 +6378,46 @@
   // with the charges no trip claimed listed last. Read-only: these rows are
   // edited in the other tracker and copied here by import_partner_travel.py.
   function renderPartnerTravel(catalogue) {
-    var sources = otherSources();
+    var claimedIds = tripClaimedIds();
+    var sources = otherSources().filter(function (source) {
+      return !source.via || source.rows.some(function (row) { return claimedIds[row.id]; });
+    });
     ["partner-travel-panel", "wallet-travel-panel"].forEach(function (id) {
       var panel = document.getElementById(id);
       if (panel) panel.classList.add("hidden");
     });
+    // Wallet cards share one panel, each under its own heading.
+    var walletSources = [];
     sources.forEach(function (source) {
       var show = state.travelPayer !== OWN_NAME &&
         (state.travelPayer === "All" || state.travelPayer === source.name);
-      if (show) renderOtherSourcePanel(catalogue, source);
+      if (!show) return;
+      if (source.via) walletSources.push(source);
+      else renderOtherSourcePanel(catalogue, source, false, [source]);
+    });
+    walletSources.forEach(function (source, index) {
+      renderOtherSourcePanel(catalogue, source, index > 0, walletSources);
     });
   }
 
-  function renderOtherSourcePanel(catalogue, source) {
+  function renderOtherSourcePanel(catalogue, source, append, siblings) {
     var panel = document.getElementById(source.panelId);
     if (!panel) return;
     panel.classList.remove("hidden");
     var rows = source.rows;
     var partner = { paidBy: source.name };
-    panel.querySelector(".panel-head h2").lastChild.textContent = source.title;
-    panel.querySelector(".panel-head .hint").textContent = source.hint;
     var wrap = panel.querySelector(".other-source-rows");
-    clear(wrap);
+    if (!append) {
+      var names = siblings.map(function (item) { return item.name; });
+      panel.querySelector(".panel-head h2").lastChild.textContent = source.via
+        ? "Paid via " + names.join(" and ") : source.title;
+      panel.querySelector(".panel-head .hint").textContent = source.via && names.length > 1
+        ? "WeChat Pay charges on " + names.join(" and ") + ", not on any statement here" +
+          " \u00b7 S$ estimated at this tracker's nearest CNY rate"
+        : source.hint;
+      clear(wrap);
+    }
+    if (siblings.length > 1) wrap.appendChild(el("h4", "drawer-subheading other-source-heading", source.name));
 
     var tripOf = {};
     catalogue.all.forEach(function (trip) {
@@ -6407,7 +6441,7 @@
       byTrip[trip.key].rows.push(row);
     });
     groups.sort(function (a, b) { return b.trip.start.localeCompare(a.trip.start); });
-    if (loose.length) groups.push({ trip: null, rows: loose });
+    if (loose.length && !source.via) groups.push({ trip: null, rows: loose });
 
     var hidden = window.FinanceGrouping.reversedPairs(rows).hidden || {};
     function tagLabel(row) {

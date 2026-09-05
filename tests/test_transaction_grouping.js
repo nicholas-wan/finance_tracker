@@ -1267,6 +1267,13 @@ test("builds trips from booking travel dates and gathers the spend around them",
       description: "Klook Travel Singapore" }),
     travel({ id: "kkday", date: "2025-08-28", month: "2025-08", amount: 60,
       description: "KKDAY SINGAPORE" }),
+    // Wallet payments (WeChat Pay on another card): one inside the trip's
+    // window joins it as that card's money; one bought before the trip does
+    // not, and is never guessed onto it either.
+    transaction({ id: "wx_in", paidBy: "YouTrip", via: true, estimated: true, category: "Travel",
+      date: "2026-03-18", month: "2026-03", amount: 20, description: "Dumpling house", foreign: "CNY 100.00" }),
+    transaction({ id: "wx_out", paidBy: "YouTrip", via: true, estimated: true, category: "Travel",
+      date: "2026-02-14", month: "2026-02", amount: 30, description: "Online shop", foreign: "CNY 150.00" }),
     // A Klook order charged a month early: the activity day anchors it to
     // the trip, its name says where, and it counts as a booking.
     travel({ id: "show", date: "2026-02-20", month: "2026-02", amount: 120,
@@ -1298,7 +1305,12 @@ test("builds trips from booking travel dates and gathers the spend around them",
   assert.equal(china.end, "2026-03-23");
   assert.equal(china.days, 9);
   assert.deepEqual(Array.from(china.ids).sort(),
-    ["cancelled", "dinner", "flight", "hotel", "klook", "metro", "nic_dinner", "nic_flight", "refund", "show", "visa"]);
+    ["cancelled", "dinner", "flight", "hotel", "klook", "metro", "nic_dinner", "nic_flight", "refund", "show", "visa", "wx_in"]);
+  assert.ok(!trips.some(function (trip) { return trip.ids.indexOf("wx_out") !== -1; }));
+  assert.equal(china.payers.YouTrip.total, 20);
+  assert.equal(china.payers.YouTrip.estimated, true);
+  assert.equal(china.payers.YouTrip.via, true);
+  assert.equal(china.payers.Nic.total, 515);
   assert.deepEqual(Array.from(china.guessedIds), ["klook"]);
   assert.equal(china.rowCount, 9);
   assert.equal(china.count, 7);
@@ -1306,8 +1318,8 @@ test("builds trips from booking travel dates and gathers the spend around them",
   assert.equal(china.bookings, 3);
   assert.equal(insights.travelCountry(rows.find(function (r) { return r.id === "show"; })), "China");
   assert.equal(insights.travelCity(rows.find(function (r) { return r.id === "show"; })), "Shanghai");
-  assert.equal(china.partnerTotal, 515);
-  assert.equal(china.partnerCount, 2);
+  assert.equal(china.partnerTotal, 535);
+  assert.equal(china.partnerCount, 3);
   assert.equal(china.paidBy, "Nic");
   assert.equal(insights.confirmedTravelCharges(rows).map(function (t) { return t.id; }).sort().join(","),
     "flight,hotel,kkday,klook,metro,narita,show,tokyo,visa");

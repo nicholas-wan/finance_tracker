@@ -855,6 +855,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 /* What the other person paid: grouped by trip, read-only. */
 .trip-card .delta.partner-paid { color: var(--accent); }
 .partner-group { margin-top: 12px; }
+.other-source-heading { margin: 14px 0 2px; }
+.other-source-heading:first-child { margin-top: 0; }
 .partner-group:first-child { margin-top: 0; }
 .partner-group-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 10px;

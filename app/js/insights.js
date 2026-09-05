@@ -287,7 +287,11 @@ window.Insights = (function () {
     var foreignOnly = [];
     (transactions || []).forEach(function (transaction) {
       if (!transaction || !transaction.date) return;
-      if (transaction.category === "Travel") {
+      // A wallet payment (transaction.via) carries no booking and no
+      // descriptor worth reading, so it joins a trip only when its date
+      // falls inside the window, like everyday spending abroad; it never
+      // seeds a trip and is never guessed onto one.
+      if (transaction.category === "Travel" && !transaction.via) {
         var windows = bookingsOf(transaction).map(travelWindow)
           .concat(klookOrdersOf(transaction).map(klookWindow)).filter(Boolean);
         var start = transaction.date, end = transaction.date;
