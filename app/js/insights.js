@@ -224,12 +224,38 @@ window.Insights = (function () {
     return "On the ground";
   }
 
+  // A "confirmed" charge is money that actually left: a debit that no
+  // matching refund reversed. Refund rows and reversed charges still belong
+  // to a trip (their amounts net to zero inside it) but they are not counted
+  // as charges, and a cancelled booking is not counted as a booking.
+  function reversedIds(transactions) {
+    var grouping = window.FinanceGrouping;
+    if (!grouping || typeof grouping.reversedPairs !== "function") return {};
+    return grouping.reversedPairs(transactions || []).hidden || {};
+  }
+  function isCancelledBooking(booking) {
+    return String(booking && booking.status || "").toLowerCase() === "cancelled";
+  }
+  function isConfirmedCharge(transaction, hidden) {
+    return transaction.type === "debit" && !hidden[transaction.id];
+  }
+  function hasConfirmedBooking(transaction) {
+    return bookingsOf(transaction).some(function (booking) { return !isCancelledBooking(booking); });
+  }
+  function confirmedTravelCharges(transactions) {
+    var hidden = reversedIds(transactions);
+    return (transactions || []).filter(function (transaction) {
+      return transaction.category === "Travel" && isConfirmedCharge(transaction, hidden);
+    });
+  }
+
   function isForeign(transaction) {
     var text = String(transaction.foreign || "").trim();
     return Boolean(text) && text.slice(0, 3).toUpperCase() !== "SGD";
   }
 
   function buildTrips(transactions) {
+    var hidden = reversedIds(transactions);
     var anchored = [];
     var foreignOnly = [];
     (transactions || []).forEach(function (transaction) {
@@ -352,8 +378,11 @@ window.Insights = (function () {
         cities: cityList,
         city: cityList[0] || "",
         ids: rows.map(function (transaction) { return transaction.id; }),
-        count: rows.length,
-        bookings: rows.filter(function (transaction) { return bookingsOf(transaction).length > 0; }).length,
+        rowCount: rows.length,
+        count: rows.filter(function (transaction) { return isConfirmedCharge(transaction, hidden); }).length,
+        bookings: rows.filter(function (transaction) {
+          return isConfirmedCharge(transaction, hidden) && hasConfirmedBooking(transaction);
+        }).length,
         total: Math.round(total * 100) / 100,
         perDay: Math.round(total / days * 100) / 100,
         split: split,
@@ -968,6 +997,7 @@ window.Insights = (function () {
     monthLabel: label,
     travelCountry: travelCountry,
     travelCity: travelCity,
+    confirmedTravelCharges: confirmedTravelCharges,
     destinations: destinations,
     suggestedDestination: suggestedDestination,
     parseTravelDate: parseTravelDate,

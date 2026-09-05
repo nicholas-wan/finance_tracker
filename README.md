@@ -219,8 +219,11 @@ review-status filters.
   a divider per year (trips that have not started yet sit
   under **Upcoming**) with year pills to narrow the list (the latest year is
   selected by default), and bars by country/region with charge counts and
-  shares and by statement year. Each card and bar opens the Transactions tab
-  already filtered; a country bar keeps the year the tab was showing.
+  shares and by statement year. Amounts everywhere are net of refunds, and
+  every count is of confirmed charges only: a debit that no matching refund
+  reversed, and a booking that was not cancelled. Each card and bar opens the
+  Transactions tab already filtered; a country bar keeps the year the tab was
+  showing.
 - Selecting the **Travel** category (or the Travel card on the Overview) adds a
   row of country/region pills with all-time counts, replaces the ordinary
   category and owner summary with a year-by-country/region breakdown, offers

@@ -1728,9 +1728,15 @@
     var wrap = document.getElementById("travel-country-pills");
     clear(wrap);
     var counts = {};
+    var confirmedIds = {};
+    window.Insights.confirmedTravelCharges(data && data.transactions || []).forEach(function (t) {
+      confirmedIds[t.id] = true;
+    });
     (data && data.transactions || []).forEach(function (transaction) {
       var country = window.Insights.travelCountry(transaction);
-      if (country) counts[country] = (counts[country] || 0) + 1;
+      if (!country) return;
+      if (!(country in counts)) counts[country] = 0;
+      if (confirmedIds[transaction.id]) counts[country] += 1;
     });
     var options = ["All"].concat(Object.keys(counts).sort(function (left, right) {
       if (left === "Unknown") return 1;
@@ -1746,8 +1752,8 @@
       if (country !== "All") {
         pill.insertBefore(window.Flags.node(country, "sm"), pill.firstChild);
         pill.appendChild(el("span", "pill-count", String(counts[country])));
-        pill.title = counts[country] + " travel charge" + (counts[country] === 1 ? "" : "s") +
-          " across all statements";
+        pill.title = counts[country] + " confirmed travel charge" + (counts[country] === 1 ? "" : "s") +
+          " across all statements; refunds and reversed charges are not counted";
       }
       setPressed(pill, active);
       pill.addEventListener("click", function () { selectTravelCountry(country); });
@@ -1968,9 +1974,11 @@
         split.appendChild(row);
       });
       card.appendChild(split);
-      card.appendChild(el("p", "delta sub", trip.count + " charge" + (trip.count === 1 ? "" : "s") +
-        (trip.bookings ? " \u00b7 " + trip.bookings + " Trip.com booking" + (trip.bookings === 1 ? "" : "s") : "")));
-      makeActionable(card, "Show the " + trip.count + " charges for " + label + ", " + tripDateRange(trip),
+      card.appendChild(el("p", "delta sub", trip.count + " confirmed charge" + (trip.count === 1 ? "" : "s") +
+        (trip.bookings ? " \u00b7 " + trip.bookings + " booking" + (trip.bookings === 1 ? "" : "s") : "") +
+        (trip.rowCount > trip.count ? " \u00b7 " + (trip.rowCount - trip.count) + " refund" +
+          (trip.rowCount - trip.count === 1 ? "" : "s") + " or reversed" : "")));
+      makeActionable(card, "Show the " + trip.rowCount + " rows for " + label + ", " + tripDateRange(trip),
         function () { options.onSelect(trip, active); });
       // Only a card that toggles a focus is a pressed control; on the Travel
       // tab a click navigates, so no pressed state is announced there.
@@ -1983,10 +1991,11 @@
       var refunded = rest.filter(function (trip) { return trip.total < 0.5; });
       var lone = rest.filter(function (trip) { return trip.total >= 0.5; });
       var loneCount = lone.reduce(function (total, trip) { return total + trip.count; }, 0);
+      if (!loneCount && !refunded.length) return;
       var loneTotal = lone.reduce(function (total, trip) { return total + trip.total; }, 0);
       var parts = [];
       if (loneCount) {
-        parts.push(loneCount + " single charge" + (loneCount === 1 ? "" : "s") +
+        parts.push(loneCount + " confirmed charge" + (loneCount === 1 ? "" : "s") +
           " without a booking, not tied to a trip \u00b7 " + fmt(loneTotal));
       }
       if (refunded.length) {
@@ -5813,6 +5822,12 @@
       byYear[year] = roundMoney((byYear[year] || 0) + signed(t));
       var country = window.Insights.travelCountry(t) || "Unknown";
       byCountry[country] = roundMoney((byCountry[country] || 0) + signed(t));
+    });
+    // Amounts net every refund; counts are of confirmed charges only, so a
+    // cancelled booking and its refund add nothing to either.
+    var confirmed = window.Insights.confirmedTravelCharges(data.transactions);
+    confirmed.forEach(function (t) {
+      var country = window.Insights.travelCountry(t) || "Unknown";
       countryRows[country] = (countryRows[country] || 0) + 1;
     });
     var allTime = Object.keys(byYear).reduce(function (total, year) { return total + byYear[year]; }, 0);
@@ -5840,7 +5855,8 @@
     kpis.appendChild(yearCard);
 
     var allCard = metric("All time", fmt0(allTime),
-      rows.length + " travel charges \u00b7 " + known.length + " destination" + (known.length === 1 ? "" : "s"),
+      confirmed.length + " confirmed charge" + (confirmed.length === 1 ? "" : "s") + " \u00b7 " +
+      known.length + " destination" + (known.length === 1 ? "" : "s"),
       null, "coins");
     makeActionable(allCard, "View every travel transaction", function () {
       openTransactions({ category: "Travel",
@@ -5925,7 +5941,7 @@
       // desktop tooltip used to hold.
       var amountNode = el("span", "amt" + (refunded ? " muted" : ""), refunded ? "refunded" : fmt0(amount));
       var share = countrySum > 0 ? Math.round(Math.abs(amount) / countrySum * 100) : 0;
-      amountNode.appendChild(el("small", "", countryRows[country] + (refunded ? "" : " \u00b7 " + share + "%")));
+      amountNode.appendChild(el("small", "", (countryRows[country] || 0) + (refunded ? "" : " \u00b7 " + share + "%")));
       row.appendChild(amountNode);
       // The remembered trip year travels with the click, so the ledger opens
       // on the same year the Travel tab was showing.
