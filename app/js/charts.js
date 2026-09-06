@@ -128,7 +128,9 @@ window.Charts = (function () {
     s.appendChild(label(axisL - 7, axisY + 4, "0", { anchor: "end" }));
 
     // Value labels crowd each other once bars get thin, so below that width they
-    // stay hidden until the column is hovered.
+    // stay hidden until the column is hovered. Phones have no hover, so there
+    // the larger of income and outflows keeps its label: one number per month
+    // fits, and the smaller bar is still readable against its own gridlines.
     var denseLabels = slot < 40;
     // Phones have no hover, so there the larger of income and outflows keeps
     // its label: one number per month fits, and the smaller bar is still

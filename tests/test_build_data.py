@@ -488,3 +488,206 @@ class InsuranceTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+
+class TripBookingTests(unittest.TestCase):
+    """Only an exact, dated, one-to-one SGD amount names a Trip.com charge."""
+
+    def booking(self, **overrides):
+        base = {
+            "bookingNo": "1234567890123",
+            "status": "Completed",
+            "productType": "Hotels",
+            "bookingDate": "June 12, 2026",
+            "productName": "Example Hotel",
+            "travelTime": "June 20, 2026",
+            "traveller": "Example Traveller",
+            "currency": "SGD",
+            "amount": 321.45,
+            "sourceFile": "synthetic.xlsx",
+        }
+        base.update(overrides)
+        return base
+
+    def card(self, tx_id="tx_trip0000000000001", amount=321.45, date="2026-06-12",
+             description="TRIP.COM SINGAPORE", credit=False):
+        return {"id": tx_id, "date": date, "description": description,
+                "amount": amount, "credit": credit}
+
+    def prepare(self, bookings, rows):
+        return build_data.prepare_trip_bookings({"bookings": bookings}, rows)
+
+    def test_unique_dated_amount_links_and_keeps_the_export_fields(self):
+        bookings, matches, stats = self.prepare([self.booking()], [self.card(date="2026-06-13")])
+        self.assertEqual(matches["tx_trip0000000000001"]["productName"], "Example Hotel")
+        self.assertEqual(matches["tx_trip0000000000001"]["status"], "Completed")
+        self.assertEqual(bookings[0]["bookingNo"], "1234567890123")
+        self.assertEqual(stats["matched"], 1)
+        self.assertEqual(stats["unmatchedCharges"], 0)
+        self.assertEqual(stats["ambiguousCharges"], 0)
+
+    def test_two_bookings_sharing_an_amount_are_never_zipped_onto_two_charges(self):
+        bookings = [self.booking(), self.booking(bookingNo="1234567890124", productName="Other Hotel",
+                                                 bookingDate="June 13, 2026")]
+        rows = [self.card(), self.card("tx_trip0000000000002", date="2026-06-13")]
+        _, matches, stats = self.prepare(bookings, rows)
+        self.assertEqual(matches, {})
+        self.assertEqual(stats["ambiguousCharges"], 2)
+        self.assertEqual(stats["unmatchedBookings"], 2)
+
+    def test_one_booking_with_two_candidate_charges_is_ambiguous(self):
+        rows = [self.card(), self.card("tx_trip0000000000002", date="2026-06-15")]
+        _, matches, stats = self.prepare([self.booking()], rows)
+        self.assertEqual(matches, {})
+        self.assertEqual(stats["ambiguousCharges"], 2)
+
+    def test_dates_separate_same_priced_bookings(self):
+        bookings = [self.booking(), self.booking(bookingNo="1234567890124", productName="Later Hotel",
+                                                 bookingDate="September 1, 2026")]
+        rows = [self.card(), self.card("tx_trip0000000000002", date="2026-09-02")]
+        _, matches, _ = self.prepare(bookings, rows)
+        self.assertEqual(matches["tx_trip0000000000001"]["productName"], "Example Hotel")
+        self.assertEqual(matches["tx_trip0000000000002"]["productName"], "Later Hotel")
+
+    def test_a_charge_outside_the_window_is_not_named(self):
+        _, matches, stats = self.prepare([self.booking()], [self.card(date="2026-06-25")])
+        self.assertEqual(matches, {})
+        self.assertEqual(stats["unmatchedCharges"], 1)
+
+    def test_refunds_foreign_currency_and_zero_amounts_are_skipped(self):
+        bookings = [
+            self.booking(currency="CNY"),
+            self.booking(bookingNo="1234567890125", amount=0),
+            self.booking(bookingNo="1234567890126", amount=None),
+        ]
+        rows = [self.card(), self.card("tx_trip0000000000002", credit=True)]
+        _, matches, stats = self.prepare(bookings, rows)
+        self.assertEqual(matches, {})
+        self.assertEqual(stats["foreignCurrency"], 1)
+        self.assertEqual(stats["zeroAmount"], 2)
+        self.assertEqual(stats["statementRefunds"], 1)
+
+    def test_a_cancelled_booking_still_links_and_is_counted(self):
+        _, matches, stats = self.prepare([self.booking(status="Cancelled")], [self.card()])
+        self.assertEqual(matches["tx_trip0000000000001"]["status"], "Cancelled")
+        self.assertEqual(stats["matchedCancelled"], 1)
+
+    def test_an_undated_booking_cannot_match(self):
+        _, matches, stats = self.prepare([self.booking(bookingDate="sometime")], [self.card()])
+        self.assertEqual(matches, {})
+        self.assertEqual(stats["undated"], 1)
+
+    def test_non_trip_descriptions_are_ignored(self):
+        _, matches, stats = self.prepare(
+            [self.booking()], [self.card(description="SOME HOTEL DIRECT")])
+        self.assertEqual(matches, {})
+        self.assertEqual(stats["statementCharges"], 0)
+
+    def test_numeric_booking_numbers_are_normalised(self):
+        bookings, matches, _ = self.prepare([self.booking(bookingNo=1234567890123)], [self.card()])
+        self.assertEqual(bookings[0]["bookingNo"], "1234567890123")
+        self.assertIn("tx_trip0000000000001", matches)
+
+    def test_invalid_exports_abort_the_build(self):
+        cases = [
+            ("missing booking number", [self.booking(bookingNo="")]),
+            ("float booking number", [self.booking(bookingNo=1.5e15 + 0.5)]),
+            ("duplicate", [self.booking(), self.booking()]),
+            ("no product name", [self.booking(productName=" ")]),
+            ("bad currency", [self.booking(currency="S$")]),
+            ("negative", [self.booking(amount=-1)]),
+            ("nan", [self.booking(amount=float("nan"))]),
+            ("inf", [self.booking(amount=float("inf"))]),
+            ("text amount", [self.booking(amount="12.3.4")]),
+            ("bool amount", [self.booking(amount=True)]),
+            ("non-text status", [self.booking(status=3)]),
+            ("not an object", ["booking"]),
+        ]
+        for label, bookings in cases:
+            with self.subTest(label):
+                with self.assertRaises(SystemExit):
+                    self.prepare(bookings, [self.card()])
+        with self.assertRaises(SystemExit):
+            build_data.prepare_trip_bookings(["not", "a", "dict"], [self.card()])
+        with self.assertRaises(SystemExit):
+            build_data.prepare_trip_bookings({"bookings": "nope"}, [self.card()])
+
+    def test_a_missing_file_builds_nothing(self):
+        bookings, matches, stats = build_data.prepare_trip_bookings(None, [self.card()])
+        self.assertEqual((bookings, matches), ([], {}))
+        self.assertEqual(stats["statementCharges"], 1)
+
+    def test_reviewed_links_support_aggregate_charges_and_refunds(self):
+        second = self.booking(
+            bookingNo="1234567890124", productName="Example Hotel", amount=100.0
+        )
+        charge = self.card(amount=421.45)
+        refund = self.card(
+            "tx_trip0000000000002", amount=100.0, date="2026-06-20", credit=True
+        )
+        reconciliation = {
+            "links": [
+                {
+                    "transactionIds": [charge["id"]],
+                    "bookingNos": [self.booking()["bookingNo"], second["bookingNo"]],
+                    "kind": "aggregate",
+                    "note": "One statement charge covers both same-day bookings.",
+                },
+                {
+                    "transactionIds": [refund["id"]],
+                    "bookingNos": [second["bookingNo"]],
+                    "kind": "refund",
+                    "note": "The later credit refunds the second booking.",
+                },
+            ]
+        }
+        _, matches, stats = build_data.prepare_trip_bookings(
+            {"bookings": [self.booking(), second]}, [charge, refund], reconciliation
+        )
+        self.assertEqual(
+            [booking["bookingNo"] for booking in matches[charge["id"]]["bookings"]],
+            ["1234567890123", "1234567890124"],
+        )
+        self.assertEqual(stats["matched"], 1)
+        self.assertEqual(stats["matchedRefunds"], 1)
+        self.assertEqual(stats["matchedTransactions"], 2)
+        self.assertEqual(stats["matchedBookings"], 2)
+        self.assertEqual(stats["unmatchedCharges"], 0)
+        self.assertEqual(stats["unmatchedRefunds"], 0)
+
+    def test_reviewed_links_reject_unknown_and_repeated_rows(self):
+        cases = [
+            {
+                "transactionIds": ["tx_missing"],
+                "bookingNos": [self.booking()["bookingNo"]],
+                "kind": "discounted",
+                "note": "Reviewed.",
+            },
+            {
+                "transactionIds": [self.card()["id"]],
+                "bookingNos": 123,
+                "kind": "discounted",
+                "note": "Reviewed.",
+            },
+        ]
+        for link in cases:
+            with self.subTest(link=link):
+                with self.assertRaises(SystemExit):
+                    build_data.prepare_trip_bookings(
+                        {"bookings": [self.booking()]},
+                        [self.card()],
+                        {"links": [link]},
+                    )
+        repeated = {
+            "transactionIds": [self.card()["id"]],
+            "bookingNos": [self.booking()["bookingNo"]],
+            "kind": "discounted",
+            "note": "Reviewed.",
+        }
+        with self.assertRaises(SystemExit):
+            build_data.prepare_trip_bookings(
+                {"bookings": [self.booking()]},
+                [self.card()],
+                {"links": [repeated, repeated]},
+            )

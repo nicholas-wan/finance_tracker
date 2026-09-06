@@ -17,9 +17,13 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 from build_data import (  # noqa: E402
     SHOPEE_EXACT_MATCH_NOTE,
+    TRIP_MATCH_WINDOW_DAYS,
     is_grab_description,
     is_shopee_description,
+    is_trip_description,
     merge_grab_web_history,
+    normalize_trip_booking_no,
+    parse_trip_date,
     prepare_insurance,
     tag_key,
 )
@@ -372,6 +376,391 @@ def validate_shopee(manual_data, output, final_by_id, errors):
         errors.append("Shopee quality summary disagrees with published orders")
 
 
+TRIP_DETAIL_FIELDS = (
+    "bookingNo", "status", "productType", "bookingDate", "productName", "travelTime",
+    "traveller", "currency", "amount", "sourceFile",
+)
+
+
+def validate_wallet_travel(manual_data, output, final_by_id, errors):
+    """Published wallet charges must come from the manual WeChat file with the
+    same CNY amount, date and direction, an SGD figure equal to that amount at
+    the stated rate, and ids that never collide with a transaction."""
+    published = output.get("walletTravel")
+    if not manual_data and published is None:
+        return
+    if not isinstance(published, dict) or not isinstance(published.get("charges"), list):
+        errors.append("walletTravel must be an object with a charges list")
+        return
+    payments = manual_data.get("payments") if isinstance(manual_data, dict) else None
+    if not isinstance(payments, list):
+        if published["charges"]:
+            errors.append("walletTravel is published without a manual source")
+        return
+    by_id = {p["id"]: p for p in payments if isinstance(p, dict) and p.get("id")}
+    seen = set()
+    for index, row in enumerate(published["charges"], 1):
+        label = "wallet charge %d" % index
+        if not isinstance(row, dict) or not row.get("id"):
+            errors.append("%s is malformed" % label)
+            continue
+        if row["id"] in seen:
+            errors.append("%s repeats id %s" % (label, row["id"]))
+        seen.add(row["id"])
+        if row["id"] in final_by_id:
+            errors.append("%s collides with a transaction id" % label)
+        source = by_id.get(row["id"])
+        if source is None:
+            errors.append("%s (%s) is not in manual/wechat_payments.json" % (label, row["id"]))
+            continue
+        if row.get("date") != source.get("date") or not is_date_key(row.get("date")):
+            errors.append("%s date was changed in publishing" % label)
+        try:
+            if abs(float(row.get("amountCny")) - float(source.get("amountCny"))) > 0.005:
+                errors.append("%s CNY amount was changed in publishing" % label)
+            if abs(round(float(row.get("amountCny")) * float(row.get("rate")), 2) - float(row.get("amount"))) > 0.011:
+                errors.append("%s SGD estimate does not follow its rate" % label)
+        except (TypeError, ValueError):
+            errors.append("%s has an invalid amount or rate" % label)
+        expected_type = "debit" if source.get("direction") == "expense" else "refund"
+        if row.get("type") != expected_type:
+            errors.append("%s direction was changed in publishing" % label)
+        if row.get("estimated") is not True:
+            errors.append("%s must be marked as an estimate" % label)
+    for row in output.get("transactions", []):
+        wechat = row.get("wechat") if isinstance(row, dict) else None
+        if not wechat:
+            continue
+        source = by_id.get(wechat.get("id"))
+        if source is None:
+            errors.append("transaction %s carries a WeChat payment that is not in the manual file" % row.get("id"))
+            continue
+        foreign = str(row.get("foreign") or "")
+        try:
+            if not foreign.upper().startswith("CNY") or \
+                    abs(float(foreign[3:].replace(",", "").strip()) - float(source.get("amountCny"))) > 0.005:
+                errors.append("transaction %s WeChat evidence does not match its CNY amount" % row.get("id"))
+        except (TypeError, ValueError):
+            errors.append("transaction %s WeChat evidence has an unreadable amount" % row.get("id"))
+
+
+def validate_klook(manual_data, output, final_by_id, errors):
+    """Every Klook order on a published row must exist in the manual file,
+    match the row's amount and direction, and be used no more often than it
+    exists; expired orders link to nothing."""
+    source = manual_data.get("orders") if isinstance(manual_data, dict) else None
+    rows = list(output.get("transactions", [])) + list((output.get("partnerTravel") or {}).get("charges", []))
+    carriers = [row for row in rows if isinstance(row, dict) and row.get("klookOrder")]
+    quality = output.get("quality", {}).get("klook")
+    if not source and not carriers and quality is None:
+        return
+    if not isinstance(source, list):
+        errors.append("manual Klook orders must be a list")
+        return
+
+    def key(order):
+        try:
+            amount = int(round(float(order.get("amount")) * 100))
+        except (TypeError, ValueError):
+            amount = None
+        return (str(order.get("name") or "").strip(), amount,
+                str(order.get("activityDate") or "").strip(),
+                str(order.get("status") or "").strip().lower())
+
+    available = {}
+    for order in source:
+        if isinstance(order, dict):
+            available[key(order)] = available.get(key(order), 0) + 1
+    used = {}
+    for row in carriers:
+        tx_id = row.get("id")
+        orders = row.get("klookOrders") or [row["klookOrder"]]
+        if "KLOOK" not in str(row.get("description") or "").upper():
+            errors.append("transaction %s carries a Klook order but is not a Klook charge" % tx_id)
+        refund = row.get("type") == "refund"
+        total = 0
+        for order in orders:
+            item = key(order)
+            if available.get(item, 0) == 0:
+                errors.append("transaction %s carries a Klook order that is not in manual/klook_orders.json" % tx_id)
+                continue
+            if item[3] == "expired":
+                errors.append("transaction %s is linked to an expired Klook order" % tx_id)
+            if refund and item[3] != "canceled":
+                errors.append("transaction %s refund is linked to a Klook order that was not cancelled" % tx_id)
+            bucket = (item, "refund" if refund else "charge")
+            used[bucket] = used.get(bucket, 0) + 1
+            if used[bucket] > available[item]:
+                errors.append("Klook order %r is linked to more %ss than exist" % (item[0], bucket[1]))
+            total += item[1] or 0
+        try:
+            if int(round(float(row.get("amount")) * 100)) != total:
+                errors.append("transaction %s amount does not equal its Klook order total" % tx_id)
+        except (TypeError, ValueError):
+            errors.append("transaction %s has an invalid amount" % tx_id)
+    if isinstance(quality, dict) and quality.get("orders") != len(source):
+        errors.append("Klook quality summary disagrees with the manual orders")
+
+
+def validate_partner_travel(manual_data, output, final_by_id, errors):
+    """Copied partner charges must match their manual source and stay outside
+    the transactions list, so nothing of the other person's leaks into totals."""
+    published = output.get("partnerTravel")
+    if not manual_data and published is None:
+        return
+    if not isinstance(published, dict) or not isinstance(published.get("charges"), list):
+        errors.append("partnerTravel must be an object with a charges list")
+        return
+    source_charges = manual_data.get("charges") if isinstance(manual_data, dict) else None
+    if not isinstance(source_charges, list):
+        if published["charges"]:
+            errors.append("partnerTravel is published without a manual source")
+        return
+    if published.get("paidBy") != str(manual_data.get("paidBy") or "").strip():
+        errors.append("partnerTravel paidBy does not match the manual file")
+    by_source = {}
+    for row in source_charges:
+        if isinstance(row, dict) and row.get("id"):
+            by_source[row["id"]] = row
+    seen = set()
+    for index, row in enumerate(published["charges"], 1):
+        label = "partner charge %d" % index
+        if not isinstance(row, dict) or not row.get("id"):
+            errors.append("%s is malformed" % label)
+            continue
+        tx_id = row["id"]
+        if tx_id in seen:
+            errors.append("%s repeats id %s" % (label, tx_id))
+        seen.add(tx_id)
+        if tx_id in final_by_id:
+            errors.append("%s collides with a transaction id" % label)
+        source = by_source.get(tx_id)
+        if source is None:
+            errors.append("%s (%s) is not in manual/partner_travel.json" % (label, tx_id))
+            continue
+        for field in ("date", "month", "type", "category", "description"):
+            if row.get(field) != source.get(field):
+                errors.append("%s %s was changed in publishing" % (label, field))
+        try:
+            if round(float(source.get("amount")), 2) != row.get("amount"):
+                errors.append("%s amount was changed in publishing" % label)
+        except (TypeError, ValueError):
+            errors.append("%s has an invalid source amount" % label)
+        if not is_date_key(row.get("date")) or not is_month_key(row.get("month")):
+            errors.append("%s has an invalid date or month" % label)
+    if len(seen) != len(by_source):
+        errors.append("partnerTravel publishes %d charge(s) but the manual file holds %d"
+                      % (len(seen), len(by_source)))
+
+
+def validate_trip(manual_data, output, final_by_id, errors, reconciliation_data=None):
+    """Re-derive exact and reviewed Trip.com links from their private sources."""
+    source = manual_data.get("bookings", []) if isinstance(manual_data, dict) else None
+    summary = output.get("quality", {}).get("trip")
+    if not source and summary is None:
+        # No export on disk and a dashboard built before the surface existed.
+        return
+    if not isinstance(source, list):
+        errors.append("manual Trip.com bookings must be a list")
+        return
+    source_by_no = {}
+    for booking in source:
+        if not isinstance(booking, dict):
+            errors.append("manual Trip.com bookings must be objects")
+            return
+        booking_no = normalize_trip_booking_no(booking.get("bookingNo"))
+        if not booking_no or booking_no in source_by_no:
+            errors.append("manual Trip.com bookings contain a missing or duplicate booking number")
+            return
+        source_by_no[booking_no] = booking
+    if "tripBookings" in output:
+        errors.append("the full Trip.com export must not be published to the dashboard")
+
+    reconciliation_data = reconciliation_data or {"links": []}
+    expected_manual = {}
+    links = reconciliation_data.get("links", []) if isinstance(reconciliation_data, dict) else None
+    if not isinstance(links, list):
+        errors.append("manual Trip.com reconciliation must contain a links list")
+        links = []
+    for index, link in enumerate(links, 1):
+        if not isinstance(link, dict):
+            errors.append("Trip.com reconciliation %d must be an object" % index)
+            continue
+        transaction_ids = link.get("transactionIds")
+        booking_nos = link.get("bookingNos")
+        kind = link.get("kind")
+        note = link.get("note")
+        if (not isinstance(transaction_ids, list) or not transaction_ids
+                or not isinstance(booking_nos, list) or not booking_nos
+                or not isinstance(kind, str) or not kind
+                or not isinstance(note, str) or not note):
+            errors.append("Trip.com reconciliation %d is incomplete" % index)
+            continue
+        normalized_nos = [normalize_trip_booking_no(value) for value in booking_nos]
+        for transaction_id in transaction_ids:
+            if transaction_id in expected_manual:
+                errors.append("Trip.com reconciliation repeats transaction %s" % transaction_id)
+                continue
+            expected_manual[transaction_id] = {
+                "bookingNos": normalized_nos,
+                "kind": kind,
+                "note": note,
+            }
+
+    attached_auto = {}
+    attached_all = set()
+    matched_charge_ids = set()
+    matched_refund_ids = set()
+    matched_cancelled_charge_ids = set()
+    for tx_id, transaction in final_by_id.items():
+        detail = transaction.get("tripBooking")
+        plural = transaction.get("tripBookings")
+        if plural is not None:
+            if not isinstance(plural, list) or not plural:
+                errors.append("transaction %s has invalid Trip.com booking details" % tx_id)
+                details = []
+            else:
+                details = plural
+                if detail != details[0]:
+                    errors.append("transaction %s has inconsistent primary Trip.com booking" % tx_id)
+        else:
+            details = [detail] if detail is not None else []
+        marker = transaction.get("trip")
+        is_trip_row = is_trip_description(transaction.get("description", ""))
+        expected_marker = (
+            {"status": "booking-matched" if details else "unmatched"}
+            if is_trip_row else None
+        )
+        if marker != expected_marker:
+            errors.append("transaction %s has an inconsistent Trip.com marker" % tx_id)
+        if not details:
+            if transaction.get("displayNameSource") == "trip-booking":
+                errors.append("transaction %s claims a Trip.com name without a booking" % tx_id)
+            continue
+        if not is_trip_row or transaction.get("type") not in ("debit", "refund"):
+            errors.append("transaction %s is not a Trip.com charge but carries a booking" % tx_id)
+
+        manual_link = expected_manual.get(tx_id)
+        published_nos = []
+        originals = []
+        for detail in details:
+            if not isinstance(detail, dict):
+                errors.append("transaction %s has invalid Trip.com booking details" % tx_id)
+                continue
+            booking_no = normalize_trip_booking_no(detail.get("bookingNo"))
+            published_nos.append(booking_no)
+            original = source_by_no.get(booking_no)
+            if not original:
+                errors.append("transaction %s names unknown Trip.com booking %r" % (tx_id, booking_no))
+                continue
+            originals.append(original)
+            attached_all.add(booking_no)
+            if detail.get("currency") != "SGD":
+                errors.append("transaction %s is linked to a non-SGD Trip.com booking" % tx_id)
+            for field in TRIP_DETAIL_FIELDS:
+                published = detail.get(field)
+                expected = original.get(field)
+                if field == "bookingNo":
+                    expected = normalize_trip_booking_no(expected)
+                elif field == "currency":
+                    expected = str(expected or "").strip().upper()
+                elif field == "amount":
+                    try:
+                        expected = None if expected is None else round(float(expected), 2)
+                    except (TypeError, ValueError):
+                        expected = object()
+                else:
+                    expected = str(expected or "").strip()
+                if published != expected:
+                    errors.append(
+                        "Trip.com booking %s changed %s during build" % (booking_no, field)
+                    )
+
+        if manual_link:
+            if published_nos != manual_link["bookingNos"]:
+                errors.append("transaction %s disagrees with the reviewed Trip.com link" % tx_id)
+            expected_match = {"kind": manual_link["kind"], "note": manual_link["note"]}
+            if transaction.get("tripMatch") != expected_match:
+                errors.append("transaction %s changed its Trip.com reconciliation evidence" % tx_id)
+        else:
+            if len(details) != 1 or transaction.get("type") != "debit":
+                errors.append(
+                    "transaction %s is not a Trip.com charge with an automatic exact match "
+                    "and has no reviewed reconciliation" % tx_id
+                )
+            if published_nos:
+                booking_no = published_nos[0]
+                if booking_no in attached_auto:
+                    errors.append(
+                        "Trip.com booking %s is attached to more than one automatic charge"
+                        % booking_no
+                    )
+                attached_auto[booking_no] = tx_id
+            exact_detail = details[0] if len(details) == 1 and isinstance(details[0], dict) else {}
+            try:
+                same_amount = (
+                    int(round(float(exact_detail.get("amount")) * 100))
+                    == int(round(float(transaction.get("amount")) * 100))
+                )
+            except (TypeError, ValueError):
+                same_amount = False
+            if not same_amount:
+                errors.append("transaction %s Trip.com link disagrees on amount" % tx_id)
+            booking_day = parse_trip_date(exact_detail.get("bookingDate"))
+            row_day = parse_trip_date(transaction.get("date"))
+            if (booking_day is None or row_day is None
+                    or abs((row_day - booking_day).days) > TRIP_MATCH_WINDOW_DAYS):
+                errors.append("transaction %s Trip.com link is outside the match window" % tx_id)
+            if (transaction.get("tripMatch") is not None
+                    and transaction.get("tripMatch", {}).get("kind") != "exact"):
+                errors.append("transaction %s changed its automatic Trip.com evidence" % tx_id)
+
+        product_names = list(dict.fromkeys(
+            str(original.get("productName") or "").strip() for original in originals
+        ))
+        expected_name = (
+            product_names[0] if len(product_names) == 1
+            else "%d Trip.com bookings" % len(details)
+        )
+        if (transaction.get("displayNameSource") == "trip-booking"
+                and transaction.get("displayName") != expected_name):
+            errors.append(
+                "transaction %s Trip.com display name is not the product name derived from its bookings"
+                % tx_id
+            )
+        if transaction.get("displayNameSource") not in ("trip-booking", "override"):
+            errors.append("transaction %s Trip.com link has no display-name source" % tx_id)
+
+        if transaction.get("type") == "refund":
+            matched_refund_ids.add(tx_id)
+        else:
+            matched_charge_ids.add(tx_id)
+            if any(
+                    str(original.get("status") or "").strip().lower() == "cancelled"
+                    for original in originals):
+                matched_cancelled_charge_ids.add(tx_id)
+
+    missing_reviewed = set(expected_manual) - set(final_by_id)
+    if missing_reviewed:
+        errors.append("reviewed Trip.com links name transactions missing from the dashboard")
+    if not isinstance(summary, dict):
+        errors.append("Trip.com quality summary is missing")
+        return
+    if (summary.get("bookings") != len(source_by_no)
+            or summary.get("matched") != len(matched_charge_ids)):
+        errors.append("Trip.com quality summary disagrees with published links")
+    optional_counts = {
+        "matchedRefunds": len(matched_refund_ids),
+        "matchedTransactions": len(matched_charge_ids | matched_refund_ids),
+        "matchedBookings": len(attached_all),
+    }
+    for key, expected in optional_counts.items():
+        if key in summary and summary.get(key) != expected:
+            errors.append("Trip.com quality summary miscounts %s" % key)
+    if summary.get("matchedCancelled") != len(matched_cancelled_charge_ids):
+        errors.append("Trip.com quality summary miscounts cancelled links")
+
+
 def validate_grab(manual_data, history_stats, output, final_by_id, errors):
     source = manual_data.get("receipts", []) if isinstance(manual_data, dict) else []
     has_surface = "grabReceipts" in output or "grab" in output.get("quality", {})
@@ -523,6 +912,12 @@ def main():
         os.path.join(MANUAL_DIR, "salary.json"), {"steps": [], "years": []})
     game_sales_data = load_optional(
         os.path.join(MANUAL_DIR, "game_sales.json"), {"sales": []})
+    partner_travel_data = load_optional(
+        os.path.join(MANUAL_DIR, "partner_travel.json"), {})
+    klook_data = load_optional(
+        os.path.join(MANUAL_DIR, "klook_orders.json"), {"orders": []})
+    wechat_data = load_optional(
+        os.path.join(MANUAL_DIR, "wechat_payments.json"), {})
     owner_rules_data = load_optional(
         os.path.join(MANUAL_DIR, "owner_rules.json"), {"rules": {}, "confirmed": []})
     manual_settlements = load_optional(
@@ -535,6 +930,10 @@ def main():
         os.path.join(MANUAL_DIR, "foodpanda_orders.json"), {"orders": []})
     shopee_data = load_optional(
         os.path.join(MANUAL_DIR, "shopee_orders.json"), {"orders": []})
+    trip_data = load_optional(
+        os.path.join(MANUAL_DIR, "trip_bookings.json"), {"bookings": []})
+    trip_reconciliation_data = load_optional(
+        os.path.join(MANUAL_DIR, "trip_booking_reconciliation.json"), {"links": []})
     grab_data = load_optional(
         os.path.join(MANUAL_DIR, "grab_receipts.json"), {"receipts": []})
     grab_web_data = load_optional(
@@ -645,7 +1044,13 @@ def main():
     final_by_id = {row["id"]: row for row in output.get("transactions", []) if row.get("id")}
     validate_foodpanda(foodpanda_data, output, final_by_id, errors)
     validate_shopee(shopee_data, output, final_by_id, errors)
+    validate_trip(
+        trip_data, output, final_by_id, errors, trip_reconciliation_data
+    )
     validate_grab(grab_data, grab_history_stats, output, final_by_id, errors)
+    validate_partner_travel(partner_travel_data, output, final_by_id, errors)
+    validate_klook(klook_data, output, final_by_id, errors)
+    validate_wallet_travel(wechat_data, output, final_by_id, errors)
     if (os.path.exists(insurance_path) or "insurance" in output) and \
             output.get("insurance") != prepare_insurance(insurance_data):
         errors.append("published insurance data does not match the manual source")
@@ -935,6 +1340,8 @@ def main():
             errors.append("category override %s was not applied" % tx_id)
         if "displayName" in override and built.get("displayName") != override["displayName"]:
             errors.append("display name override %s was not applied" % tx_id)
+        if "destination" in override and built.get("destination") != override["destination"]:
+            errors.append("destination override %s was not applied" % tx_id)
 
     for tx_id, remark in remark_data.get("remarksById", {}).items():
         built = final_by_id.get(tx_id)

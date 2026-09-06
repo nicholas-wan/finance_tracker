@@ -34,6 +34,478 @@ window.Insights = (function () {
   // from complete calendar years, and only when the month beat that year's
   // ordinary-pay baseline by at least 25% in both of the latest two, so a
   // one-off lump sum is never annualised or spread across the remaining months.
+  var TRAVEL_COUNTRY_RULES = [
+    ["Hong Kong", /HONG KONG|\bHKG\b/i],
+    ["Taiwan", /TAIWAN|TAIPEI|\bTPE\b|\bKHH\b/i],
+    ["Macau", /MACAU|MACAO|\bMFM\b/i],
+    ["China", /\b(?:PVG|CAN|TFU)\b|SHANGHAI|BEIJING|SHENZHEN|GUANGZHOU|CHENGDU|ZHANGJIAJIE|HAIKOU|HANGZHOU|WUXI|ZHONGSHAN|CHIMELONG|TOY STORY HOTEL|JIUZHAIGOU|HUANGLONG|SICHUAN|TIANMEN/i],
+    ["South Korea", /YEOUIDO|SEOUL|SOUTH KOREA|\b(?:ICN|GMP)\b/i],
+    ["Japan", /SARDONYX|\bUENO\b|MIYAJIMA|NARITA|SUNSHINE AQUARIUM|TOKYO|JAPAN|KYOTO|NAGOYA|OSAKA|HIROSHIMA|SHINKANSEN|NOZOMI|KAIYUKAN|SUICA|SKYLINER|MIRAIKAN|\b(?:NRT|HND|KIX|HIJ)\b/i],
+    ["Canada", /NIAGARA|TORONTO|ONTARIO|RIPLEYSCANA|CANADA|\bYYZ\b/i],
+    ["United States", /BOSTON|BUFFALO|WILMINGTON|UNITED STATES|\bUSA\b|\b(?:BOS|BUF)\b/i],
+    ["Australia", /AUSTRALIANETA|SYDNEY|TARONGA|AUSTRALIA|\bSYD\b/i],
+    ["France", /TOUR EIFFEL|TROCADERO|PARIS|FRANCE|\bCDG\b/i],
+    ["Germany", /BERLIN|GERMANY|\bBER\b/i],
+    ["United Kingdom", /UKVI|UNITED KINGDOM|WWW\.GOV\.UK|\bLONDON\b|\bLHR\b/i],
+    ["Malaysia", /MALAYSIA|KUALA LUMPUR|JOHOR|PETALING JAYA|PENANG|\b(?:KUL|JHB|PEN)\b/i],
+    ["Thailand", /THAILAND|BANGKOK|PHUKET|CHIANG MAI|\b(?:BKK|DMK|HKT)\b/i],
+    ["Vietnam", /VIETNAM|HANOI|HO CHI MINH|SAIGON|DA NANG|\b(?:SGN|HAN|DAD)\b/i],
+    ["Indonesia", /INDONESIA|\bBALI\b|JAKARTA|DENPASAR|\b(?:DPS|CGK)\b/i],
+    ["Singapore", /RITZ CARLTON MILLENIA|MARINA BAY SANDS|SENTOSA/i]
+  ];
+  // A foreign-currency charge names its country almost as well as an
+  // airport code does, for currencies used by one country. USD and EUR are
+  // left out because they are not.
+  var CURRENCY_COUNTRIES = {
+    CNY: "China", HKD: "Hong Kong", MOP: "Macau", TWD: "Taiwan", JPY: "Japan",
+    KRW: "South Korea", MYR: "Malaysia", THB: "Thailand", VND: "Vietnam",
+    IDR: "Indonesia", PHP: "Philippines", AUD: "Australia", NZD: "New Zealand",
+    GBP: "United Kingdom", CAD: "Canada", CHF: "Switzerland", INR: "India"
+  };
+  // The city inside a destination, from the same evidence, for a trip label
+  // that reads "Chengdu, China" rather than a bare country.
+  var TRAVEL_CITY_RULES = [
+    ["Hong Kong", /HONG KONG|\bHKG\b/i],
+    ["Macau", /MACAU|MACAO|\bMFM\b/i],
+    ["Taipei", /TAIPEI|\bTPE\b/i],
+    ["Kaohsiung", /KAOHSIUNG|\bKHH\b/i],
+    ["Shanghai", /SHANGHAI|\bPVG\b|\bSHA\b|TOY STORY HOTEL/i],
+    ["Beijing", /BEIJING|\b(?:PEK|PKX)\b/i],
+    ["Shenzhen", /SHENZHEN|\bSZX\b/i],
+    ["Guangzhou", /GUANGZHOU|\bCAN\b|CHIMELONG/i],
+    ["Chengdu", /CHENGDU|\bTFU\b|\bCTU\b/i],
+    ["Zhangjiajie", /ZHANGJIAJIE/i],
+    ["Haikou", /HAIKOU/i],
+    ["Hangzhou", /HANGZHOU/i],
+    ["Wuxi", /WUXI/i],
+    ["Zhongshan", /ZHONGSHAN/i],
+    ["Seoul", /SEOUL|YEOUIDO|\b(?:ICN|GMP)\b/i],
+    ["Tokyo", /TOKYO|NARITA|\bUENO\b|SUNSHINE AQUARIUM|\b(?:NRT|HND)\b/i],
+    ["Osaka", /OSAKA|\bKIX\b|KAIYUKAN/i],
+    ["Kyoto", /KYOTO/i],
+    ["Nagoya", /NAGOYA/i],
+    ["Hiroshima", /HIROSHIMA|MIYAJIMA|\bHIJ\b|SARDONYX/i],
+    ["Toronto", /TORONTO|ONTARIO|\bYYZ\b/i],
+    ["Niagara Falls", /NIAGARA|RIPLEYSCANA/i],
+    ["Boston", /BOSTON|\bBOS\b/i],
+    ["Buffalo", /BUFFALO|\bBUF\b/i],
+    ["Wilmington", /WILMINGTON/i],
+    ["Sydney", /SYDNEY|TARONGA|\bSYD\b/i],
+    ["Paris", /PARIS|TOUR EIFFEL|TROCADERO|\bCDG\b/i],
+    ["Berlin", /BERLIN|\bBER\b/i],
+    ["London", /\bLONDON\b|\bLHR\b/i],
+    ["Kuala Lumpur", /KUALA LUMPUR|\bKUL\b/i],
+    ["Johor Bahru", /JOHOR|\bJB\b/i],
+    ["Petaling Jaya", /PETALING JAYA/i],
+    ["Penang", /PENANG|\bPEN\b/i],
+    ["Bangkok", /BANGKOK|\b(?:BKK|DMK)\b/i],
+    ["Bali", /\bBALI\b|DENPASAR|\bDPS\b/i]
+  ];
+  function klookOrdersOf(transaction) {
+    if (Array.isArray(transaction.klookOrders) && transaction.klookOrders.length) {
+      return transaction.klookOrders;
+    }
+    return transaction.klookOrder ? [transaction.klookOrder] : [];
+  }
+  function travelEvidence(transaction) {
+    var bookings = Array.isArray(transaction.tripBookings) && transaction.tripBookings.length
+      ? transaction.tripBookings : transaction.tripBooking ? [transaction.tripBooking] : [];
+    return bookings.map(function (booking) {
+      return [booking.productName, booking.productType].filter(Boolean).join(" ");
+    }).concat(klookOrdersOf(transaction).map(function (order) {
+      return [order.name, order.package].filter(Boolean).join(" ");
+    })).concat([
+      transaction.displayName,
+      transaction.description
+    ]).filter(Boolean).join(" ");
+  }
+  function currencyCountry(transaction) {
+    var code = String(transaction.foreign || "").trim().slice(0, 3).toUpperCase();
+    return CURRENCY_COUNTRIES[code] || "";
+  }
+  // Destination evidence, strongest first: a saved destination, then the
+  // booking or descriptor text, then a single-country currency.
+  function travelCountry(transaction) {
+    if (!transaction || transaction.category !== "Travel") return "";
+    if (transaction.destination) return transaction.destination;
+    var text = travelEvidence(transaction);
+    for (var i = 0; i < TRAVEL_COUNTRY_RULES.length; i += 1) {
+      if (TRAVEL_COUNTRY_RULES[i][1].test(text)) return TRAVEL_COUNTRY_RULES[i][0];
+    }
+    return currencyCountry(transaction) || "Unknown";
+  }
+  // Every destination the rules or currencies can name, for the drawer's
+  // destination picker.
+  function destinations() {
+    var names = {};
+    TRAVEL_COUNTRY_RULES.forEach(function (rule) { names[rule[0]] = true; });
+    Object.keys(CURRENCY_COUNTRIES).forEach(function (code) { names[CURRENCY_COUNTRIES[code]] = true; });
+    return Object.keys(names).sort();
+  }
+  function travelCity(transaction) {
+    if (!transaction || transaction.category !== "Travel") return "";
+    var text = travelEvidence(transaction);
+    for (var i = 0; i < TRAVEL_CITY_RULES.length; i += 1) {
+      if (TRAVEL_CITY_RULES[i][1].test(text)) return TRAVEL_CITY_RULES[i][0];
+    }
+    return "";
+  }
+  // For a travel charge with no destination of its own: the known destination
+  // of the nearest other travel charge within a week, since a platform
+  // charge usually sits among the trip it paid for.
+  function suggestedDestination(transaction, transactions) {
+    if (!transaction || !transaction.date) return null;
+    var best = null;
+    (transactions || []).forEach(function (other) {
+      if (!other || other.id === transaction.id || other.category !== "Travel" || !other.date) return;
+      var country = travelCountry(other);
+      if (!country || country === "Unknown") return;
+      var gap = Math.abs(dayNumber(other.date) - dayNumber(transaction.date));
+      if (gap > 7) return;
+      if (!best || gap < best.gap || (gap === best.gap && Math.abs(other.amount) > Math.abs(best.amount))) {
+        best = { country: country, gap: gap, date: other.date, amount: other.amount,
+                 description: other.displayName || other.description };
+      }
+    });
+    return best;
+  }
+
+  // ---------- Trips ----------
+  //
+  // A trip is the cluster of travel charges that belong to one journey. The
+  // statement date is a poor anchor for that: flights are charged months
+  // ahead and hotels weeks ahead. Trip.com bookings carry the travel date, so
+  // a matched charge is anchored there and only bookingless rows fall back to
+  // the statement date. Rows whose anchors sit within TRIP_GAP_DAYS of each
+  // other form one trip; a known-country charge within TRIP_ATTACH_DAYS of a
+  // trip to the same place (a visa or flight bought up to a quarter ahead)
+  // joins it, and any
+  // foreign-currency charge dated inside a trip's window counts as spend on
+  // the ground even when it was categorised as food or transport.
+  var TRIP_GAP_DAYS = 5;
+  var TRIP_ATTACH_DAYS = 90;
+  // A charge with no destination evidence at all (a Klook or KKday ticket,
+  // a platform's Singapore billing entity) is guessed onto the nearest
+  // booking-anchored trip it precedes by up to this many days, or falls
+  // inside. Guessed rows are marked so the dashboard can say so, and a
+  // saved destination always outranks the guess.
+  var TRIP_GUESS_DAYS = 90;
+  var TRIP_GUESS_AFTER_DAYS = 3;
+  var MONTH_INDEX = {
+    january: 0, february: 1, march: 2, april: 3, may: 4, june: 5, july: 6,
+    august: 7, september: 8, october: 9, november: 10, december: 11
+  };
+  var TRAVEL_DATE = /^(?:\d{1,2}:\d{2},?\s*)?([A-Za-z]+)\s+(\d{1,2})(?:,?\s*(\d{4}))?$/;
+
+  function isoDate(year, month, day) {
+    var date = new Date(Date.UTC(year, month, day));
+    if (date.getUTCMonth() !== month || date.getUTCDate() !== day) return null;
+    return date.toISOString().slice(0, 10);
+  }
+  function dayNumber(iso) {
+    return Math.round(Date.UTC(+iso.slice(0, 4), +iso.slice(5, 7) - 1, +iso.slice(8, 10)) / 86400000);
+  }
+  function daysApart(a, b) { return Math.abs(dayNumber(a) - dayNumber(b)); }
+
+  // Trip.com exports travel dates as display text, and drops the year when
+  // the travel falls in the booking year. "18:45, October 17, 2023" and
+  // "May 10" both resolve; a date that would land before the booking is
+  // taken to be in the following year.
+  function parseTravelDate(text, bookingDate) {
+    var match = TRAVEL_DATE.exec(String(text || "").trim());
+    if (!match) return null;
+    var month = MONTH_INDEX[match[1].toLowerCase()];
+    if (month === undefined) return null;
+    var day = parseInt(match[2], 10);
+    if (match[3]) return isoDate(parseInt(match[3], 10), month, day);
+    var booked = parseTravelDate(bookingDate, null);
+    if (!booked) return null;
+    var year = parseInt(booked.slice(0, 4), 10);
+    var candidate = isoDate(year, month, day);
+    if (!candidate) return null;
+    return candidate < booked ? isoDate(year + 1, month, day) : candidate;
+  }
+
+  // The first and last travel date on a booking: one date for a hotel or a
+  // ticket, two for a return flight.
+  function travelWindow(booking) {
+    if (!booking) return null;
+    var dates = String(booking.travelTime || "").split(/\n+/).map(function (part) {
+      return parseTravelDate(part, booking.bookingDate);
+    }).filter(Boolean).sort();
+    if (!dates.length) return null;
+    return { start: dates[0], end: dates[dates.length - 1] };
+  }
+
+  function bookingsOf(transaction) {
+    if (Array.isArray(transaction.tripBookings) && transaction.tripBookings.length) {
+      return transaction.tripBookings;
+    }
+    return transaction.tripBooking ? [transaction.tripBooking] : [];
+  }
+
+  function tripSplitBucket(transaction) {
+    var types = bookingsOf(transaction).map(function (booking) {
+      return String(booking.productType || "");
+    });
+    if (types.indexOf("Flights") !== -1) return "Flights";
+    if (types.indexOf("Hotels") !== -1) return "Hotels";
+    if (types.length || klookOrdersOf(transaction).length) return "Tickets & transfers";
+    return "On the ground";
+  }
+  // A Klook order names its activity day, which anchors the charge to the
+  // trip the way a Trip.com travel date does.
+  function klookWindow(order) {
+    return order && order.activityDate ? { start: order.activityDate, end: order.activityDate } : null;
+  }
+
+  // A "confirmed" charge is money that actually left: a debit that no
+  // matching refund reversed. Refund rows and reversed charges still belong
+  // to a trip (their amounts net to zero inside it) but they are not counted
+  // as charges, and a cancelled booking is not counted as a booking.
+  function reversedIds(transactions) {
+    var grouping = window.FinanceGrouping;
+    if (!grouping || typeof grouping.reversedPairs !== "function") return {};
+    return grouping.reversedPairs(transactions || []).hidden || {};
+  }
+  function isCancelledBooking(booking) {
+    return String(booking && booking.status || "").toLowerCase() === "cancelled";
+  }
+  function isConfirmedCharge(transaction, hidden) {
+    return transaction.type === "debit" && !hidden[transaction.id];
+  }
+  function hasConfirmedBooking(transaction) {
+    return bookingsOf(transaction).some(function (booking) { return !isCancelledBooking(booking); }) ||
+      klookOrdersOf(transaction).some(function (order) {
+        return order.status === "confirmed" || order.status === "completed";
+      });
+  }
+  function confirmedTravelCharges(transactions) {
+    var hidden = reversedIds(transactions);
+    return (transactions || []).filter(function (transaction) {
+      return transaction.category === "Travel" && !transaction.paidBy &&
+        isConfirmedCharge(transaction, hidden);
+    });
+  }
+
+  function isForeign(transaction) {
+    var text = String(transaction.foreign || "").trim();
+    return Boolean(text) && text.slice(0, 3).toUpperCase() !== "SGD";
+  }
+
+  function buildTrips(transactions) {
+    var hidden = reversedIds(transactions);
+    var anchored = [];
+    var foreignOnly = [];
+    (transactions || []).forEach(function (transaction) {
+      if (!transaction || !transaction.date) return;
+      // A wallet payment (transaction.via) carries no booking and no
+      // descriptor worth reading, so it joins a trip only when its date
+      // falls inside the window, like everyday spending abroad; it never
+      // seeds a trip and is never guessed onto one.
+      if (transaction.category === "Travel" && !transaction.via) {
+        var windows = bookingsOf(transaction).map(travelWindow)
+          .concat(klookOrdersOf(transaction).map(klookWindow)).filter(Boolean);
+        var start = transaction.date, end = transaction.date;
+        if (windows.length) {
+          start = windows.map(function (w) { return w.start; }).sort()[0];
+          end = windows.map(function (w) { return w.end; }).sort().reverse()[0];
+        }
+        anchored.push({
+          transaction: transaction, start: start, end: end,
+          booked: windows.length > 0, country: travelCountry(transaction)
+        });
+      } else if (isForeign(transaction)) {
+        foreignOnly.push(transaction);
+      }
+    });
+    anchored.sort(function (a, b) {
+      return a.start.localeCompare(b.start) || a.transaction.date.localeCompare(b.transaction.date);
+    });
+
+    var clusters = [];
+    anchored.forEach(function (item) {
+      var last = clusters[clusters.length - 1];
+      // Items arrive sorted by start, so a row belongs to the open trip when
+      // it starts before that trip's last day plus the gap.
+      if (last && dayNumber(item.start) - dayNumber(last.end) <= TRIP_GAP_DAYS) {
+        last.items.push(item);
+        if (item.end > last.end) last.end = item.end;
+      } else {
+        clusters.push({ start: item.start, end: item.end, items: [item] });
+      }
+    });
+
+    // Charges with no booking but a known destination join the nearest
+    // booking-anchored trip to the same place: visas, tickets bought early,
+    // a hotel paid on another platform.
+    function knownCountry(cluster) {
+      var totals = {};
+      cluster.items.forEach(function (item) {
+        if (item.country && item.country !== "Unknown") {
+          totals[item.country] = (totals[item.country] || 0) + Math.abs(item.transaction.amount);
+        }
+      });
+      var best = "";
+      Object.keys(totals).forEach(function (country) {
+        if (!best || totals[country] > totals[best]) best = country;
+      });
+      return best;
+    }
+    var merged = [];
+    clusters.forEach(function (cluster) {
+      cluster.primary = knownCountry(cluster);
+      cluster.anchoredBy = cluster.items.some(function (item) { return item.booked; });
+    });
+    clusters.forEach(function (cluster, index) {
+      if (!cluster.anchoredBy && cluster.primary) {
+        var target = null, targetGap = Infinity;
+        clusters.forEach(function (other, otherIndex) {
+          if (otherIndex === index || other.merged || !other.anchoredBy) return;
+          if (other.primary !== cluster.primary) return;
+          var gap = Math.min(daysApart(cluster.start, other.end), daysApart(other.start, cluster.end));
+          if (gap <= TRIP_ATTACH_DAYS && gap < targetGap) { target = other; targetGap = gap; }
+        });
+        if (target) {
+          target.items = target.items.concat(cluster.items);
+          cluster.merged = true;
+          return;
+        }
+      }
+      merged.push(cluster);
+    });
+
+    // The smart guess: a cluster with no destination evidence joins the
+    // nearest anchored trip whose window it precedes or overlaps.
+    var kept = [];
+    merged.forEach(function (cluster) {
+      if (!cluster.primary) {
+        var target = null, targetGap = Infinity;
+        var from = dayNumber(cluster.start), to = dayNumber(cluster.end);
+        merged.forEach(function (other) {
+          if (other === cluster || !other.anchoredBy || !other.primary) return;
+          var start = dayNumber(other.start), end = dayNumber(other.end);
+          if (from > end + TRIP_GUESS_AFTER_DAYS) return;
+          var gap = start > to ? start - to : 0;
+          if (gap > TRIP_GUESS_DAYS) return;
+          if (gap < targetGap) { target = other; targetGap = gap; }
+        });
+        if (target) {
+          cluster.items.forEach(function (item) { item.guessed = true; });
+          target.items = target.items.concat(cluster.items);
+          return;
+        }
+      }
+      kept.push(cluster);
+    });
+    merged = kept;
+
+    var trips = merged.map(function (cluster) {
+      var ids = {};
+      var rows = [];
+      var guessedIds = [];
+      cluster.items.forEach(function (item) {
+        if (!ids[item.transaction.id]) {
+          ids[item.transaction.id] = true;
+          rows.push(item.transaction);
+          if (item.guessed) guessedIds.push(item.transaction.id);
+        }
+      });
+      // The trip's dates come from its bookings when it has any, so a visa or
+      // a ticket bought weeks ahead joins the trip without stretching it.
+      var spanItems = cluster.anchoredBy
+        ? cluster.items.filter(function (item) { return item.booked; })
+        : cluster.items;
+      var start = spanItems.map(function (item) { return item.start; }).sort()[0];
+      var end = spanItems.map(function (item) { return item.end; }).sort().reverse()[0];
+      // Foreign-currency spend dated inside the window is part of the trip.
+      foreignOnly.forEach(function (transaction) {
+        if (transaction.date >= start && transaction.date <= end && !ids[transaction.id]) {
+          ids[transaction.id] = true;
+          rows.push(transaction);
+        }
+      });
+      var countries = {};
+      var cities = {};
+      var split = { "Flights": 0, "Hotels": 0, "Tickets & transfers": 0, "On the ground": 0 };
+      var total = 0;
+      // Rows another person paid (transaction.paidBy) belong to the trip and
+      // give destination evidence, but their money is kept apart: the total,
+      // the split and the per-day figure stay this tracker's own.
+      var partnerTotal = 0, partnerCount = 0, paidBy = "";
+      // One entry per other payer (a partner's card, a wallet card), each
+      // with its own total and count, and whether its figures are estimates.
+      var payers = {};
+      rows.forEach(function (transaction) {
+        var amount = signed(transaction);
+        var country = transaction.category === "Travel" ? travelCountry(transaction) : "";
+        if (country) countries[country] = (countries[country] || 0) + Math.abs(amount);
+        var city = travelCity(transaction);
+        if (city) cities[city] = (cities[city] || 0) + Math.abs(amount);
+        if (transaction.paidBy) {
+          partnerTotal += amount;
+          var confirmed = isConfirmedCharge(transaction, hidden);
+          if (confirmed) partnerCount += 1;
+          paidBy = paidBy || transaction.paidBy;
+          var entry = payers[transaction.paidBy] ||
+            (payers[transaction.paidBy] = { total: 0, count: 0, estimated: false, via: false });
+          entry.total = Math.round((entry.total + amount) * 100) / 100;
+          if (confirmed) entry.count += 1;
+          if (transaction.estimated) entry.estimated = true;
+          if (transaction.via) entry.via = true;
+          return;
+        }
+        total += amount;
+        split[tripSplitBucket(transaction)] += amount;
+      });
+      var known = Object.keys(countries).filter(function (c) { return c !== "Unknown"; })
+        .sort(function (a, b) { return countries[b] - countries[a]; });
+      var cityList = Object.keys(cities).sort(function (a, b) { return cities[b] - cities[a]; });
+      var days = daysApart(start, end) + 1;
+      return {
+        key: start + "|" + (known[0] || "Unknown"),
+        start: start,
+        end: end,
+        days: days,
+        countries: known,
+        primary: known[0] || "Unknown",
+        cities: cityList,
+        city: cityList[0] || "",
+        ids: rows.map(function (transaction) { return transaction.id; }),
+        rowCount: rows.filter(function (transaction) { return !transaction.paidBy; }).length,
+        count: rows.filter(function (transaction) {
+          return !transaction.paidBy && isConfirmedCharge(transaction, hidden);
+        }).length,
+        bookings: rows.filter(function (transaction) {
+          return !transaction.paidBy && isConfirmedCharge(transaction, hidden) && hasConfirmedBooking(transaction);
+        }).length,
+        partnerTotal: Math.round(partnerTotal * 100) / 100,
+        partnerCount: partnerCount,
+        paidBy: paidBy,
+        payers: payers,
+        guessedIds: guessedIds,
+        guessedCount: guessedIds.length,
+        total: Math.round(total * 100) / 100,
+        perDay: Math.round(total / days * 100) / 100,
+        split: split,
+        anchored: cluster.anchoredBy
+      };
+    });
+    trips.sort(function (a, b) { return b.start.localeCompare(a.start); });
+    return trips;
+  }
+
+  // Row id -> the country a guessed row was placed under, for every row the
+  // trip builder guessed. Rows with their own evidence are absent.
+  function guessedDestinations(transactions) {
+    var map = {};
+    buildTrips(transactions).forEach(function (trip) {
+      if (trip.primary === "Unknown") return;
+      trip.guessedIds.forEach(function (id) { map[id] = trip.primary; });
+    });
+    return map;
+  }
+
   function salaryStreamKey(description) {
     return String(description || "")
       .toUpperCase()
@@ -467,7 +939,11 @@ window.Insights = (function () {
       // a free-text drill-down found only a fraction of these rows. Carry the
       // matched ids and filter on them exactly.
       byMerchant[k].ids.push(t.id);
-      if (t.displayName) countName(byMerchant[k].displayNames, t.displayName);
+      // Only a name the user typed labels the habit; a per-charge booking
+      // name from a Trip.com match would title the whole merchant after one
+      // arbitrary hotel.
+      var userName = window.FinanceGrouping.userDisplayName(t);
+      if (userName) countName(byMerchant[k].displayNames, userName);
       else countName(byMerchant[k].statementNames,
         window.FinanceGrouping.merchantDisplayName(t.description));
     });
@@ -633,6 +1109,15 @@ window.Insights = (function () {
     summarize: summarize,
     money: money,
     monthLabel: label,
+    travelCountry: travelCountry,
+    travelCity: travelCity,
+    confirmedTravelCharges: confirmedTravelCharges,
+    destinations: destinations,
+    suggestedDestination: suggestedDestination,
+    parseTravelDate: parseTravelDate,
+    travelWindow: travelWindow,
+    buildTrips: buildTrips,
+    guessedDestinations: guessedDestinations,
     incomeForecast: incomeForecast
   };
 })();

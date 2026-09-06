@@ -253,6 +253,7 @@ class OwnerApiValidationTests(unittest.TestCase):
                 "category": "Shopping",
                 "displayName": "  Aftershock   laptop ",
                 "remark": "  Personal   computer ",
+                "destination": "  Hong   Kong ",
             },
             self.transactions,
         )
@@ -264,8 +265,29 @@ class OwnerApiValidationTests(unittest.TestCase):
                 "Shopping",
                 "Aftershock laptop",
                 "Personal computer",
+                "Hong Kong",
             ),
         )
+
+    def test_destination_is_optional_and_bounded(self):
+        result = serve.validate_transaction_detail_request(
+            {"id": "tx_abc123", "owner": "Nic", "category": "Travel",
+             "displayName": "", "remark": ""},
+            self.transactions,
+        )
+        self.assertEqual(result[-1], "")
+        with self.assertRaisesRegex(ValueError, "40"):
+            serve.validate_transaction_detail_request(
+                {"id": "tx_abc123", "owner": "Nic", "category": "Travel",
+                 "displayName": "", "remark": "", "destination": "x" * 41},
+                self.transactions,
+            )
+        with self.assertRaisesRegex(ValueError, "text"):
+            serve.validate_transaction_detail_request(
+                {"id": "tx_abc123", "owner": "Nic", "category": "Travel",
+                 "displayName": "", "remark": "", "destination": 7},
+                self.transactions,
+            )
 
     def test_rejects_unknown_transaction_detail_category(self):
         with self.assertRaisesRegex(ValueError, "supported"):
@@ -789,6 +811,67 @@ class SaveWritePathTests(unittest.TestCase):
             self.read("OVERRIDE_PATH")["overridesById"],
             {self.TX_ID: {"category": "Games"}},
         )
+
+    def test_destination_is_saved_as_an_override_and_audited(self):
+        self.write_transactions([self.row(category="Travel")])
+        self.stage_rebuild(category="Travel", destination="China")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Travel", "", "", "China")
+        self.assertEqual(
+            self.read("OVERRIDE_PATH")["overridesById"],
+            {self.TX_ID: {"destination": "China"}},
+        )
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        self.assertEqual([change["field"] for change in changes], ["Destination"])
+        self.assertEqual(changes[0]["after"], "China")
+
+    def test_destination_save_rolls_back_when_the_rebuild_drops_it(self):
+        self.write_transactions([self.row(category="Travel")])
+        self.stage_rebuild(category="Travel")
+        with self.assertRaisesRegex(RuntimeError, "did not apply"):
+            serve.save_transaction_detail(self.TX_ID, "Nic", "Travel", "", "", "China")
+        self.assert_untouched("OVERRIDE_PATH", "AUDIT_PATH")
+
+    def test_choosing_inferred_clears_a_saved_destination(self):
+        self.paths["OVERRIDE_PATH"].write_text(
+            json.dumps({"overridesById": {self.TX_ID: {"destination": "China"}}}, indent=1),
+            encoding="utf-8")
+        self.write_transactions([self.row(category="Travel", destination="China")])
+        self.stage_rebuild(category="Travel")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Travel", "", "", "")
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"], {})
+
+    def test_a_derived_trip_name_is_not_frozen_by_an_unrelated_save(self):
+        # The drawer posts "" for an untouched booking name; the rebuilt row
+        # then shows the derived name again, which is not a failed save.
+        trip = self.row(displayName="Example Hotel", displayNameSource="trip-booking",
+                        tripBooking={"bookingNo": "1234567890123"})
+        self.write_transactions([trip])
+        self.stage_rebuild(displayName="Example Hotel", displayNameSource="trip-booking",
+                           tripBooking={"bookingNo": "1234567890123"}, remark="Weekend away")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Shopping", "", "Weekend away")
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"], {})
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        self.assertEqual([change["field"] for change in changes], ["Remarks"])
+
+    def test_retyping_the_derived_trip_name_pins_nothing(self):
+        trip = self.row(displayName="Example Hotel", displayNameSource="trip-booking")
+        self.write_transactions([trip])
+        self.stage_rebuild(displayName="Example Hotel", displayNameSource="trip-booking")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Shopping", "Example Hotel", "")
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"], {})
+
+    def test_a_different_name_over_a_trip_booking_is_an_override(self):
+        trip = self.row(displayName="Example Hotel", displayNameSource="trip-booking")
+        self.write_transactions([trip])
+        self.stage_rebuild(displayName="Anniversary stay", displayNameSource="override")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Shopping", "Anniversary stay", "")
+        self.assertEqual(
+            self.read("OVERRIDE_PATH")["overridesById"],
+            {self.TX_ID: {"displayName": "Anniversary stay"}},
+        )
+        changes = self.read("AUDIT_PATH")["entries"][0]["changes"]
+        self.assertEqual(changes, [
+            {"field": "Display name", "before": "", "after": "Anniversary stay"}])
 
     def test_saving_the_winning_category_confirms_an_overlap(self):
         overlap = self.row(

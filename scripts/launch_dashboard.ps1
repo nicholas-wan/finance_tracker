@@ -1,10 +1,22 @@
 param(
     [switch]$NoOpen,
-    [ValidateRange(1, 65535)]
-    [int]$Port = 3402
+    [ValidateRange(0, 65535)]
+    [int]$Port = 0
 )
 
 $ErrorActionPreference = "Stop"
+# No -Port given: use the clone's own port from manual/branding.json, else 3402,
+# so two household clones on one machine keep to their own ports.
+if ($Port -eq 0) {
+    $Port = 3402
+    $brandingPath = Join-Path (Split-Path -Parent $PSScriptRoot) "manual\branding.json"
+    if (Test-Path $brandingPath) {
+        try {
+            $branding = Get-Content $brandingPath -Raw | ConvertFrom-Json
+            if ($branding.port -is [int] -or $branding.port -is [long]) { $Port = [int]$branding.port }
+        } catch { }
+    }
+}
 $dashboardUrl = "http://localhost:$Port/"
 $statusUrl = "http://127.0.0.1:$Port/api/status"
 $repoRoot = Split-Path -Parent $PSScriptRoot

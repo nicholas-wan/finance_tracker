@@ -51,11 +51,15 @@ FLOW_RULES = [
     ("Fixed deposit", ["FCFD", "FIXED DEPOSIT", "PRINCIPAL CREDIT"]),
     ("Credit card bill", ["UOB CARD", "CARD PAYMENT", "PAYMENT TO CARD", "IB CARD PAYMENT", "CREDIT CARD",
                           "HSBC CC", "MBK-HSBC"]),
-    ("Salary", ["SALARY", "PAYROLL", "GIRO SALARY"]),
+    # UOB account statements label Yx's main salary as "Inward CR - GIRO
+    # PAYNOW SALA ..."; keep this specific marker ahead of the generic GIRO
+    # transfer rule so ordinary GIRO credits are not reclassified.
+    ("Salary", ["SALARY", "PAYROLL", "GIRO SALARY", "INWARD CR - GIRO PAYNOW SALA"]),
     # IRAS prints as "INLAND REVENUE AUTHO..." over PayNow, which never says IRAS.
     ("Tax", ["IRAS", "INCOME TAX", "TAXS", "INLAND REVENUE"]),
     ("Interest", ["BONUS INTEREST", "INTEREST EARNED", "ONE BONUS INTEREST", "INTEREST CREDIT"]),
-    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", "GREAT EASTERN", " AIA ", "AVIVA", " INCOME "]),
+    ("Insurance", ["PRUDENTIAL", "TOKIO MARINE", " FWD ", "GREAT EASTERN", " AIA ", "AVIVA",
+                   "SINGAPORE LIFE", "SINGLIFE", " INCOME "]),
     # " HDB " keeps HDBANK, a Vietnamese bank, out of the mortgage bucket.
     ("Mortgage & home", [" HDB ", "MORTGAGE", "HOME LOAN", "TOWN COUNCIL", "SP SERVICES",
                          "SP DIGITAL"]),

@@ -50,6 +50,7 @@
   --cat-games: #d4537e;
   --cat-subscriptions: #d85a30;
   --cat-groceries: #639922;
+  --cat-pets: #9b6b4a;
   --cat-insurance: #378add;
   --cat-healthcare: #2e8b83;
   --cat-travel: #4d8ac7;
@@ -94,6 +95,7 @@
   --cat-games: #ed93b1;
   --cat-subscriptions: #f0997b;
   --cat-groceries: #97c459;
+  --cat-pets: #d49b72;
   --cat-insurance: #85b7eb;
   --cat-healthcare: #7cc8c1;
   --cat-travel: #6aa6df;
@@ -703,6 +705,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .cat-row .track { height: 14px; }
 .cat-row .fill { height: 14px; border-radius: 0 3px 3px 0; min-width: 2px; }
 .cat-row .amt { text-align: right; font-variant-numeric: tabular-nums; }
+.cat-row .amt small { display: block; color: var(--text-3); font-size: var(--fs-micro); font-weight: 400; }
+.cat-row .amt.muted { color: var(--text-3); font-size: var(--fs-caption); }
 #sales-list .cat-row { grid-template-columns: 152px minmax(0, 1fr) 62px 74px; }
 .sale-when { font-size: var(--fs-small); color: var(--text-3); text-align: right; white-space: nowrap; }
 
@@ -812,9 +816,126 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   gap: 14px; margin: 4px 0 18px; padding: 14px;
   border: 1px solid var(--border); border-radius: 12px; background: var(--surface-2);
 }
+.travel-year-country-breakdown { min-width: 0; }
+.travel-year-block { margin-top: 8px; }
+.travel-year-head {
+  display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  font-variant-numeric: tabular-nums;
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  color: var(--text-2); font-size: var(--fs-small);
+}
+.travel-year-block .transaction-breakdown-row {
+  min-height: 24px; padding: 2px 5px; margin: 0 -5px; border-radius: 6px;
+}
+.travel-year-block .transaction-breakdown-row.actionable:hover { background: var(--surface); }
+.travel-year-block .transaction-breakdown-row.active .transaction-breakdown-name {
+  color: var(--text); font-weight: 600;
+}
+.transaction-breakdown-fill.unknown { background: var(--text-3); }
+/* Destination flags: drawn inline in flags.js, sized to sit in running text. */
+.flag {
+  display: inline-block; width: 18px; height: 12px; margin-right: 6px; flex: 0 0 auto;
+  border-radius: 2.5px; overflow: hidden; vertical-align: -1px;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+}
+.flag svg { display: block; width: 100%; height: 100%; }
+.flag-sm { width: 15px; height: 10px; margin-right: 5px; }
+.travel-country-inline .flag { vertical-align: -1px; }
+.travel-country-inline.muted { color: var(--text-3); font-style: italic; }
+.travel-country-inline.guessed { color: var(--text-3); }
+.travel-unknown-hint { margin: 10px 0 0; color: var(--text-2); font-size: var(--fs-caption); line-height: 1.45; }
+.drawer-suggest {
+  align-self: flex-start; margin-top: 6px; padding: 4px 11px; border-radius: 999px;
+  border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent);
+  font: inherit; font-size: var(--fs-small); font-weight: 600; cursor: pointer;
+}
+.drawer-suggest:hover { filter: brightness(1.08); }
+/* What the other person paid: grouped by trip, read-only. */
+.trip-card .delta.partner-paid { color: var(--accent); }
+.partner-group { margin-top: 12px; }
+.other-source-heading { margin: 14px 0 2px; }
+.other-source-heading:first-child { margin-top: 0; }
+.partner-group:first-child { margin-top: 0; }
+.partner-group-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  padding: 6px 5px; margin: 0 -5px 2px; border-radius: 6px; border-bottom: 1px solid var(--border);
+  font-size: var(--fs-small); color: var(--text-2);
+}
+.partner-group-head strong { color: var(--text); font-weight: 650; }
+.partner-group-head strong .flag { vertical-align: -1px; }
+.partner-group-head.actionable:hover { background: var(--surface-2); }
+.partner-row {
+  display: grid; grid-template-columns: 74px minmax(0, 1fr) 90px; gap: 10px; align-items: baseline;
+  padding: 5px 0; font-size: var(--fs-caption); border-bottom: 1px solid color-mix(in srgb, var(--border) 60%, transparent);
+}
+.partner-row:last-child { border-bottom: 0; }
+.partner-row.reversed { opacity: 0.55; }
+.partner-date { color: var(--text-3); white-space: nowrap; }
+.partner-desc { min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.partner-desc small { display: block; color: var(--text-3); font-size: var(--fs-micro); white-space: normal; }
+.partner-amt { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+.partner-amt.credit { color: var(--green); }
+.travel-payer-pills { align-items: center; margin-bottom: 2px; }
+.pill-group-label { color: var(--text-3); font-size: var(--fs-small); margin-right: 2px; }
+.partner-owner {
+  display: inline-block; padding: 2px 9px; border-radius: 999px; font-size: var(--fs-micro);
+  font-weight: 650; letter-spacing: 0.02em; color: var(--accent); background: var(--accent-soft);
+}
+.ledger tr.partner-ledger-row td { background: color-mix(in srgb, var(--accent-soft) 28%, transparent); }
+.paid-by-inline { color: var(--accent); }
+.partner-summary-line { display: block; margin-top: 4px; color: var(--accent); }
+.drawer-note { margin: 10px 0 0; color: var(--text-3); font-size: var(--fs-caption); line-height: 1.45; }
+#travel-kpis.kpis-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.travel-country-pills { flex: 1 1 100%; }
+.pill .pill-count {
+  margin-left: 5px; padding: 0 5px; border-radius: 999px; font-size: var(--fs-micro);
+  font-weight: 600; color: var(--text-3); background: var(--surface-2);
+}
+.pill.active .pill-count { color: var(--accent); background: transparent; }
+.trips { margin: 4px 0 18px; }
+.trips-head {
+  display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 8px;
+}
+.trips-head .transaction-summary-label { margin-bottom: 0; }
+.trip-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 12px; }
+.trip-card.active { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.trip-year-head {
+  grid-column: 1 / -1; display: flex; align-items: baseline; justify-content: space-between;
+  gap: 10px; margin-top: 6px; padding-bottom: 4px; border-bottom: 1px solid var(--border);
+  color: var(--text-2); font-size: var(--fs-small); font-variant-numeric: tabular-nums;
+}
+.trip-year-head:first-child { margin-top: 0; }
+.trip-year-head strong { color: var(--text); font-weight: 650; }
+.trips-hint { margin: -6px 0 10px; }
+/* Panel titles keep to one line; the hint beside them wraps instead. */
+#pane-travel .panel-head h2 { flex: 0 0 auto; white-space: nowrap; }
+#pane-travel .panel-head .hint { text-align: right; }
+.trip-split { display: flex; flex-direction: column; gap: 3px; margin-top: 10px; }
+.trip-split .transaction-breakdown-row { grid-template-columns: 108px minmax(30px, 1fr) 60px; min-height: 18px; }
+.trips-more { margin: 10px 0 0; color: var(--text-3); font-size: var(--fs-caption); }
+.klook-awaiting {
+  margin-top: 12px; padding: 10px 12px; border: 1px dashed var(--border); border-radius: 10px;
+  font-size: var(--fs-caption); color: var(--text-2);
+}
+.klook-awaiting > strong { display: block; margin-bottom: 4px; color: var(--text); }
+.klook-awaiting-row {
+  display: grid; grid-template-columns: minmax(0, 1fr) auto auto; gap: 10px; padding: 3px 0;
+}
+.klook-awaiting-row > span:first-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.klook-awaiting-row .muted { color: var(--text-3); white-space: nowrap; }
+.cat-row.actionable { border-radius: 6px; padding: 2px 5px; margin: -2px -5px; }
+.cat-row.actionable:hover { background: var(--surface-2); }
+.travel-country-inline {
+  display: block; margin-top: 3px; color: var(--text-3); font-size: var(--fs-micro);
+  white-space: nowrap;
+}
 .transaction-summary.bank-summary {
   grid-template-columns: minmax(170px, 0.85fr) minmax(210px, 1fr)
     minmax(220px, 1.05fr) minmax(170px, 0.8fr);
+}
+.transaction-summary.travel-summary {
+  grid-template-columns: minmax(150px, 0.72fr) minmax(250px, 2.35fr);
 }
 .transaction-summary-total,
 .transaction-breakdown { min-width: 0; }
@@ -918,6 +1039,13 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .reversed-source { color: var(--text-3); background: var(--surface-2); }
 .ledger tr.reversed-row td { opacity: .68; }
 .ledger-reversed-toggle[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.trip-source { color: var(--cat-travel, var(--accent)); background: var(--surface-2); }
+.cancelled-source { color: var(--red); background: var(--red-soft); }
+.trip-evidence { background: var(--surface-2); }
+.reversed-source { color: var(--text-3); background: var(--surface-2); }
+.ledger tr.reversed-row td { opacity: .68; }
+.ledger-reversed-toggle[aria-pressed="true"] { border-color: var(--accent); background: var(--accent-soft); }
+.drawer-note { margin: .6rem 0 0; color: var(--text-3); font-size: var(--fs-micro); line-height: 1.4; }
 .purchase-description { white-space: normal !important; }
 .purchase-description-primary {
   display: -webkit-box; overflow: hidden; font-weight: 600; line-height: 1.3;
@@ -1014,6 +1142,8 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 /* One-click owner tagging in the ledger. Sized to sit inside a table row
    without changing the row height the rest of the table is built around. */
 .owner-picker { display: flex; gap: 3px; align-items: center; flex-wrap: wrap; }
+.owner-fixed { color: var(--text-2); font-size: var(--fs-small); }
+.yx-single-owner #owner-pills { display: none; }
 .owner-chip {
   border: 1px solid var(--border); border-radius: 999px; background: var(--surface);
   color: var(--text-2); padding: 2px 7px; font: inherit; font-size: var(--fs-caption);
@@ -1432,6 +1562,9 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
 .insurance-charge-meta > small.insurance-charge-cadence.matched { background: var(--green-soft); color: var(--green); box-shadow: none; }
 .insurance-charge-meta > small.insurance-charge-cadence.upcoming { background: var(--accent-soft); color: var(--accent); box-shadow: none; }
 .insurance-charge-meta > small.insurance-charge-cadence.missing { background: var(--red-soft); color: var(--red); box-shadow: none; }
+.insurance-charge-meta > small.insurance-charge-source {
+  background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); color: var(--text-2);
+}
 .insurance-charge-meta > small.insurance-charge-source {
   background: color-mix(in srgb, var(--accent-soft) 55%, var(--surface)); color: var(--text-2);
 }
@@ -1963,6 +2096,28 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .source-filter-strip::-webkit-scrollbar { display: none; }
   .source-filter-strip > * { flex: 0 0 auto; white-space: nowrap; }
   .filters > #category-filter { flex: 1 1 auto; min-width: 0; }
+  .travel-country-pills {
+    flex-wrap: nowrap; overflow-x: auto; padding-bottom: 2px; scrollbar-width: none;
+    overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
+  }
+  .travel-country-pills::-webkit-scrollbar { display: none; }
+  .travel-country-pills > * { flex: 0 0 auto; white-space: nowrap; }
+  /* Ledger: the fixed Remarks column left the description one letter wide.
+     Remarks stay editable in the drawer and, when present, read under the
+     description; grouped rows fold their count the same way. Only the
+     individual bank ledger keeps the column, where it carries the amount. */
+  .ledger:not(.bank-ledger) .col-remark,
+  .ledger.bank-ledger.grouped-ledger .col-remark { display: none; }
+  .row-remark-inline {
+    display: block; margin-top: 2px; color: var(--text-3); font-size: var(--fs-micro);
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  /* Individual bank rows: the amount matters more than the running balance on
+     a phone; the balance stays in the drawer. Grouped bank rows keep their
+     total and fold the count under the counterparty like the card ledger. */
+  .ledger.bank-ledger:not(.grouped-ledger) .col-amt { display: none; }
+  .ledger.bank-ledger:not(.grouped-ledger) .col-remark { width: 96px; text-align: right; }
+  .ledger.bank-ledger:not(.grouped-ledger) .row-remark-inline { display: none; }
   .tab .icon { display: none; }
   main { padding: 14px 14px 40px; }
   .context-toolbar { justify-content: flex-end; }
@@ -2191,3 +2346,31 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 :root[data-theme="dark"] .recurring-name-cell .recurring-initials { color: hsl(var(--thumb-hue) 60% 82%); background: hsl(var(--thumb-hue) 35% 22%); border-color: hsl(var(--thumb-hue) 30% 32%); }
 .recurring-name-cell .recurring-name { grid-column: 2; }
 .recurring-name-cell .recurring-meta { grid-column: 2; }
+/* Travel tab and header fit, from tablet down. Five tabs no longer share a
+   line with the share button's label between the wide layout and the phone
+   strip, and the KPI grid stops leaving a card stranded on its own row. */
+@media (max-width: 960px) {
+  .share-button span { display: none; }
+  .share-button { padding: 0 9px; }
+  .tab { padding: 7px 9px; }
+  .tab .icon { display: none; }
+  .tabs { gap: 2px; }
+  #travel-kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #travel-kpis.kpis-five { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  #travel-kpis.kpis-six { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 760px) {
+  .pill { min-height: 34px; }
+  .cat-row.actionable { min-height: 36px; padding: 6px 5px; margin: -6px -5px; }
+  .transaction-breakdown-row strong { font-size: var(--fs-caption); }
+}
+@media (max-width: 430px) {
+  .tabs { gap: 4px; }
+  .tab { padding: 7px 8px; }
+  .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+  .kpi { padding: 12px 12px; }
+  .kpi .value { font-size: var(--fs-stat-sm); }
+  #travel-kpis, #travel-kpis.kpis-five, #travel-kpis.kpis-six { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #travel-kpis.kpis-five .kpi:last-child { grid-column: 1 / -1; }
+  .partner-row { grid-template-columns: 62px minmax(0, 1fr) 80px; }
+}

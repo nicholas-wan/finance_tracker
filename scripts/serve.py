@@ -37,6 +37,38 @@ HOME_PATH = REPO_ROOT / "manual" / "home.json"
 HOME_PUBLIC_PATH = APP_DIR / "data" / "home.json"
 NET_WORTH_PATH = REPO_ROOT / "manual" / "net_worth.json"
 NET_WORTH_PUBLIC_PATH = APP_DIR / "data" / "net_worth.json"
+# Per-clone identity: monogram, colours, title and favicon live in the
+# private folder so the same code serves every household member.
+BRANDING_PATH = REPO_ROOT / "manual" / "branding.json"
+BRANDING_PUBLIC_PATH = APP_DIR / "data" / "branding.json"
+BRANDING_DIR = REPO_ROOT / "manual" / "branding"
+
+
+def read_branding():
+    if not BRANDING_PATH.exists():
+        return {}
+    try:
+        value = load_json(BRANDING_PATH)
+    except ValueError:
+        return {}
+    allowed = {"monogram", "title", "brand", "brandInk", "brandDark", "brandInkDark"}
+    return {k: str(v)[:80] for k, v in value.items() if k in allowed and isinstance(v, str)} if isinstance(value, dict) else {}
+
+
+DEFAULT_PORT = 3402
+
+
+def branding_port():
+    """The clone's own port from manual/branding.json, else the default, so
+    two household clones on one machine do not fight over 3402."""
+    if BRANDING_PATH.exists():
+        try:
+            port = load_json(BRANDING_PATH).get("port")
+            if isinstance(port, int) and not isinstance(port, bool) and 1 <= port <= 65535:
+                return port
+        except (ValueError, AttributeError):
+            pass
+    return DEFAULT_PORT
 OWNER_PATH = REPO_ROOT / "manual" / "owner_tags.json"
 RISK_REVIEW_PATH = REPO_ROOT / "manual" / "risk_reviews.json"
 ACCOUNT_REVIEW_PATH = REPO_ROOT / "manual" / "account_reviews.json"
@@ -526,6 +558,7 @@ def validate_transaction_detail_request(payload, transactions):
     category = payload.get("category")
     display_name = payload.get("displayName")
     remark = payload.get("remark")
+    destination = payload.get("destination", "")
     if not isinstance(tx_id, str) or not tx_id.startswith("tx_"):
         raise ValueError("A valid transaction ID is required.")
     if tx_id not in transactions:
@@ -544,7 +577,14 @@ def validate_transaction_detail_request(payload, transactions):
     remark = " ".join(remark.split())
     if len(remark) > 240:
         raise ValueError("Remark must be 240 characters or fewer.")
-    return tx_id, owner, category, display_name, remark
+    # The destination is the country or region a travel charge belongs to,
+    # for rows whose descriptor names only a platform's billing entity.
+    if not isinstance(destination, str):
+        raise ValueError("Destination must be text.")
+    destination = " ".join(destination.split())
+    if len(destination) > 40:
+        raise ValueError("Destination must be 40 characters or fewer.")
+    return tx_id, owner, category, display_name, remark, destination
 
 
 def run_script(script):
@@ -882,13 +922,13 @@ def save_remark(tx_id, remark):
         }
 
 
-def save_transaction_detail(tx_id, owner, category, display_name, remark):
+def save_transaction_detail(tx_id, owner, category, display_name, remark, destination=""):
     with WRITE_LOCK:
         transaction_data = load_json(TRANSACTIONS_PATH)
         transactions = {
             row.get("id"): row for row in transaction_data.get("transactions", [])
         }
-        tx_id, owner, category, display_name, remark = (
+        tx_id, owner, category, display_name, remark, destination = (
             validate_transaction_detail_request(
                 {
                     "id": tx_id,
@@ -896,11 +936,23 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                     "category": category,
                     "displayName": display_name,
                     "remark": remark,
+                    "destination": destination,
                 },
                 transactions,
             )
         )
         current = transactions[tx_id]
+        # A Trip.com booking name is derived on every build, not a saved edit.
+        # The drawer shows it as the placeholder, so an untouched field posts
+        # "" and must not clear anything; a user re-typing the same name has
+        # nothing to pin either. Only a different name becomes an override.
+        derived_display_name = (
+            current.get("displayName", "")
+            if current.get("displayNameSource") == "trip-booking" else ""
+        )
+        if display_name == derived_display_name:
+            display_name = ""
+        saved_display_name = "" if derived_display_name else current.get("displayName", "")
         paths = (OWNER_PATH, REMARK_PATH, OVERRIDE_PATH, AUDIT_PATH)
         originals = {path: path.read_bytes() for path in paths}
 
@@ -941,6 +993,8 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
             override["category"] = category
         if display_name:
             override["displayName"] = display_name
+        if destination:
+            override["destination"] = destination
         if override:
             overrides[tx_id] = override
         else:
@@ -949,10 +1003,11 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
 
         changes = []
         comparisons = (
-            ("Display name", current.get("displayName", ""), display_name),
+            ("Display name", saved_display_name, display_name),
             ("Category", current.get("category", ""), category),
             ("Owner", current.get("owner", "Unassigned"), owner),
             ("Remarks", current.get("remark", ""), remark),
+            ("Destination", current.get("destination", ""), destination),
         )
         for field, before, after in comparisons:
             if before != after:
@@ -1001,12 +1056,19 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark):
                 if owner == "Untagged"
                 else updated.get("owner") == owner
             )
+            # With no override the rebuilt row shows its derived booking name
+            # again; what must match is the override, not the label.
+            display_applied = updated is not None and (
+                updated.get("displayName", "") == display_name
+                or (not display_name and updated.get("displayNameSource") == "trip-booking")
+            )
             if (
                 not updated
                 or not owner_applied
                 or updated.get("category") != category
-                or updated.get("displayName", "") != display_name
+                or not display_applied
                 or updated.get("remark", "") != remark
+                or updated.get("destination", "") != destination
             ):
                 raise RuntimeError(
                     "The rebuilt dashboard did not apply all transaction details."
@@ -1209,7 +1271,22 @@ class StaticMixin:
         which matters most on the Wi-Fi share. Anything not compressible, or
         too small to be worth it, falls through to the stock handler.
         """
-        path = Path(self.translate_path(self.path.split("?", 1)[0]))
+        request_path = self.path.split("?", 1)[0]
+        path = Path(self.translate_path(request_path))
+        # A clone's own favicon lives in the private folder; the tracked one
+        # is the default for a fresh clone.
+        if request_path in ("/favicon.svg", "/favicon.ico"):
+            private = BRANDING_DIR / request_path.lstrip("/")
+            if private.is_file():
+                path = private
+                body = private.read_bytes()
+                self.send_response(200)
+                self.send_header("Content-Type", "image/svg+xml" if private.suffix == ".svg" else "image/x-icon")
+                self.send_header("Content-Length", str(len(body)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+                return
         accepts = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
         if (accepts and path.is_file() and path.suffix.lower() in COMPRESSIBLE
                 and path.stat().st_size >= GZIP_MIN_BYTES):
@@ -1905,13 +1982,16 @@ atexit.register(stop_share)
 def main():
     global SHARE_PORT
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=3402)
+    parser.add_argument("--port", type=int, default=None,
+                        help="listen port (default: manual/branding.json port, else %d)" % DEFAULT_PORT)
     parser.add_argument("--auto-stop", action="store_true",
                         help="stop after the last dashboard tab closes")
     parser.add_argument("--share-port", type=int, default=None,
                         help="port for the read-only Wi-Fi share (default: port + %d)"
                         % SHARE_PORT_OFFSET)
     args = parser.parse_args()
+    if args.port is None:
+        args.port = branding_port()
     SHARE_PORT = args.share_port if args.share_port is not None else args.port + SHARE_PORT_OFFSET
     # A fresh clone has no manual/ at all; seed the files this server writes
     # before any request can read one that is not there.
@@ -1922,6 +2002,7 @@ def main():
         HOME_PUBLIC_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(HOME_PUBLIC_PATH, read_home())
         atomic_write_json(NET_WORTH_PUBLIC_PATH, read_net_worth())
+        atomic_write_json(BRANDING_PUBLIC_PATH, read_branding())
     server = ThreadingHTTPServer(("127.0.0.1", args.port), FinanceHandler)
     server.auto_stop = args.auto_stop
     lifecycle = DashboardLifecycle(server) if args.auto_stop else None

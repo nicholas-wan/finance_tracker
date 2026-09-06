@@ -1060,6 +1060,92 @@ test("a tied grouped label resolves the same way in either row order", function 
   assert.equal(grouping.groupPurchases(rows.slice().reverse())[0].label, "Alpha Mart");
 });
 
+// ---------- Reversed charge/refund pairs ----------
+
+function tripRow(id, type, amount, date, extra) {
+  return Object.assign(transaction({
+    id: id, type: type, amount: amount, date: date, month: date.slice(0, 7),
+    description: "TRIP.COM SINGAPORE", category: "Travel"
+  }), extra || {});
+}
+
+test("a charge refunded in full by the same merchant is paired and folded", function () {
+  var rows = [
+    tripRow("tx_c1", "debit", 412.55, "2026-08-08"),
+    tripRow("tx_r1", "refund", 412.55, "2026-08-08"),
+    tripRow("tx_c2", "debit", 928.65, "2026-06-28"),
+    tripRow("tx_r2", "refund", 928.65, "2026-08-08"),
+    tripRow("tx_keep", "debit", 76.23, "2026-06-27")
+  ];
+  var result = grouping.reversedPairs(rows);
+  assert.equal(result.pairs.length, 2);
+  assert.deepEqual(Object.keys(result.hidden).sort(), ["tx_c1", "tx_c2", "tx_r1", "tx_r2"]);
+  var visible = rows.filter(function (t) { return !result.hidden[t.id]; });
+  assert.deepEqual(visible.map(function (t) { return t.id; }), ["tx_keep"]);
+  // Folding the pairs never moves the net.
+  assert.equal(grouping.summarize(rows, {}).netCost, grouping.summarize(visible, {}).netCost);
+});
+
+test("a refund is paired only when its charge is unambiguous", function () {
+  // Two identical charges before one refund: either could be the refunded one.
+  var twoCharges = grouping.reversedPairs([
+    tripRow("tx_a", "debit", 150.99, "2026-06-09"),
+    tripRow("tx_b", "debit", 150.99, "2026-06-09"),
+    tripRow("tx_r", "refund", 150.99, "2026-06-20")
+  ]);
+  assert.equal(twoCharges.pairs.length, 0);
+  // A refund dated before its charge is not a reversal of it.
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_r", "refund", 50, "2026-06-01"),
+    tripRow("tx_c", "debit", 50, "2026-06-02")
+  ]).pairs.length, 0);
+  // Beyond the window, a same-priced refund is a different story.
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2025-06-01"),
+    tripRow("tx_r", "refund", 50, "2026-06-01")
+  ]).pairs.length, 0);
+  // Another merchant or another amount never pairs.
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2026-06-01", { description: "KLOOK SINGAPORE" }),
+    tripRow("tx_r", "refund", 50, "2026-06-02")
+  ]).pairs.length, 0);
+  assert.equal(grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2026-06-01"),
+    tripRow("tx_r", "refund", 49.99, "2026-06-02")
+  ]).pairs.length, 0);
+  // Once a charge is claimed, a second identical refund has no candidate.
+  var oneChargeTwoRefunds = grouping.reversedPairs([
+    tripRow("tx_c", "debit", 50, "2026-06-01"),
+    tripRow("tx_r1", "refund", 50, "2026-06-02"),
+    tripRow("tx_r2", "refund", 50, "2026-06-03")
+  ]);
+  assert.equal(oneChargeTwoRefunds.pairs.length, 1);
+  assert.deepEqual(Object.keys(oneChargeTwoRefunds.hidden).sort(), ["tx_c", "tx_r1"]);
+});
+
+test("a Trip.com booking name labels its own charge but never the merchant group", function () {
+  var rows = [
+    transaction({ description: "TRIP.COM SINGAPORE", category: "Travel", amount: 300,
+      displayName: "Example Hotel", displayNameSource: "trip-booking",
+      tripBooking: { bookingNo: "1234567890123", status: "Completed" } }),
+    transaction({ description: "TRIP.COM SINGAPORE", category: "Travel", amount: 120,
+      date: "2026-07-02" }),
+    transaction({ description: "TRIP.COM SINGAPORE", category: "Travel", amount: 80,
+      date: "2026-07-03" })
+  ];
+  var groups = grouping.groupPurchases(rows);
+  assert.equal(groups.length, 1);
+  assert.notEqual(groups[0].label, "Example Hotel");
+  assert.equal(grouping.userDisplayName(rows[0]), "");
+  assert.equal(groups[0].label, grouping.merchantDisplayName("TRIP.COM SINGAPORE"));
+  // A name the user typed on the same merchant still wins, as before.
+  rows[1].displayName = "Trip.com hotels";
+  rows[1].displayNameSource = "override";
+  assert.equal(grouping.groupPurchases(rows)[0].label, "Trip.com hotels");
+  // Older builds carry no source marker; a bare display name is the user's.
+  assert.equal(grouping.userDisplayName({ displayName: "Mine" }), "Mine");
+});
+
 test("a name you set outranks one derived from statement text", function () {
   var rows = [
     transaction({ description: "HARBOUR DELI SINGAPORE" }),
@@ -1139,6 +1225,174 @@ function loadInsights() {
   vm.runInContext(source, context, { filename: "insights.js" });
   return context.window.Insights;
 }
+
+test("names a destination from a saved override, the descriptor, or the currency", function () {
+  var insights = loadInsights();
+  var travel = function (overrides) {
+    return transaction(Object.assign({ category: "Travel", date: "2026-03-18", month: "2026-03" }, overrides));
+  };
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE" })), "Unknown");
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE", foreign: "CNY 120.00" })), "China");
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE", foreign: "USD 12.00" })), "Unknown");
+  assert.equal(insights.travelCountry(travel({ description: "KLOOK TRAVEL SINGAPORE", destination: "Japan" })), "Japan");
+  // The saved destination outranks the descriptor and the currency.
+  assert.equal(insights.travelCountry(travel({ description: "TOKYO DISNEY", foreign: "CNY 1.00", destination: "Taiwan" })), "Taiwan");
+  assert.equal(insights.travelCountry(travel({ description: "GRAB RIDES PETALING JAYA" })), "Malaysia");
+  assert.equal(insights.travelCountry(transaction({ category: "Food & dining", description: "TOKYO DISNEY" })), "");
+  assert.equal(insights.travelCity(travel({ description: "Singapore (SIN) => Chengdu (TFU)" })), "Chengdu");
+  assert.equal(insights.travelCity(travel({ description: "AGODA BERLIN" })), "Berlin");
+  assert.equal(insights.travelCity(travel({ description: "KLOOK TRAVEL SINGAPORE" })), "");
+
+  var rows = [
+    travel({ id: "k", description: "KLOOK TRAVEL SINGAPORE", date: "2026-03-14", amount: 90 }),
+    travel({ id: "h", description: "TOY STORY HOTEL SHANGHAI", date: "2026-03-17", amount: 300 }),
+    travel({ id: "j", description: "TOKYO DISNEY", date: "2026-03-30", amount: 80 }),
+    travel({ id: "far", description: "PARIS METRO", date: "2026-02-01", amount: 5 })
+  ];
+  var suggestion = insights.suggestedDestination(rows[0], rows);
+  assert.equal(suggestion.country, "China");
+  assert.equal(suggestion.gap, 3);
+  assert.equal(insights.suggestedDestination(rows[3], rows), null);
+});
+
+test("parses Trip.com travel dates, taking a dropped year from the booking", function () {
+  var insights = loadInsights();
+  assert.equal(insights.parseTravelDate("18:45, October 17, 2023"), "2023-10-17");
+  assert.equal(insights.parseTravelDate("October 18, 2023"), "2023-10-18");
+  assert.equal(insights.parseTravelDate("May 10", "April 20, 2026"), "2026-05-10");
+  // A travel day before the booking day cannot be in the booking year.
+  assert.equal(insights.parseTravelDate("April 5", "April 20, 2026"), "2027-04-05");
+  assert.equal(insights.parseTravelDate("09:41, May 10", "April 20, 2026"), "2026-05-10");
+  assert.equal(insights.parseTravelDate("February 30, 2026"), null);
+  assert.equal(insights.parseTravelDate("nonsense", "April 20, 2026"), null);
+  assert.equal(insights.parseTravelDate("May 10", "nonsense"), null);
+  assert.deepEqual(JSON.parse(JSON.stringify(insights.travelWindow({
+    productType: "Flights", bookingDate: "January 30, 2026",
+    travelTime: "22:00, March 15, 2026\n15:05, March 23, 2026"
+  }))), { start: "2026-03-15", end: "2026-03-23" });
+  assert.equal(insights.travelWindow({ travelTime: "" }), null);
+});
+
+test("builds trips from booking travel dates and gathers the spend around them", function () {
+  var insights = loadInsights();
+  function travel(overrides) {
+    return transaction(Object.assign({ category: "Travel", owner: "Yx" }, overrides));
+  }
+  var rows = [
+    // Charged in January, flown in March: the booking's travel dates anchor it.
+    travel({ id: "flight", date: "2026-01-30", month: "2026-01", amount: 1000,
+      description: "TRIP.COM Singapore", tripBooking: {
+        productType: "Flights", bookingDate: "January 30, 2026",
+        productName: "Singapore (SIN) => Shanghai (PVG)",
+        travelTime: "22:00, March 15, 2026\n15:05, March 23, 2026"
+      } }),
+    // Hotel export drops the year; the booking date supplies it.
+    travel({ id: "hotel", date: "2026-02-20", month: "2026-02", amount: 300,
+      description: "TRIP.COM Singapore", tripBooking: {
+        productType: "Hotels", bookingDate: "February 20, 2026",
+        productName: "Toy Story Hotel", travelTime: "March 17"
+      } }),
+    // Bookingless charge with a known destination, six weeks ahead: joins.
+    travel({ id: "visa", date: "2026-02-01", month: "2026-02", amount: 40,
+      description: "CHINA VISA CENTRE SHANGHAI" }),
+    // Foreign-currency spend inside the window counts even outside Travel.
+    transaction({ id: "dinner", date: "2026-03-18", month: "2026-03", amount: 15,
+      category: "Food & dining", description: "SHANGHAI NOODLES", foreign: "CNY 69.00" }),
+    travel({ id: "metro", date: "2026-03-19", month: "2026-03", amount: 5,
+      description: "SHANGHAI METRO", foreign: "CNY 25.00" }),
+    // Local groceries the same week are not part of the trip.
+    transaction({ id: "groceries", date: "2026-03-18", month: "2026-03", amount: 40,
+      category: "Groceries", description: "CORNER STORE" }),
+    // A hotel booked, cancelled and refunded in full: both rows sit inside
+    // the trip so its total is unchanged, but neither is a confirmed charge
+    // and the cancelled booking is not a booking.
+    travel({ id: "cancelled", date: "2026-02-25", month: "2026-02", amount: 200,
+      description: "TRIP.COM Singapore", tripBooking: {
+        productType: "Hotels", status: "Cancelled", bookingDate: "February 25, 2026",
+        productName: "Some Hotel Shanghai", travelTime: "March 18"
+      } }),
+    travel({ id: "refund", type: "refund", date: "2026-02-28", month: "2026-02", amount: 200,
+      description: "TRIP.COM Singapore", tripBooking: {
+        productType: "Hotels", status: "Cancelled", bookingDate: "February 25, 2026",
+        productName: "Some Hotel Shanghai", travelTime: "March 18"
+      } }),
+    // Charges the other person paid: a flight for the same trip, and a
+    // dinner in CNY inside the window. They join the trip and name it, but
+    // their money is reported apart from this tracker's own.
+    travel({ id: "nic_flight", paidBy: "Nic", date: "2026-03-16", month: "2026-03", amount: 500,
+      description: "SINGAPOREAIR 1234567890" }),
+    transaction({ id: "nic_dinner", paidBy: "Nic", date: "2026-03-19", month: "2026-03", amount: 15,
+      category: "Food & dining", description: "SHANGHAI DUMPLINGS", foreign: "CNY 70.00" }),
+    // Tickets with no destination evidence, bought six weeks before the trip
+    // and two hundred days before it: the first is guessed onto the trip and
+    // counted as China, the second is left alone.
+    travel({ id: "klook", date: "2026-02-10", month: "2026-02", amount: 90,
+      description: "Klook Travel Singapore" }),
+    travel({ id: "kkday", date: "2025-08-28", month: "2025-08", amount: 60,
+      description: "KKDAY SINGAPORE" }),
+    // Wallet payments (WeChat Pay on another card): one inside the trip's
+    // window joins it as that card's money; one bought before the trip does
+    // not, and is never guessed onto it either.
+    transaction({ id: "wx_in", paidBy: "YouTrip", via: true, estimated: true, category: "Travel",
+      date: "2026-03-18", month: "2026-03", amount: 20, description: "Dumpling house", foreign: "CNY 100.00" }),
+    transaction({ id: "wx_out", paidBy: "YouTrip", via: true, estimated: true, category: "Travel",
+      date: "2026-02-14", month: "2026-02", amount: 30, description: "Online shop", foreign: "CNY 150.00" }),
+    // A Klook order charged a month early: the activity day anchors it to
+    // the trip, its name says where, and it counts as a booking.
+    travel({ id: "show", date: "2026-02-20", month: "2026-02", amount: 120,
+      description: "Klook Travel Singapore", klookOrder: {
+        name: "Shanghai Acrobatics Show", package: "Regular seat",
+        activityDate: "2026-03-20", amount: 120, currency: "SGD", status: "confirmed"
+      } }),
+    // A separate journey later in the year.
+    travel({ id: "tokyo", date: "2026-06-01", month: "2026-06", amount: 80,
+      description: "TOKYO DISNEY RESORT" }),
+    travel({ id: "narita", date: "2026-06-03", month: "2026-06", amount: 30,
+      description: "NARITA EXPRESS" })
+  ];
+  var trips = insights.buildTrips(rows);
+  assert.equal(trips.length, 3);
+  assert.equal(trips[2].primary, "Unknown");
+  assert.deepEqual(Array.from(trips[2].ids), ["kkday"]);
+  assert.deepEqual(JSON.parse(JSON.stringify(insights.guessedDestinations(rows))), { klook: "China" });
+  assert.equal(trips[0].primary, "Japan");
+  assert.equal(trips[0].start, "2026-06-01");
+  assert.equal(trips[0].end, "2026-06-03");
+  assert.equal(trips[0].days, 3);
+  assert.equal(trips[0].count, 2);
+  assert.equal(trips[0].anchored, false);
+  var china = trips[1];
+  assert.equal(china.primary, "China");
+  assert.equal(china.city, "Shanghai");
+  assert.equal(china.start, "2026-03-15");
+  assert.equal(china.end, "2026-03-23");
+  assert.equal(china.days, 9);
+  assert.deepEqual(Array.from(china.ids).sort(),
+    ["cancelled", "dinner", "flight", "hotel", "klook", "metro", "nic_dinner", "nic_flight", "refund", "show", "visa", "wx_in"]);
+  assert.ok(!trips.some(function (trip) { return trip.ids.indexOf("wx_out") !== -1; }));
+  assert.equal(china.payers.YouTrip.total, 20);
+  assert.equal(china.payers.YouTrip.estimated, true);
+  assert.equal(china.payers.YouTrip.via, true);
+  assert.equal(china.payers.Nic.total, 515);
+  assert.deepEqual(Array.from(china.guessedIds), ["klook"]);
+  assert.equal(china.rowCount, 9);
+  assert.equal(china.count, 7);
+  assert.equal(china.total, 1570);
+  assert.equal(china.bookings, 3);
+  assert.equal(insights.travelCountry(rows.find(function (r) { return r.id === "show"; })), "China");
+  assert.equal(insights.travelCity(rows.find(function (r) { return r.id === "show"; })), "Shanghai");
+  assert.equal(china.partnerTotal, 535);
+  assert.equal(china.partnerCount, 3);
+  assert.equal(china.paidBy, "Nic");
+  assert.equal(insights.confirmedTravelCharges(rows).map(function (t) { return t.id; }).sort().join(","),
+    "flight,hotel,kkday,klook,metro,narita,show,tokyo,visa");
+  assert.equal(china.anchored, true);
+  assert.equal(china.total, 1570);
+  assert.equal(china.perDay, Math.round(1570 / 9 * 100) / 100);
+  assert.deepEqual(JSON.parse(JSON.stringify(china.split)), {
+    "Flights": 1000, "Hotels": 300, "Tickets & transfers": 120, "On the ground": 150
+  });
+});
 
 function accountRow(month, direction, flow, amount) {
   return {
@@ -1314,6 +1568,31 @@ test("spending summary states the change, driver and largest purchase", function
 });
 
 // ---------- Income forecast ----------
+test("travel countries use booking destinations instead of Singapore billing text", function () {
+  var insights = loadInsights();
+  assert.equal(insights.travelCountry({
+    category: "Travel",
+    description: "Trip.com Singapore",
+    displayName: "Singapore (SIN) => Shanghai (PVG)"
+  }), "China");
+  assert.equal(insights.travelCountry({
+    category: "Travel",
+    description: "Trip.com Singapore",
+    tripBooking: { productName: "Comfort Inn Yeouido", productType: "Hotels" }
+  }), "South Korea");
+});
+
+test("generic travel platforms stay unknown until destination evidence exists", function () {
+  var insights = loadInsights();
+  assert.equal(insights.travelCountry({
+    category: "Travel",
+    description: "Klook Travel Singapore"
+  }), "Unknown");
+  assert.equal(insights.travelCountry({
+    category: "Shopping",
+    description: "agoda.com Berlin"
+  }), "");
+});
 
 test("income forecast separates recurring pay from repeated bonus months", function () {
   var insights = loadInsights();

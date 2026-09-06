@@ -85,8 +85,18 @@
     return key || String(description || "").toUpperCase().trim();
   }
 
+  // A display name the user typed is theirs to see everywhere. One the build
+  // derived from a matched Trip.com booking names a single charge (one hotel,
+  // one flight) and must not become the label of the whole merchant group.
+  function userDisplayName(transaction) {
+    if (!transaction.displayName) return "";
+    if (transaction.displayNameSource && transaction.displayNameSource !== "override") return "";
+    return transaction.displayName;
+  }
+
   function merchantLabel(transaction) {
-    if (transaction.displayName) return transaction.displayName;
+    var userName = userDisplayName(transaction);
+    if (userName) return userName;
     var key = transaction.merchantKey || merchantKey(transaction.description);
     if (key === "GRAB") return "Grab";
     if (key === "GRAB SUBSCRIPTION") return "Grab subscription";
@@ -196,7 +206,9 @@
     if (/PHILLIP SECURITIES/.test(upper)) return "Phillip Securities";
     if (/TIGER BROKERS/.test(upper)) return "Tiger Brokers";
     if (/IRAS|INLAND REVENUE/.test(upper)) return "IRAS";
-    if (/SALARY PAYMENT DSTA|GIRO SALA/.test(upper)) return "DSTA salary";
+    // Do not infer an employer from the generic GIRO/SALA marker. Only an
+    // explicit DSTA description may use the DSTA-specific display label.
+    if (/SALARY PAYMENT DSTA/.test(upper)) return "DSTA salary";
     if (/SUPPLIERPYMT DSTA|GIRO SUPP/.test(upper)) return "DSTA reimbursement";
     if (/ONE BONUS INTEREST/.test(upper)) return "UOB One bonus interest";
     if (/INTEREST CREDIT/.test(upper)) return "UOB interest";
@@ -504,9 +516,9 @@
       if ((transaction.date || transaction.month) > group.lastDate) {
         group.lastDate = transaction.date || transaction.month;
       }
-      if (transaction.displayName) {
-        displayNames[key][transaction.displayName] =
-          (displayNames[key][transaction.displayName] || 0) + 1;
+      var userName = userDisplayName(transaction);
+      if (userName) {
+        displayNames[key][userName] = (displayNames[key][userName] || 0) + 1;
       } else {
         var fallback = merchantLabel(transaction);
         fallbackNames[key][fallback] = (fallbackNames[key][fallback] || 0) + 1;
@@ -881,6 +893,7 @@
     settlementPosition: settlementPosition,
     reversedPairs: reversedPairs,
     summarize: summarize,
+    userDisplayName: userDisplayName,
     summarizeAccount: summarizeAccount
   };
 });

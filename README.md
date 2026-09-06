@@ -8,7 +8,7 @@ reviews. Plain HTML, CSS and JavaScript; no build step, no CDN.
 ## Run
 
 ```powershell
-python scripts/serve.py
+./scripts/launch_dashboard.ps1 -Port 3403
 ```
 
 Open http://localhost:3402. The editable server binds to `127.0.0.1` only and
@@ -40,8 +40,15 @@ Copy-Item examples/identity.example.json manual/identity.json
 Edit `manual/identity.json`, add PDFs under `statements/<year>/`, run
 `python scripts/import_all.py --strict`, and launch with
 `./scripts/launch_dashboard.ps1 -Port 3403` if both must run together. Give
-the clone its own monogram (`.brand-mark` in `app/index.html`), `--brand`
-colours (`app/css/styles.css`) and `app/favicon.svg`.
+the clone its own identity without touching tracked files: copy
+`examples/branding.example.json` to `manual/branding.json` (port, monogram,
+title, light and dark brand colours) and drop a `favicon.svg` or
+`favicon.ico` into `manual/branding/`; the server and the launcher take
+their default port from it, the colours are published as
+`data/branding.json`, and the private favicon is served in place of the
+tracked one. Both clones run
+the same code: a tab shows whatever its data holds, so a clone without
+`home.json` or trip bookings simply shows those tabs empty.
 
 ## Import statements
 
@@ -115,6 +122,21 @@ an existing month is rejected.
   read-only snapshot. A final panel totals money moved from the bank account
   to brokers, SRS and fixed deposits as a reference, never a valuation.
   Insurance counts at net surrender value, not premiums paid.
+- **Travel** — the whole travel history: this year against earlier years,
+  spending by country and by year, and the trips. A trip is the cluster of
+  Travel-category charges belonging to one journey; a charge matched to a
+  Trip.com booking (`manual/trip_bookings.json`, from Trip.com's **All
+  Bookings → Export**) is anchored at the booking's travel dates, a Klook
+  order (`manual/klook_orders.json`, captured by hand from klook.com/bookings)
+  or a WeChat Pay payment on YouTrip (`manual/wechat_payments.json`, via
+  `scripts/import_wechat_statement.py`) joins by date, and a charge with no
+  evidence lands on the nearest trip within a week. Destinations come from
+  bookings, then currency, then a per-charge override. What the other
+  household member paid for shared travel appears too:
+  `scripts/import_partner_travel.py` copies their Travel rows from their
+  clone's published data into `manual/partner_travel.json`, shown beside the
+  statements and never inside them, with a **Paid by** filter. Every panel
+  opens the Transactions tab already filtered to that trip, country or year.
 - **Games** — game-account sales from `manual/game_sales.json`, kept off the
   statements.
 - **Split** — the Yx settlement shared with the Overview: opening balances
@@ -159,6 +181,8 @@ the running process does not have.
 | Salary history, game sales, settlements | `manual/salary.json`, `manual/game_sales.json`, `manual/settlements.json` |
 | Insurance policies | `manual/insurance.json` (see the file's `summary`, `verification`, `components`, `coverageOnly`, `premiumPaidBy`, `hiddenInRegister`, `reconcileWithImportedStatements` fields) |
 | Foodpanda, Shopee, Grab history | `manual/foodpanda_orders.json`, `manual/shopee_orders.json` (`statementOrderMaxHistoryIndex`, `statementAggregates`), `manual/grab_receipts.json` via `scripts/import_grab_receipts.py`, `manual/grab_web_history.json` |
+| Trip.com bookings, Klook orders, WeChat Pay on YouTrip, the other member's travel | `manual/trip_bookings.json` (`scripts/import_trip_bookings.py`), `manual/klook_orders.json`, `manual/wechat_payments.json` (`scripts/import_wechat_statement.py`), `manual/partner_travel.json` (`scripts/import_partner_travel.py`) |
+| Clone identity | `manual/branding.json` and `manual/branding/favicon.*` (see `examples/branding.example.json`) |
 | Statement-holder name, own accounts, trusted counterparties, Grab location aliases | `manual/identity.json` (required; the parser refuses to run without it) |
 | Owner-policy preview | `python scripts/assign_unassigned.py` (`--apply` to save; refuses to run beside a live server) |
 | Suspicious-check thresholds | top of `scripts/risk_checks.py` and `analyzeAccountTransactions` in `app/js/transaction-grouping.js` |
