@@ -32,6 +32,13 @@
 - Manufacturer terms recorded from public pages (Levoit SG 2 years, Omnidesk
   Classic 3 years from delivery, Neakasa 5 years from listing) are labelled
   as listing-based on the record; a certificate is not required.
+- **Home insurance** — settled 6 Sep 2026. The Singlife Home Policy
+  (AH0012406, premium waived) ran 25 Sep 2024 to 24 Sep 2025 and is archived;
+  it needs no renewal because the household's cover is the FWD HDB Home and
+  Fire policies in Yx's name, 15 Jul 2024 to 14 Jul 2029. Next renewal:
+  July 2029. Do not ask about Singlife again. The Downloads copy of the
+  Singlife PDF carries its password in the filename; the clean copy is in
+  `manual/documents/`. Never write that password into any file.
 - **Broadband** is MyRepublic fibre, billed to Yx's card (S$56.99 monthly on
   the 17th); the mesh is a TP-Link Deco M5 3-pack. Settled 5 Sep 2026. The
   separate S$17.90 MYREPUBLIC LIMITED line on Yx's card is a different
