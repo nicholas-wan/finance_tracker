@@ -10,7 +10,7 @@
     {
       "name": "yx-3406",
       "runtimeExecutable": "python",
-      "runtimeArgs": ["C:/Users/nicho/Documents/yx_finances/scripts/serve.py", "--port", "3406"],
+      "runtimeArgs": ["C:/Users/nicho/Projects/finance/yx_finances/scripts/serve.py", "--port", "3406"],
       "port": 3406
     },
     {

@@ -28,7 +28,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_SOURCE = (
-    REPO_ROOT.parent / "UOB_bank_statement_OCR" / "app" / "data" / "transactions.json"
+    REPO_ROOT.parent / "finance_tracker" / "app" / "data" / "transactions.json"
 )
 DEFAULT_OUTPUT = REPO_ROOT / "manual" / "partner_travel.json"
 DEFAULT_PAID_BY = "Nic"

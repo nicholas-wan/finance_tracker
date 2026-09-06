@@ -3,7 +3,7 @@
 ## Two clones, one codebase (merged 6 Sep 2026)
 
 - This repository is the upstream. Yx's clone at
-  `C:\Users\nicho\Documents\yx_finances` has `origin` pointing here and
+  `C:\Users\nicho\Projects\yx_finances` has `origin` pointing here and
   `master` tracking `origin/master`; update her with `git pull --ff-only`
   there, never by copying files. Do not commit in her clone unless the
   change is meant for both; push it here instead.
@@ -47,7 +47,7 @@
   warranty follow-up. Never load the order page — it never finishes loading.
 - Neakasa M1 Plus: bought on **Yx's** Shopee account and card (23 Nov 2025,
   S$535.30), so it sits in Yx's tracker
-  (`C:\Users\nicho\Documents\yx_finances`). Household items may be paid by
+  (`C:\Users\nicho\Projects\yx_finances`). Household items may be paid by
   either person: check Yx's tracker before asking about a missing purchase.
 - Broadband: MyRepublic fibre on Yx's card (S$56.99 on the 17th); mesh is a
   TP-Link Deco M5 3-pack. The S$17.90 MYREPUBLIC LIMITED line is a different
