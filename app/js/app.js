@@ -2112,7 +2112,9 @@
     { name: "half-yearly", min: 170, max: 195, perMonth: 1 / 6 },
     { name: "yearly", min: 350, max: 380, perMonth: 1 / 12 }
   ];
-  var RECURRING_BANK_FLOWS = { "Insurance": 1, "Other": 1, "Cash & NETS": 1 };
+  // Insurance premiums are tracked on the Insurance tab with their policies,
+  // so neither card-paid premiums nor GIRO premiums appear here.
+  var RECURRING_BANK_FLOWS = { "Other": 1, "Cash & NETS": 1 };
   function dayDiff(a, b) { return Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000); }
   function addDays(date, days) { var d = new Date(date + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }
   function median(list) { var s = list.slice().sort(function (a, b) { return a - b; }); var m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
@@ -2122,9 +2124,11 @@
       if (!row.date) return;
       var s = series[key] || (series[key] = { key: key, label: label, source: source, rows: [] });
       s.rows.push({ date: row.date, amount: amount, id: row.id, month: row.month });
+      s.description = row.description;
     }
     data.transactions.forEach(function (t) {
       if (t.type !== "debit" || t.category === "Payment" || t.category === "Rebates") return;
+      if (t.category === "Insurance" || t.ruleCategory === "Insurance") return;
       add("card:" + (t.merchantKey || t.description), t.displayName || window.FinanceGrouping.merchantDisplayName(t.description), t, t.amount, "card");
     });
     account.transactions.forEach(function (t) {
@@ -2165,7 +2169,7 @@
       else if (dayDiff(next, through) > tolerance) { status = "Not seen since " + shortDate(last.date, true); tone = "missing"; }
       else if (dayDiff(through, next) <= 14) { status = "Due " + shortDate(next, true); tone = "due"; }
       else { status = "Next " + shortDate(next, true); tone = "active"; }
-      found.push({ key: key, label: s.label, source: s.source, cadence: cadence.name, perMonth: cadence.perMonth,
+      found.push({ key: key, label: s.label, source: s.source, description: s.description, cadence: cadence.name, perMonth: cadence.perMonth,
         amount: last.amount, typical: typical, count: rows.length, first: rows[0].date, last: last.date, next: next,
         status: status, tone: tone, monthly: last.amount * cadence.perMonth });
     });
@@ -2197,9 +2201,29 @@
     head.appendChild(hr); table.appendChild(head);
     var body = el("tbody");
     var stopped = items.filter(function (r) { return r.tone === "stopped"; });
+    // A bundled brand logo where one matches the statement text; otherwise an
+    // initials badge with a hue derived from the name, so every row carries a
+    // stable mark and no logo service is ever contacted.
+    function recurringThumb(r) {
+      var logo = merchantLogo(r.description || r.label);
+      if (logo) {
+        var image = el("img", "recurring-thumb");
+        image.src = logo.src; image.alt = ""; image.setAttribute("aria-hidden", "true");
+        image.loading = "lazy"; image.decoding = "async";
+        return image;
+      }
+      var words = String(r.label).replace(/[^A-Za-z0-9 ]+/g, " ").trim().split(/\s+/).filter(Boolean);
+      var initials = (words.length > 1 ? words[0].charAt(0) + words[1].charAt(0) : (words[0] || "?").slice(0, 2)).toUpperCase();
+      var hash = 0; for (var i = 0; i < r.label.length; i++) hash = (hash * 31 + r.label.charCodeAt(i)) >>> 0;
+      var badge = el("span", "recurring-thumb recurring-initials", initials);
+      badge.style.setProperty("--thumb-hue", String(hash % 360));
+      badge.setAttribute("aria-hidden", "true");
+      return badge;
+    }
     function row(r) {
       var tr = el("tr", "recurring-row " + r.tone);
-      var name = el("td"); name.appendChild(el("span", "recurring-name", r.label));
+      var name = el("td", "recurring-name-cell"); name.appendChild(recurringThumb(r));
+      name.appendChild(el("span", "recurring-name", r.label));
       name.appendChild(el("small", "recurring-meta", r.source === "bank" ? "bank · " + r.count + " payments since " + shortDate(r.first, true) : r.count + " charges since " + shortDate(r.first, true)));
       tr.appendChild(name);
       var amt = el("td", "num", fmt(r.amount));

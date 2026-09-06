@@ -2183,3 +2183,11 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 @media (max-width: 760px) {
   .recurring-table th:nth-child(3), .recurring-table td:nth-child(3), .recurring-table th:nth-child(4), .recurring-table td:nth-child(4) { display: none; }
 }
+
+/* Recurring charge thumbnails: bundled logo or an initials badge. */
+.recurring-name-cell { display: grid; grid-template-columns: 26px 1fr; column-gap: 10px; align-items: start; }
+.recurring-name-cell .recurring-thumb { grid-row: 1 / span 2; width: 26px; height: 26px; border-radius: 7px; object-fit: contain; background: #fff; border: 1px solid var(--border); padding: 3px; box-sizing: border-box; }
+.recurring-name-cell .recurring-initials { display: inline-flex; align-items: center; justify-content: center; padding: 0; font-size: var(--fs-caption); font-weight: 700; letter-spacing: .02em; color: hsl(var(--thumb-hue) 45% 28%); background: hsl(var(--thumb-hue) 55% 88%); border-color: hsl(var(--thumb-hue) 40% 78%); }
+:root[data-theme="dark"] .recurring-name-cell .recurring-initials { color: hsl(var(--thumb-hue) 60% 82%); background: hsl(var(--thumb-hue) 35% 22%); border-color: hsl(var(--thumb-hue) 30% 32%); }
+.recurring-name-cell .recurring-name { grid-column: 2; }
+.recurring-name-cell .recurring-meta { grid-column: 2; }

@@ -72,8 +72,9 @@ an existing month is rejected.
   amount, detected from the rows alone after the third charge: latest
   amount against the usual one, cadence, last and next date, and a status of
   due, not seen since, or stopped (no charge for over two intervals); the
-  summary states the monthly equivalent. Selecting a row opens it in
-  Transactions.
+  summary states the monthly equivalent. Insurance premiums are left to the
+  Insurance tab. Each row carries the bundled brand logo where one matches,
+  otherwise an initials badge; selecting a row opens it in Transactions.
 - **Income** — the hand-entered salary sheet (`manual/salary.json`) and an
   outlook derived from salary-labelled bank credits: recurring payroll sets
   the base, a bonus month is forecast only when it beat ordinary pay by 25% in
