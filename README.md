@@ -42,7 +42,9 @@ Edit `manual/identity.json`, add PDFs under `statements/<year>/`, run
 `./scripts/launch_dashboard.ps1 -Port 3403` if both must run together. Give
 the clone its own identity without touching tracked files: copy
 `examples/branding.example.json` to `manual/branding.json` (port, monogram,
-title, light and dark brand colours) and drop a `favicon.svg` or
+title, light and dark brand colours, and `tabs`: which tabs this clone shows
+and in what order, so each person keeps the features they use and the
+header stays readable) and drop a `favicon.svg` or
 `favicon.ico` into `manual/branding/`; the server and the launcher take
 their default port from it, the colours are published as
 `data/branding.json`, and the private favicon is served in place of the

@@ -1,6 +1,7 @@
 {
   "_comment": "Copy to manual/branding.json to give this clone its own identity. Colours are hex; the tracked defaults (N monogram, green) apply to any key left out. Put a favicon.svg and/or favicon.ico in manual/branding/ to replace the tracked ones.",
   "port": 3403,
+  "tabs": ["overview", "income", "insurance", "networth", "travel", "split", "transactions"],
   "monogram": "Yx",
   "title": "Yx's finance tracker",
   "brand": "#6b5bd6",

@@ -51,8 +51,19 @@ def read_branding():
         value = load_json(BRANDING_PATH)
     except ValueError:
         return {}
+    if not isinstance(value, dict):
+        return {}
     allowed = {"monogram", "title", "brand", "brandInk", "brandDark", "brandInkDark"}
-    return {k: str(v)[:80] for k, v in value.items() if k in allowed and isinstance(v, str)} if isinstance(value, dict) else {}
+    result = {k: str(v)[:80] for k, v in value.items() if k in allowed and isinstance(v, str)}
+    # Which tabs this clone shows, in order. Anything not listed stays out of
+    # the header, so each person keeps the features they actually use.
+    tabs = value.get("tabs")
+    if isinstance(tabs, list):
+        result["tabs"] = [t for t in tabs if isinstance(t, str) and t in TAB_IDS][:len(TAB_IDS)]
+    return result
+
+
+TAB_IDS = ("overview", "income", "insurance", "home", "networth", "travel", "games", "split", "transactions")
 
 
 DEFAULT_PORT = 3402

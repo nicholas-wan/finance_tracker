@@ -2374,3 +2374,10 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   #travel-kpis.kpis-five .kpi:last-child { grid-column: 1 / -1; }
   .partner-row { grid-template-columns: 62px minmax(0, 1fr) 80px; }
 }
+
+/* Header room: below 1180px the Wi-Fi share button keeps only its icon (the
+   label stays for screen readers), so the tab row is not squeezed. */
+@media (max-width: 1180px) and (min-width: 761px) {
+  .share-button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+  .share-button { padding-left: 9px; padding-right: 9px; }
+}

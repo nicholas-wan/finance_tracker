@@ -7622,10 +7622,25 @@
       var brand = document.querySelector("h1.brand");
       if (brand) brand.title = document.title;
     }
+    // Only the listed tabs, in the listed order; each person keeps the
+    // features they use and the header stays readable. Runs before the tab
+    // buttons are wired, so keyboard order follows what is shown.
+    if (Array.isArray(branding.tabs) && branding.tabs.length) {
+      var nav = document.getElementById("tabs");
+      var keep = branding.tabs.filter(function (name) { return document.getElementById("tab-" + name); });
+      if (keep.indexOf("overview") === -1) keep.unshift("overview");
+      // Panes stay in the document (renderers still address them); only the
+      // buttons go, so a hidden tab is simply unreachable.
+      Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (button) {
+        if (keep.indexOf(button.getAttribute("data-tab")) === -1) button.remove();
+      });
+      keep.forEach(function (name) { var button = document.getElementById("tab-" + name); if (button) nav.appendChild(button); });
+    }
   }
-  loadJson("data/branding.json").then(applyBranding).catch(function () { /* defaults stand */ });
 
-  loadJson("data/transactions.json")
+  loadJson("data/branding.json").catch(function () { return {}; })
+    .then(applyBranding)
+    .then(function () { return loadJson("data/transactions.json"); })
     .then(function (json) {
       data = json;
       applyIdentity();

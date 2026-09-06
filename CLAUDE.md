@@ -10,9 +10,12 @@
 - Clone identity is private: `manual/branding.json` (port, monogram, title,
   colours) and `manual/branding/favicon.*`. Yx's is port 3403, purple "Yx";
   this clone has none and uses the tracked defaults (3402, green "N").
-- Every tab exists in both clones and shows whatever its data holds. Travel
-  is fed by Travel-category charges plus Yx's Trip.com/Klook/WeChat imports;
-  Home and Net worth are empty in her clone until she records something.
+- Every tab exists in the code; `tabs` in each clone's `manual/branding.json`
+  decides which are shown. Nicholas: Overview, Income, Insurance, Home, Net
+  worth, Games, Split, Transactions (no Travel). Yx: Overview, Income,
+  Insurance, Net worth, Travel, Split, Transactions (no Home, no Games).
+  Features unique to one person stay unique by that list, not by code; do
+  not add a tab to the other clone's list unless asked.
 - Yx's in-page "mark verified" insurance control was dropped in the merge;
   verification lives on the policy record (`verification` object).
 - The pre-commit privacy hook stops on 10-digit numbers; Yx's test fixtures
