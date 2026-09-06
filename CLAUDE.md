@@ -56,12 +56,15 @@
   per year (year selector); **Transaction history** with a 12-month range
   and "See balances" gives the balance at the window start. Snapshots are
   recorded to the day they are "as at", with the page named as the source.
-- **DBS home loan**: first disbursement taken as 26 Mar 2026 from the CPF OA
-  deductions (S$1,500 + S$245.29 that day; HDB's S$602 stopped after 8 Feb
-  2026); DBS deducts S$495 from OA monthly from 12 Jun 2026. Lock-in end
-  26 Mar 2029, notice 60 days. The outstanding balance and the cash part of
-  the instalment are not on any imported statement - only DBS digibank has
-  them. The Yx tracker has no loan debits either.
+- **DBS home loan** — settled 6 Sep 2026 from DBS digibank: start date
+  **1 May 2026** (the 26 Mar 2026 OA items were refinancing fees), tenure 26
+  years to Apr 2052, outstanding S$251,726.63 on 6 Sep 2026, instalment
+  S$990/month entirely by CPF (Nicholas's OA S$495 from 12 Jun 2026; the rest
+  presumably Yx's CPF, unverified). Lock-in ends 1 May 2029, notice 60 days,
+  review date 1 Feb 2029. The balance lives on the Home mortgage record
+  (`balance`/`balanceDate`) and feeds the Net worth tab as a derived
+  liability; refresh it there, not in net_worth.json. Only digibank shows
+  the balance - no loan debit reaches either tracker's statements.
 - IBKR, SRS and fixed-deposit **contributions** are derived from the bank
   statements (flows panel); they are never used as values. A broker value
   must come from the broker's portal or statement.
