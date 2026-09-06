@@ -26,3 +26,13 @@ The files are bundled locally so the dashboard does not make runtime logo reques
 
 These marks remain the property of their respective owners and are used only to
 identify transactions in this private dashboard.
+
+Retrieved 2026-09-06 for the Games sub-tab, from each site's own favicon:
+
+| Merchant | Local file | Official source |
+| --- | --- | --- |
+| Kuro Games | `kuro-games.ico` | <https://www.kurogames.com/favicon.ico> |
+| Steam | `steam.ico` | <https://store.steampowered.com/favicon.ico> |
+| G2G marketplace | `g2g.ico` | <https://www.g2g.com/favicon.ico> |
+| ZeusX marketplace | `zeusx.png` | <https://www.zeusx.com/favicon.ico> (served as PNG) |
+| Chaos Zero Nightmare (Com2uS) | `com2us.ico` | <https://www.com2us.com/favicon.ico> |

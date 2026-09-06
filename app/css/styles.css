@@ -2414,3 +2414,10 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .tabbar-inner { padding: 6px 10px; }
   .tabs { order: 0; flex: none; }
 }
+
+/* Games sub-tab: publisher marks beside the game name and in the pills. */
+.game-logo { width: 18px; height: 18px; border-radius: 5px; object-fit: contain; background: #fff; border: 1px solid var(--border); padding: 1px; box-sizing: border-box; vertical-align: -4px; margin-right: 7px; flex: 0 0 auto; }
+.game-logo-glyph { display: inline-flex; align-items: center; justify-content: center; color: var(--text-2); background: var(--surface-2); }
+.game-logo-glyph .icon { width: 12px; height: 12px; }
+.cat-row .game-name { display: inline-flex; align-items: center; }
+.pill .game-logo { margin-right: 6px; width: 16px; height: 16px; }

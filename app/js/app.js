@@ -242,8 +242,36 @@
     { name: "Ya Kun", src: "assets/merchant-logos/ya-kun.svg", pattern: /YA KUN/ },
     { name: "ShopBack", src: "assets/merchant-logos/shopback.ico", pattern: /SHOPBACK/ },
     { name: "The Coffee Bean", src: "assets/merchant-logos/coffeebean.png", pattern: /COFFEE\s+BEAN/ },
-    { name: "Singapore public transport", src: "assets/merchant-logos/singapore-transit.svg", pattern: /BUS[\/\s-]*MRT/ }
+    { name: "Singapore public transport", src: "assets/merchant-logos/singapore-transit.svg", pattern: /BUS[\/\s-]*MRT/ },
+    { name: "Kuro Games", src: "assets/merchant-logos/kuro-games.ico", pattern: /KURO GAMES/ },
+    { name: "Steam", src: "assets/merchant-logos/steam.ico", pattern: /STEAMGAMES/ },
+    { name: "G2G", src: "assets/merchant-logos/g2g.ico", pattern: /G2G\.COM/ },
+    { name: "ZeusX", src: "assets/merchant-logos/zeusx.png", pattern: /ZEUSX/ },
+    { name: "Chaos Zero Nightmare (Com2uS)", src: "assets/merchant-logos/com2us.ico", pattern: /BAHJASUQ/ }
   ];
+  // Game publishers and marketplaces as the Games sub-tab names them; the
+  // catch-all "Other games" gets the gamepad glyph instead of a brand.
+  var GAME_LOGOS = {
+    "HoYoverse": "assets/merchant-logos/hoyoverse.ico",
+    "Kuro Games": "assets/merchant-logos/kuro-games.ico",
+    "Steam": "assets/merchant-logos/steam.ico",
+    "G2G marketplace": "assets/merchant-logos/g2g.ico",
+    "ZeusX marketplace": "assets/merchant-logos/zeusx.png",
+    "Chaos Zero Nightmare": "assets/merchant-logos/com2us.ico"
+  };
+  function gameLogo(name) {
+    var src = GAME_LOGOS[name];
+    if (!src) {
+      var glyph = el("span", "game-logo game-logo-glyph");
+      glyph.appendChild(icon("gamepad"));
+      glyph.setAttribute("aria-hidden", "true");
+      return glyph;
+    }
+    var image = el("img", "game-logo");
+    image.src = src; image.alt = ""; image.setAttribute("aria-hidden", "true");
+    image.loading = "lazy"; image.decoding = "async";
+    return image;
+  }
   function merchantLogo(value) {
     var t = value && typeof value === "object" ? value : null;
     if (t && t.grab) return MERCHANT_LOGOS[0];
@@ -5095,14 +5123,19 @@
       var g = t.game || "Other games";
       byGame[g] = (byGame[g] || 0) + signed(t);
     });
-    var gameNames = Object.keys(byGame).sort(function (a, b) { return byGame[b] - byGame[a]; });
+    // A game whose charges net to nothing in the period (refunded, or only
+    // sales) has no bar worth drawing and no pill worth pressing.
+    var gameNames = Object.keys(byGame).filter(function (g) { return Math.round(byGame[g] * 100) > 0; })
+      .sort(function (a, b) { return byGame[b] - byGame[a]; });
     if (state.game !== "All" && gameNames.indexOf(state.game) === -1) state.game = "All";
 
     var pills = document.getElementById("game-pills");
     clear(pills);
     ["All"].concat(gameNames).forEach(function (g) {
-      var b = el("button", "pill" + (g === state.game ? " active" : ""),
-        g === "All" ? "All games" : g);
+      var b = el("button", "pill" + (g === state.game ? " active" : ""));
+      var logo = g === "All" ? null : gameLogo(g);
+      if (logo) b.appendChild(logo);
+      b.appendChild(document.createTextNode(g === "All" ? "All games" : g));
       setPressed(b, g === state.game);
       b.addEventListener("click", function () { state.game = g; renderGames(); });
       pills.appendChild(b);
@@ -5179,7 +5212,11 @@
     var max = gameNames.length ? Math.max(byGame[gameNames[0]], 1) : 1;
     gameNames.forEach(function (name, i) {
       var row = el("div", "cat-row");
-      row.appendChild(el("span", "name", name));
+      var label = el("span", "name game-name");
+      var logo = gameLogo(name);
+      if (logo) label.appendChild(logo);
+      label.appendChild(document.createTextNode(name));
+      row.appendChild(label);
       var track = el("div", "track");
       var fill = el("div", "fill");
       fill.style.width = Math.max(1, Math.round((Math.max(byGame[name], 0) / max) * 100)) + "%";
