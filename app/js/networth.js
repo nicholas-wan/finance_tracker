@@ -57,13 +57,26 @@
     return months;
   }
   function totalsFor(all, month) {
-    var byGroup = {}, assets = 0, liabilities = 0;
+    var byGroup = {}, assets = 0, liabilities = 0, values = {};
     all.forEach(function (s) {
       var p = valueAt(s, month); if (!p) return;
       var g = s.account.group; byGroup[g] = (byGroup[g] || 0) + p.value;
+      values[s.account.id] = g === 'liabilities' ? -p.value : p.value;
       if (g === 'liabilities') liabilities += p.value; else assets += p.value;
     });
-    return { month: month, byGroup: byGroup, assets: assets, liabilities: liabilities, net: assets - liabilities };
+    return { month: month, byGroup: byGroup, values: values, assets: assets, liabilities: liabilities, net: assets - liabilities };
+  }
+  // Change is measured only across accounts recorded at both dates; an account
+  // that first appears in between (a loan balance read for the first time, a
+  // new broker) would otherwise read as money gained or lost.
+  function changeBetween(all, then, now) {
+    var delta = 0, excluded = [];
+    all.forEach(function (s) {
+      var id = s.account.id, a = then.values[id], b = now.values[id];
+      if (a != null && b != null) delta += b - a;
+      else if (a != null || b != null) excluded.push(s.account.name);
+    });
+    return { delta: delta, excluded: excluded };
   }
 
   // ---------- Rendering ----------
@@ -73,15 +86,17 @@
     var oldest = null, newest = null;
     all.forEach(function (s) { var p = latest(s); if (p) { if (!oldest || p.date < oldest) oldest = p.date; if (!newest || p.date > newest) newest = p.date; } });
     var back = history.length > 12 ? history[history.length - 13] : history[0];
-    var change = back && history.length > 1 ? now.net - back.net : null;
+    var change = back && history.length > 1 ? changeBetween(all, back, now) : null;
     var span = back ? monthsBetween(back.month, now.month) : 0;
+    var homeOnly = (now.byGroup.property || 0) - (now.byGroup.liabilities || 0), showExcl = now.byGroup.property || now.byGroup.liabilities;
     root.innerHTML =
       '<header class="nw-heading"><div><h2>Net worth</h2><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Values carry forward until you record a newer one, so the as-at dates matter.</p></div>' +
-      '<div class="nw-total"><span>Net worth</span><strong>' + money0(history.length ? now.net : null) + '</strong><small>' + (newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' · oldest ' + date(oldest) : '') : 'No balances recorded yet') + '</small></div></header>' +
+      '<div class="nw-total"><span>Net worth</span><strong>' + money0(history.length ? now.net : null) + '</strong><small>' + (newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' · oldest ' + date(oldest) : '') : 'No balances recorded yet') + '</small>' +
+      (showExcl ? '<small>Excluding property and home loan: ' + money0(now.net - homeOnly) + (now.byGroup.liabilities && !now.byGroup.property ? ' · no property value recorded against the loan' : '') + '</small>' : '') + '</div></header>' +
       '<div class="nw-kpis">' +
         kpi('Assets', money0(now.assets), Object.keys(now.byGroup).filter(function (g) { return g !== 'liabilities' && now.byGroup[g]; }).map(function (g) { return GROUP_NAME[g] + ' ' + money0(now.byGroup[g]); }).join(' · ') || 'nothing recorded', null, 'up') +
         kpi('Liabilities', money0(now.liabilities), now.liabilities ? 'subtracted from assets' : 'none recorded', null, 'down') +
-        kpi(span ? 'Change over ' + span + ' month' + (span === 1 ? '' : 's') : 'Change', change == null ? '—' : signed(change), back && span ? 'since ' + monthLabel(back.month) : 'needs two dated balances', change == null ? null : change >= 0 ? 'good' : 'bad', 'trend') +
+        kpi(span ? 'Change over ' + span + ' month' + (span === 1 ? '' : 's') : 'Change', change == null ? '—' : signed(change.delta), back && span ? 'since ' + monthLabel(back.month) + (change && change.excluded.length ? ' · excludes ' + change.excluded.join(', ') + ' (not recorded at both dates)' : '') : 'needs two dated balances', change == null ? null : change.delta >= 0 ? 'good' : 'bad', 'trend') +
         kpi('CPF', money0(now.byGroup.cpf || null), cpfNote(all), null, 'scale') +
       '</div>' +
       '<section class="nw-panel"><div class="nw-panel-head"><div><h3>History</h3><p class="nw-muted">Month-end view. Each account holds its last recorded balance until the next one.</p></div></div><div class="nw-chart" id="nw-chart"></div></section>' +

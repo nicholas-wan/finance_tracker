@@ -1,62 +1,34 @@
 # UOB finance tracker
 
-A private local dashboard for UOB credit-card and ONE account statements. It tracks
-spending, income, investments, insurance, shared household expenses, game sales, balances, data
-quality, and suspicious-transaction reviews. The app is plain HTML, CSS, and
-JavaScript with no build step or external CDN.
+A private local dashboard for UOB credit-card and ONE account statements:
+spending, income, investments, insurance, the household register, net worth,
+shared expenses, game sales, balances, data quality and suspicious-transaction
+reviews. Plain HTML, CSS and JavaScript; no build step, no CDN.
 
-## Run locally
+## Run
 
 ```powershell
 python scripts/serve.py
 ```
 
-Open http://localhost:3402. The editable server binds only to `127.0.0.1` and is
-required for saving edits and review decisions.
+Open http://localhost:3402. The editable server binds to `127.0.0.1` only and
+is required for saving anything. The desktop **Finances** shortcut runs
+`scripts/launch_dashboard.vbs`, which starts one server without a console
+window, reuses a healthy hand-started server, and stops its own server about
+fifteen seconds after the last dashboard tab closes (two minutes after a
+browser crash). `python -m http.server 3402 --directory app` gives a view-only
+copy.
 
-### Desktop or taskbar launcher
+**Share on Wi-Fi** (header button, editable server only) serves a read-only
+copy on port 4402 (`--share-port`) behind a random code copied to the
+clipboard as `http://<this PC>:4402/?k=<code>`. It refuses every write, never
+lists folders, and stops after two hours, on **Stop sharing**, or when the
+server exits. Editing never leaves this computer.
 
-The repository includes `scripts/launch_dashboard.vbs` and
-`scripts/launch_dashboard.ps1`. The desktop **Finances** shortcut runs them without
-opening a PowerShell window, starts one editable server, and opens the dashboard.
-Right-click the shortcut and choose **Show more options → Pin to taskbar**.
+### A second household copy
 
-Launcher-started servers track open dashboard tabs. Closing the last tab normally
-stops the server within about fifteen seconds; the grace period is long enough that
-reloading the page on a busy machine does not stop the server behind it. After a
-browser crash, the heartbeat timeout stops it within about two minutes. Multiple
-dashboard tabs are supported. Running `python scripts/serve.py` manually remains
-persistent until `Ctrl+C`; the launcher reuses a healthy manually started server and
-only opens the dashboard against it, rather than replacing it.
-
-For a view-only dashboard:
-
-```powershell
-python -m http.server 3402 --directory app
-```
-
-### Share on Wi-Fi
-
-The **Share on Wi-Fi** button in the header (editable server only) opens a
-read-only copy of the dashboard on every network interface on port 4402
-(`--share-port` overrides it), copies a link of the form
-`http://<this PC's address>:4402/?k=<code>` to the clipboard, and shows it with
-**Copy** and **Stop sharing** buttons. The copy runs inside the dashboard
-process, so it cannot outlive it; it answers only to requests carrying the
-random code (the first visit stores it as a cookie), never lists folders, and
-refuses every write. Whoever has the link can read every statement row, so the
-share stops by itself after two hours, when you press Stop, or when the
-dashboard server exits. While a share is live the server ignores auto-stop, so
-closing your own tab does not cut the guest off. Windows may ask once to allow
-Python through the firewall on private networks. Editing never leaves this
-computer.
-
-## Create a separate household copy
-
-Use a separate clone rather than putting two people's source data in one working
-directory. Private inputs and generated output are Git-ignored, so an ordinary
-clone copies the application but not `statements/`, `manual/`, `app/data/`, or
-backups from this tracker.
+Clone the repository again rather than mixing two people's data; `statements/`,
+`manual/` and `app/data/` are Git-ignored, so a clone carries only the app.
 
 ```powershell
 git clone <repository-url> UOB_finance_yx
@@ -65,24 +37,13 @@ New-Item -ItemType Directory -Force manual | Out-Null
 Copy-Item examples/identity.example.json manual/identity.json
 ```
 
-Edit `manual/identity.json`, place the other person's PDFs under
-`statements/<year>/`, then run `python scripts/import_all.py --strict`. If both
-trackers need to be open together, give the second one a different local port:
-
-```powershell
-./scripts/launch_dashboard.ps1 -Port 3403
-```
-
-Do not copy this repository's `manual/`, `statements/`, or `app/data/` folders
-into the new clone. Back up each clone's private folders separately.
-
-Give the clone its own header identity: change the monogram text in the
-`.brand-mark` SVG in `app/index.html`, the `--brand` and `--brand-ink` colours
-(light and dark) at the top of `app/css/styles.css`, and `app/favicon.svg`.
+Edit `manual/identity.json`, add PDFs under `statements/<year>/`, run
+`python scripts/import_all.py --strict`, and launch with
+`./scripts/launch_dashboard.ps1 -Port 3403` if both must run together. Give
+the clone its own monogram (`.brand-mark` in `app/index.html`), `--brand`
+colours (`app/css/styles.css`) and `app/favicon.svg`.
 
 ## Import statements
-
-Place PDFs in `statements/<year>/`, then run:
 
 ```powershell
 python -m pip install -r requirements.txt
@@ -90,401 +51,132 @@ python scripts/import_all.py
 ```
 
 Parsing fails closed: an unreadable row, unreconciled card section, contradictory
-amount, or broken balance chain aborts the run without replacing generated data.
-The importer parses and validates all three generated files in a private staging
-directory, stamps them with one generation ID, then publishes the dashboard last.
-This prevents a failed or overlapping import from exposing a half-new dataset.
-Validation checks stable IDs, dates, provenance, account continuity, manual
-references, and source-to-dashboard totals. Audit history is exempt from reference
-checks because history may outlive the rows it describes. Use `python
-scripts/import_all.py --strict` to publish only when unresolved categories,
-ownership, provenance, and suspicious checks are also clear. Run
-`python scripts/validate_data.py --strict` to apply the same strict gate to the
-currently published files without importing anything.
-
-Statement months come from PDF contents. Importing a second source for an existing
-month is rejected, while legitimate identical transactions within a statement are
-preserved.
+amount or broken balance chain aborts the run without touching published data.
+The importer builds and validates all generated files in a staging directory
+under one generation ID, then publishes last, so a failed or overlapping run
+never exposes a half-new dataset. `--strict` publishes only when categories,
+ownership, provenance and suspicious checks are also clear;
+`python scripts/validate_data.py --strict` applies the same gate to the
+published files. Statement months come from PDF contents; a second source for
+an existing month is rejected.
 
 ## Dashboard
 
-The **Home** tab keeps appliances/furnishings, home and fire policies, mortgage
-details, and maintenance in a local household register. The collection uses
-compact, dark-mode-compatible cards and locally bundled product thumbnails;
-items without a product photo use a brand or supplier logo when available,
-with item icons as the fallback. Logos retain readable backdrops in both themes,
-and their sources are credited separately from product photographs;
-selecting a card opens its costs, a key-dates timeline (purchase, delivery,
-installation, warranty start and end), warranty coverage, document link, and
-notes, and selecting the backdrop closes it. Each card names the first thing
-still missing (receipt, cost, date, or document) instead of a generic
-"needs info" label; model and serial numbers have Copy buttons in the detail
-view. The tab has its own visual treatment (a serif title on a tinted band) on
-top of the shared tokens, drawn icons rather than text glyphs, and no coloured
-edge borders or kicker labels, following the Impeccable craft rules in
-`app/css/home.css`. Appliance records are maintained in
-the private data file rather than edited in the browser. Insurance, mortgage, and
-maintenance records remain editable. Existing payments can be linked to those
-records by searching card or bank transactions, without creating spending or
-changing ownership.
+- **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
+  summary, categories, outflows and the month's ledger. 6M/12M figures on the
+  Transactions page are means; overview baselines are medians.
+- **Income** — the hand-entered salary sheet (`manual/salary.json`) and an
+  outlook derived from salary-labelled bank credits: recurring payroll sets
+  the base, a bonus month is forecast only when it beat ordinary pay by 25% in
+  both of the latest complete years, and 3/5/10-year cards use 3%, 5% and 7%
+  growth. **How this forecast is calculated** shows the live formula.
+- **Insurance** — premiums, coverage and policies per person from
+  `manual/insurance.json`. Scheduled premiums and posted payments are kept
+  separate; a policy paid by GIRO reconciles against bank statements,
+  everything else against card statements. Matured and lapsed policies sit in
+  an archive. Portal-checked policies carry a static **Verified** badge.
+- **Home** — the household register in Git-ignored `manual/home.json`:
+  appliances, fixtures, furniture and pet items with costs, key dates,
+  warranty cover and documents; home and fire policies; the mortgage; and
+  maintenance, including prepaid multi-visit plans as one dated schedule.
+  Items have List, Grid and Coverage (warranty timeline) views, a category and
+  zone rail, and warranty and information filters. Items are read-only in the
+  browser and maintained by the assistant from documents in the Drive
+  **Warranty** folder (`[Category] Brand Model - Document - YYYY-MM-DD.pdf`);
+  insurance, mortgage and maintenance records have forms. **Needs attention**
+  lists policy, mortgage-review, service and warranty-expiry dates within 90
+  days plus unverified records. Saves use origin checks, a write lock, atomic
+  replacement, rotating backups and stale-edit rejection;
+  `app/data/home.json` is the read-only snapshot. The owner's standing
+  decisions on what is and is not verified are in `CLAUDE.md`; as of
+  5 September 2026 every item is Verified with a document and a settled
+  warranty state.
+- **Net worth** — assets minus liabilities. Dated balance snapshots recorded
+  by hand live in Git-ignored `manual/net_worth.json` (accounts grouped as
+  cash, CPF, investments, insurance, property, liabilities). Derived series
+  come from data already present: the UOB ONE closing balance on every
+  statement and the mortgage balance on the Home register. A value carries
+  forward until the next snapshot, so each account shows its as-at date and
+  anything over three months old is marked. The history chart stacks groups
+  by month with liabilities below zero; the 12-month change counts only
+  accounts recorded at both dates, and a second figure excludes property and
+  the home loan. `/api/net-worth` saves one account, snapshot or deletion per
+  request with the same guarantees as Home; `app/data/net_worth.json` is the
+  read-only snapshot. A final panel totals money moved from the bank account
+  to brokers, SRS and fixed deposits as a reference, never a valuation.
+  Insurance counts at net surrender value, not premiums paid.
+- **Games** — game-account sales from `manual/game_sales.json`, kept off the
+  statements.
+- **Split** — the Yx settlement shared with the Overview: opening balances
+  carry forward, `Yx share` is half of `Shared` plus rows assigned to `Yx`.
+- **Transactions** — period, search, category/flow, owner, direction and
+  review filters. Owner chips tag a row (or a merchant group, or the filtered
+  list up to 100 rows) in one click; clicking the active chip clears the tag
+  and hands the row back to `manual/owner_rules.json`. A charge refunded in
+  full by the same merchant within 180 days folds away with its refund.
+  Recognised brands show a locally bundled icon; no third-party logo service
+  is contacted. **Foodpanda**, **Shopee** and **Grab** views match imported
+  order history to card charges only where the match is safe, and show order
+  details in the drawer. **Review transaction** opens the bank row needing
+  attention; decisions are saved and audited per signal. **History** lists
+  manual changes.
 
-Purchase, delivery, installation, and warranty-start dates are separate. The
-collection keeps purchase dates in the detail data while cards lead with delivery
-or installation. Warranty start can explicitly follow installation, delivery, or
-a marketplace delivery date. Unknown values stay blank; purchase totals cover
-only priced, non-archived appliances and are not estimates of current value.
-
-**Needs attention** lists past or upcoming policy, mortgage-review, and service
-dates through the next 90 days, plus a collapsible list of unverified records.
-Verified appliance warranties appear when they expire within 90 days. A verified
-item with no delivery or installation date is asked for one only while its cover
-could still depend on it; once the warranty has expired or is not tracked, or an
-explicit warranty start date is recorded, the missing date no longer counts
-against the record. A policy
-date from an unverified document prompts a renewal check, not a coverage claim.
-Mortgage reminders use the explicit review date, or suggest the earlier of 90
-days or the recorded notice period before lock-in ends. Maintenance uses an
-explicit next date, or the last service plus the recorded interval (clamped to
-month-end). A prepaid multi-visit plan (such as the three-year Happie filter
-package) is one maintenance record carrying a `schedule` of dated steps, shown
-as a single card with each step marked done, overdue, or upcoming; `linkedRecord`
-ties it to the appliance so the card borrows that item's thumbnail and the item
-view lists the schedule. These reminders appear in the dashboard, not desktop
-notifications.
-
-Home records live in Git-ignored `manual/home.json`. Saves use the server's local
-origin checks, write lock, atomic replacement and rotating backups, and reject
-stale edits from another tab. A failed snapshot write restores the previous
-register. `app/data/home.json` is the read-only snapshot, regenerated on server
-startup and each Home save. Back up `manual/home.json` with the other private
-inputs. The Wi-Fi copy can read records but cannot edit them. Set status to
-**Archived** to retain an old record while excluding it from totals and reminders.
-Keep personal insurance in the existing Insurance register and home policies in
-Home to avoid entering the same policy twice.
-
-In List view, expired warranties use quiet grey text (for example, `Expired · Sep 2025`), and complete records leave To-do empty. Expiry is neutral throughout Home; upcoming expiries retain amber emphasis.
-
-The collection has three views, remembered in the browser: **List** (the
-default, one row per item grouped by category with sortable Item, Cost,
-Warranty and To-do columns), **Grid** (the cards), and **Coverage** (a timeline
-of every dated warranty on one year axis with a Today marker; bars carry the
-term length, the axis stops five years ahead so short covers stay readable and
-longer covers run off the edge with an arrow to their end year; thin lower bars
-are additional cover; dashed bars come from unverified documents). The left rail lists each category and, where it
-earns it, zones underneath (Kitchen & laundry, Living & bedrooms, Bathrooms,
-Whole home, mapped from the exact `room` on each record; longer location notes
-live in `roomDetail`). A category splits into zones only when it holds at
-least eight items and no zone would be left with a single item, so smaller
-categories stay flat with the room shown in each row. The rail filters by
-category or zone and follows the section in view while scrolling. Each item
-carries one primary warranty state (Covered, Expiring within 90 days, Expired,
-Unverified, No warranty, Not tracked); finer detail stays in the item view.
-
-Items can be filtered into **Appliances**, **Fixtures**, **Furniture**, and **Pet**
-(pet appliances such as a self-cleaning litter box), with
-separate cost-source and funding fields. Warranty filters distinguish **Covered**,
-**Expired**, **Unconfirmed**, **No details**, and **Not tracked**. The last state is
-for household goods where warranty follow-up is not useful, so they do not inflate
-the missing-information count. A record may also carry manually confirmed status
-when an exact expiry date is unavailable. Additional cover, such as a compressor,
-extended warranty, or mattress cover, has its own name and expiry. Item details
-can include covered parts, exclusions, an original-item/extended-warranty cost
-breakdown, and a link to official warranty terms.
-
-A **House sheet comparison** preserves the original spreadsheet categories and
-historical totals, alongside live comparisons with the item register. Its
-Renovation and HDB figures are not added to the item total or treated as the
-current loan balance. The snapshot is stored as `costReference` inside
-`manual/home.json` and is preserved by subsequent item saves.
-
-The item collection is intentionally read-only in the dashboard: no Add, Edit,
-or Save controls for appliances, fixtures, or furniture. The owner asks the
-assistant to maintain these records. Insurance, loan, and maintenance records
-retain their forms. Thumbnail attribution and source URLs are recorded in
-`app/assets/home/sources.json`. The downloaded warranty archive was rechecked on
-5 September 2026; the private file inventory and review findings are in
-`manual/warranty_review_20260905.json`, and new certificates (such as the
-Bosch washer's MyBosch extended-warranty certificate) are logged in
-`manual/warranty_upload_20260905.json` with their Drive status. Files follow
-the `[Category] Brand Model - Document - YYYY-MM-DD.pdf` naming used in the
-Drive Warranty folder.
-
-The owner's standing decisions about what the register does and does not
-verify live in `CLAUDE.md` at the repository root, so they are loaded into
-every assistant session: serial numbers are never requested, expired
-warranties need no further verification, receipt-less housewarming gifts are
-warranty **Not tracked**, 2024 purchases with no term on their documents are
-recorded as expired under an assumed standard term, and manufacturer terms
-taken from public pages (Levoit, Omnidesk, Neakasa) are labelled
-listing-based on the record. Household purchases may be paid by either
-person, so a purchase missing from this tracker is looked up in the
-household's second clone before the owner is asked; a record notes who paid
-in `funding`. As of 5 September 2026 every item in the collection is
-Verified with a document link and a settled warranty state.
-
-The **Net worth** tab is assets minus liabilities from two kinds of series.
-Dated balance snapshots recorded by hand live in Git-ignored
-`manual/net_worth.json` (accounts grouped as cash, CPF, investments,
-insurance, property and liabilities; each snapshot is a date, a value and
-where it was read). Derived series come from data the dashboard already has:
-the UOB ONE closing balance on every statement, and a mortgage balance when
-the Home register records one. A value carries forward from its snapshot date
-until the next snapshot, so the tab shows each account's as-at date and marks
-anything more than three months old. The history chart stacks the groups by
-month with liabilities below zero and a net-worth line; the balances panel
-records, lists and removes snapshots and adds accounts through
-`/api/net-worth`, which uses the same revision check, backups, atomic
-publish and rollback as Home saves, publishing the read-only snapshot to
-`app/data/net_worth.json` (regenerated on server start). A final panel totals
-the money moved from the bank account to brokers, SRS and fixed deposits per
-counterparty, net of what came back, as a reference when a broker value is
-recorded; it is not a valuation. Insurance counts at net surrender value,
-never premiums paid, and property stays out of the total until a value is
-recorded.
-
-The Transactions page supports period, search, category/flow, owner, direction, and
-review-status filters.
-
-- The header identifies the tracker at a glance: an **N** monogram tile beside the
-  wordmark, with the green brand colour on the top bar, a faint header tint, and the
-  wordmark, in both themes.
-- The **Income** tab keeps the hand-entered salary sheet (steps and annual
-  income/tax) when `manual/salary.json` has entries and hides those panels when
-  it is empty. The **Income outlook** below it is derived from salary-labelled
-  bank credits only: recurring payroll streams set the monthly base, and a bonus
-  month is forecast separately only when it exceeded the ordinary-pay baseline
-  by at least 25% in both of the latest complete years. Bonuses already received
-  count once, as actual credits, and an early lump sum is never spread over the
-  remaining months. Three-, five-, and ten-year cards show 3%, 5%, and 7% annual
-  growth around the current-year estimate. **How this forecast is calculated**
-  expands to the live formula, the detected bonus months, and the Public Service
-  Division references that distinguish mid-year/year-end AVC, NPAA/13th-month,
-  and performance-linked pay; published civil-service multiples are context only,
-  and no salary target is shown.
-- Card summaries show net cost after refunds, category and owner breakdowns, and
-  6M/12M comparisons. **Group purchases** combines normalized merchants without
-  merging the source rows.
-- A charge refunded in full by the same merchant (same amount, refund on or
-  after the charge, within 180 days, and no other candidate charge) is folded
-  away with its refund by default; the footer's **Show N refunded charges**
-  button brings both rows back, badged. Folding never changes the net cost.
-- Recognized recurring brands show a compact locally bundled icon beside the
-  transaction. Unmatched merchants stay text-only, and the browser never contacts
-  a merchant or third-party logo service to render the ledger.
-- Bank summaries show opening and closing balances, reconciliation, money movement,
-  non-transfer spending, and 6M/12M spending averages. Bank rows can be grouped by
-  counterparty; transfers and internal movements can be hidden.
-- **Review transaction** opens the exact bank row needing attention. Review prompts
-  explain their reason and are not fraud verdicts. Decisions are saved and audited.
-  Recognition is per signal, not per transaction: a new kind of alert on an already
-  recognized transaction re-surfaces. Card checks net refunds against charges from
-  the preceding week per merchant before flagging; a credit never nets a charge
-  that came after it.
-- Owner chips in the Owner column tag a row in one click. Clicking the chip that
-  is already active clears the tag, handing the row back to the merchant
-  fallbacks in `manual/owner_rules.json` rather than pinning it as unassigned.
-  With **Group purchases** on, one chip retags every row in the merchant group,
-  and the table footer can tag the whole filtered list (up to 100 rows) at once.
-  Batches save under a single rebuild and a single audit entry, and roll back
-  whole if any row fails to apply.
-- Opening any transaction shows its original statement description and provenance.
-  Card transactions also support display-name, category, owner, and remark edits.
-  A drawer save only writes an owner tag when the owner itself changed, so
-  editing a category no longer silently confirms the owner it was showing, and
-  choosing **Unassigned** there clears the tag exactly like the chip does,
-  handing the row back to the `manual/owner_rules.json` fallbacks.
-- **History** shows recorded manual changes.
-- **Foodpanda only** filters Transactions to exact order/statement matches.
-  Those rows show the actual merchant with a Foodpanda logo; opening one shows
-  its order number, fulfilment type, timestamp, and total. Mismatches stay in
-  the imported data instead of being forced onto an unrelated card charge.
-- **Shopee only** uses the same Transactions-page pattern: matched charges show
-  the item and seller with a Shopee logo, and the drawer shows the order number,
-  status, total, and every item name captured from the purchase card. Since
-  Shopee hid order dates behind a slider check, only amount groups with equal
-  order/statement cardinality inside the statement-era history are linked, and
-  orders past `statementOrderMaxHistoryIndex` never take part. Reviewed bundled
-  charges can be recorded in `statementAggregates`; each entry names one stable
-  transaction ID, two or more order IDs, and an evidence note, and the order
-  totals must add to the statement charge exactly. The ledger displays those
-  bundles as one row per order, all on the statement date and badged with the
-  combined charge, while the drawer keeps the original charge and the evidence
-  note; the validator re-derives every link.
-- **Grab only** shows every Grab statement charge. Safely matched food rows lead
-  with the stall name, while rides use friendly saved location names where
-  configured. Food item lines and delivery addresses stay out of the interface;
-  unmatched charges remain visible as `Wallet funding · unreconciled` rather
-  than being guessed as food or transport. The drawer keeps the receipt,
-  profile, payment, evidence source, and transport route where available.
-  Business/Corporate matches are categorized as `Payment`; receipts with no
-  profile remain ineligible for matching.
-- The **Insurance** tab shows recurring premiums, coverage and policies for each
-  insured person. Its compact table keeps the key fields visible; selecting a
-  policy expands a concise explanation, with the full record available as a
-  secondary action. Matured and lapsed policies sit in a separate archive modal.
-  Scheduled annualised premiums and posted payments are deliberately separate
-  because a policy may be paid by card, by GIRO from the imported bank account,
-  or by CPF. A policy whose `paymentMethod` names GIRO or a bank account
-  reconciles against the bank statements, everything else against the card
-  statements, each on its own latest-statement cutoff. The statement section
-  identifies missing and unlinked payments, groups repeated payments by policy,
-  shows monthly/yearly cadence and the statement source on one compact line per
-  policy, and states whether the totals tally. Expanding a row reveals its
-  calendar, payment history, and statement entries; a bank entry opens in the
-  bank ledger. Policies checked directly against an insurer portal (a
-  `verification` object in `manual/insurance.json`) carry the same static
-  **Verified** badge in the register and the payment list, with the source and
-  date in the tooltip; there is no user-facing “mark verified” control.
-
-Manual edits live in `manual/` and use stable content-based transaction IDs, so PDF
-renames or extraction line shifts do not detach decisions (replacing a CSV source
-with an equivalent PDF is the one change that still re-mints IDs). Saves and
-generated-data rebuilds are atomic and roll back if validation fails.
+Manual edits use stable content-based transaction IDs, so PDF renames or
+extraction shifts do not detach decisions. Saves and rebuilds are atomic and
+roll back on validation failure.
 
 ## Accounting rules
 
-- Interactive Brokers, SRS, fixed deposits, transfers, and card-bill payments are
-  movements of money, not bank-account spending.
+- Interactive Brokers, SRS, fixed deposits, transfers and card-bill payments
+  are movements of money, not spending.
 - Card `Payment` and `Rebates` are excluded from spending; refunds reduce totals.
-- Salary figures are gross manual values and are not inferred from deposits.
-- The Transactions-page 6M/12M figures are means; overview baselines use medians.
-- The Split tab and Overview share one Yx settlement calculation. Opening balances
-  carry forward until replaced, and each view states its time scope.
-- `Yx share` is half of `Shared` plus transactions assigned directly to `Yx`.
-- Game sales stay on the Games page because they do not pass through statements.
+- Salary figures are gross manual values, never inferred from deposits.
 
 ## Common changes
 
-- Merchant category rules: `CATEGORY_RULES` in `scripts/build_data.py`
-- Game seller rules: `GAME_RULES` in `scripts/build_data.py`
-- Salary history: `manual/salary.json`. `years` rows hold each year's income
-  and tax from the IRAS Notice of Assessment, filed under the income year
-  (Year of Assessment minus one), with `growth` as the ratio against the
-  previous year's income; the validator checks that ratio. Row order does not
-  matter, the dashboard sorts by year.
-- Game-account sales: `manual/game_sales.json`
-- Insurance policies: `manual/insurance.json` (Git-ignored). Monthly premiums are
-  annualised at 12 payments; one-off investments are excluded from recurring
-  totals. Matured and lapsed records remain visible for history but are excluded
-  from current coverage and premium totals. Policy drawers can also show verified
-  status and dates, payment method, face/base values, riders, current valuation,
-  coverage notes, the latest documents checked, an optional plain-language
-  `summary`, a `verification` object with `source` and `checkedAt`, and
-  `reconcileWithImportedStatements: false` for premiums paid through an account
-  that is not imported into this dashboard. A family bundle may use enriched
-  `components` to record each covered person, benefit and premium. A companion
-  `coverageOnly: true` policy contributes coverage without double-counting its
-  premium or policy count. `premiumPaidBy` labels a linked policy paid under
-  someone else's bundle, while `hiddenInRegister: true` can keep a companion
-  record out of the main register. Rebuild the dashboard after changing the file.
-- Foodpanda order history: `manual/foodpanda_orders.json`. It is Git-ignored;
-  matched pandamart orders classify the corresponding generic card charge as
-  `Groceries`, while a saved transaction override remains authoritative.
-- Shopee purchase history: `manual/shopee_orders.json` (also Git-ignored). The
-  import retains older history and item names even when no statement link can
-  be made safely. Set `statementOrderMaxHistoryIndex` at the last order covered
-  by the statement window so an older same-priced order cannot be linked by
-  coincidence; `statementAggregates` records explicitly reviewed order bundles
-  (`transactionId`, `orderIds`, `note`), and the build refuses a bundle whose
-  order totals do not equal the charge or that names an order past the cutoff.
-- Grab Gmail capture: `manual/grab_receipt_search_raw.json` plus any later mail
-  in `manual/grab_receipt_search_supplemental.json`, parsed with `python
-  scripts/import_grab_receipts.py` into `manual/grab_receipts.json`. These files
-  are Git-ignored. Exact receipt references and unique direct-card amount pairs
-  match first. Remaining wallet activity reconciles only when the complete
-  same-day receipt and card-charge groups agree within S$1.50; mixed categories
-  or profiles are never guessed.
-- Grab web history: while signed in, open the Grab Help Centre article **Retrieve
-  detailed Grab transaction history** (`/passenger/en-my/360038782911-How-to-find-my-Grab-transaction-history`).
-  The form can preview and print a PDF for up to 300 transactions from the last
-  six months, filtered by date, Personal/Business receipt type, and
-  Transport/Food/Mart/Express. Split the range into smaller downloads if it
-  reaches 300 rows. Saved rows live in Git-ignored
-  `manual/grab_web_history.json`; the build merges them by booking code, keeps
-  richer Gmail item/payment details, and excludes Business-profile bookings
-  from personal finance. This is useful for filling receipt gaps, but it is
-  service history rather than a GrabPay wallet
-  ledger: it does not show wallet top-ups, transfers, refunds, or running
-  balances, so it cannot by itself allocate every card funding charge.
-- Statement-holder name, own-account labels, fixed-deposit accounts, and trusted
-  counterparties: `manual/identity.json`. Optional `grabLocationAliases` entries
-  map private address fragments to friendly route names such as `Home` without
-  placing the addresses in tracked code. It is Git-ignored, so a fresh clone has
-  none: `parse_one.py` refuses to run without `statementHolderName` (the page
-  header would otherwise stay in every description), while `build_data.py`
-  publishes only the account labels and trusted names the dashboard reads.
-- Owner-policy preview: `python scripts/assign_unassigned.py` (add `--apply` to save); it
-  refuses to run while the dashboard server is up (`--force` overrides) and
-  records one audit entry for the whole batch
-- Suspicious-check thresholds: documented constants at the top of
-  `scripts/risk_checks.py` (card) and in `analyzeAccountTransactions` in
-  `app/js/transaction-grouping.js` (bank)
+| What | Where |
+|---|---|
+| Merchant category and game seller rules | `CATEGORY_RULES`, `GAME_RULES` in `scripts/build_data.py` |
+| Salary history, game sales, settlements | `manual/salary.json`, `manual/game_sales.json`, `manual/settlements.json` |
+| Insurance policies | `manual/insurance.json` (see the file's `summary`, `verification`, `components`, `coverageOnly`, `premiumPaidBy`, `hiddenInRegister`, `reconcileWithImportedStatements` fields) |
+| Foodpanda, Shopee, Grab history | `manual/foodpanda_orders.json`, `manual/shopee_orders.json` (`statementOrderMaxHistoryIndex`, `statementAggregates`), `manual/grab_receipts.json` via `scripts/import_grab_receipts.py`, `manual/grab_web_history.json` |
+| Statement-holder name, own accounts, trusted counterparties, Grab location aliases | `manual/identity.json` (required; the parser refuses to run without it) |
+| Owner-policy preview | `python scripts/assign_unassigned.py` (`--apply` to save; refuses to run beside a live server) |
+| Suspicious-check thresholds | top of `scripts/risk_checks.py` and `analyzeAccountTransactions` in `app/js/transaction-grouping.js` |
 
-## Project layout
+All `manual/` files are Git-ignored. Rebuild after changing them.
+
+## Layout, backup, restore
 
 | Path | Purpose |
 |---|---|
 | `statements/<year>/` | Source PDFs and older CSV exports |
-| `manual/` | Owners, overrides, remarks, reviews, settlements, salary, game sales, and `identity.json` |
-| `scripts/` | Parsers, data builder, validation, and local server |
+| `manual/` | Owners, overrides, remarks, reviews, settlements, salary, game sales, identity, home, net worth |
+| `scripts/` | Parsers, data builder, validation, local server |
 | `app/` | Dashboard source and generated `app/data/` JSON |
-| `tests/` | Parser, classification, API, risk, and grouping regression tests |
+| `tests/` | Parser, classification, API, risk and grouping regression tests |
 
-`statements/`, `manual/`, `app/data/`, and `tmp/` contain private or generated data
-and are Git-ignored.
-
-## Backup and restore
-
-Back up `statements/` and `manual/`; `app/data/` can always be regenerated:
+Back up `statements/` and `manual/`; `app/data/` is regenerated:
 
 ```powershell
 Compress-Archive -Path statements, manual -DestinationPath "$env:USERPROFILE\Documents\UOB_backups\UOB_data_$(Get-Date -Format yyyy-MM-dd).zip"
 ```
 
-To restore, extract both folders into the repository and rerun the import pipeline.
+Every save also keeps the newest 30 timestamped copies of each changed file in
+`manual/backups/`; copy a timestamp's files back and rerun
+`python scripts/build_data.py` to undo. The server seeds its own empty manual
+files on a fresh clone.
 
-Every save also copies the `manual/` files it is about to change into
-`manual/backups/` under one per-save timestamp, keeping the newest 30 copies of each
-file. To undo a save, copy that timestamp's files back over the live ones and rerun
-`python scripts/build_data.py`. The server creates the manual files it maintains
-(owners, remarks, overrides, reviews, history) empty on startup if they are absent,
-so a fresh clone runs without hand-seeding them.
+## Review status and limitations
 
-## Review status
+A September 2026 adversarial review moved private identity into
+`manual/identity.json` (history rewritten), locked the write API to the
+dashboard's own origin, made "Unassigned" clear tags everywhere, anchored
+short classifier tokens at word edges, and added rotating backups. Still
+open: negative patterns for whole-word classifier collisions, a card-testing
+velocity check, a pre-commit grep for names and account numbers, and
+order-dependent occurrence numbers for identical same-day charges.
 
-An adversarial review in September 2026 was worked through in three rounds. Done:
-
-- Private identity (statement-holder name, own-account numbers, trusted
-  counterparties) moved into git-ignored `manual/identity.json`; git history was
-  rewritten and republished so no commit ever held them.
-- The write API accepts only the dashboard's own origin and port, or the
-  browser's `Sec-Fetch-Site` attestation, with a JSON content type, so a page on
-  another localhost port cannot post edits.
-- "Unassigned" clears the stable-ID tag everywhere, so merchant rules apply again.
-- Trusted counterparties match by exact name; `*` opts a long stem into
-  word-boundary prefix matching.
-- Card and account classifiers anchor short tokens at word edges; the card
-  parser keeps wrapped description tails and only recognises card section headers
-  between rows.
-- Saves keep rotating timestamped backups in `manual/backups/`; the server seeds
-  its own empty manual files on a fresh clone; bulk assignment writes one audit
-  entry and refuses to run beside a live server; the launcher reuses a hand-started
-  server; bank reviews save in batches; the dashboard patches saved rows in place
-  instead of refetching; heartbeats are not logged.
-
-Still open, in rough priority:
-
-- Whole-word classifier collisions such as GIANT LEAP or COFFEE TABLE need
-  negative patterns; none occur in the current data.
-- No card-testing check (several small charges from never-seen merchants on one
-  day) and no cross-day velocity check for a new merchant.
-- A pre-commit hook that greps staged diffs for names and account numbers.
-- Identical same-day charges without a bank reference still rely on statement
-  order for their occurrence number; changing their order can move a row-level
-  annotation between otherwise indistinguishable charges.
-
-## Limitations
-
-Categories and suspicious checks are rule-based. Statements do not include receipts,
-device data, precise location or time, merchant category codes, or order details, so
-new and vague descriptors may still require manual review.
+Categories and suspicious checks are rule-based; statements carry no
+receipts, device data, precise time, merchant category codes or order
+details, so vague descriptors may still need manual review.
