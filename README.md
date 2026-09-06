@@ -214,7 +214,7 @@ All `manual/` files are Git-ignored. Rebuild after changing them.
 Back up `statements/` and `manual/`; `app/data/` is regenerated:
 
 ```powershell
-Compress-Archive -Path statements, manual -DestinationPath "$env:USERPROFILE\Documents\UOB_backups\UOB_data_$(Get-Date -Format yyyy-MM-dd).zip"
+Compress-Archive -Path statements, manual -DestinationPath "$env:USERPROFILE\Projects\UOB_backups\UOB_data_$(Get-Date -Format yyyy-MM-dd).zip"
 ```
 
 Every save also keeps the newest 30 timestamped copies of each changed file in
