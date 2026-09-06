@@ -28,12 +28,15 @@ from urllib.parse import parse_qs, urlparse
 
 from file_lock import FinanceWriteLock
 from home_records import validate_record
+from net_worth import EMPTY as NET_WORTH_EMPTY, apply_change as apply_net_worth_change
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 APP_DIR = REPO_ROOT / "app"
 HOME_PATH = REPO_ROOT / "manual" / "home.json"
 HOME_PUBLIC_PATH = APP_DIR / "data" / "home.json"
+NET_WORTH_PATH = REPO_ROOT / "manual" / "net_worth.json"
+NET_WORTH_PUBLIC_PATH = APP_DIR / "data" / "net_worth.json"
 OWNER_PATH = REPO_ROOT / "manual" / "owner_tags.json"
 RISK_REVIEW_PATH = REPO_ROOT / "manual" / "risk_reviews.json"
 ACCOUNT_REVIEW_PATH = REPO_ROOT / "manual" / "account_reviews.json"
@@ -138,6 +141,41 @@ def read_home():
     return load_json(HOME_PATH) if HOME_PATH.exists() else {"revision": 0, "records": []}
 
 
+def read_net_worth():
+    return load_json(NET_WORTH_PATH) if NET_WORTH_PATH.exists() else dict(NET_WORTH_EMPTY)
+
+
+def save_net_worth(payload):
+    """Apply one net-worth change under the same guarantees as a Home save:
+    revision check, backup first, private file and public snapshot written
+    together and both restored if either write fails."""
+    if not isinstance(payload, dict) or type(payload.get("revision")) is not int:
+        raise ValueError("A net-worth revision is required.")
+    with WRITE_LOCK:
+        current = read_net_worth()
+        if payload["revision"] != current.get("revision", 0):
+            raise ValueError("Net worth changed in another tab. Close this form and reload before saving.")
+        changed = apply_net_worth_change(current, payload)
+        updated = {"revision": current.get("revision", 0) + 1,
+                   "updatedAt": datetime.now().isoformat(timespec="seconds")}
+        updated.update(changed)
+        paths = [NET_WORTH_PATH, NET_WORTH_PUBLIC_PATH]
+        originals = {path: path.read_bytes() if path.exists() else None for path in paths}
+        snapshot_backups([NET_WORTH_PATH] if NET_WORTH_PATH.exists() else [])
+        try:
+            for path in paths:
+                path.parent.mkdir(parents=True, exist_ok=True)
+                atomic_write_json(path, updated)
+        except Exception:
+            for path, original in originals.items():
+                if original is None:
+                    path.unlink(missing_ok=True)
+                else:
+                    atomic_write_bytes(path, original)
+            raise
+        return dict(updated, ok=True)
+
+
 def save_home(payload):
     if not isinstance(payload, dict) or type(payload.get("revision")) is not int:
         raise ValueError("A Home revision is required.")
@@ -198,6 +236,7 @@ def manual_file_defaults():
         REMARK_PATH: {"remarksById": {}},
         OVERRIDE_PATH: {"overridesById": {}},
         AUDIT_PATH: {"entries": []},
+        NET_WORTH_PATH: dict(NET_WORTH_EMPTY),
     }
 
 
@@ -1236,6 +1275,13 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             except Exception as error:
                 self.send_json(500, {"ok": False, "error": str(error)})
             return
+        if endpoint == "/api/net-worth":
+            try:
+                with WRITE_LOCK:
+                    self.send_json(200, dict(read_net_worth(), ok=True))
+            except Exception as error:
+                self.send_json(500, {"ok": False, "error": str(error)})
+            return
         if endpoint == "/api/status":
             self.send_json(200, {
                 "ok": True,
@@ -1245,6 +1291,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "remarks": True,
                 "transactionDetails": True,
                 "homeRecords": True,
+                "netWorth": True,
                 "auditHistory": True,
                 "accountReviews": True,
                 # How many bank rows one /api/account-review may carry.
@@ -1322,6 +1369,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
         endpoint = self.path.split("?", 1)[0]
         if endpoint not in {
             "/api/home",
+            "/api/net-worth",
             "/api/client-heartbeat",
             "/api/client-disconnect",
             "/api/owner",
@@ -1338,13 +1386,15 @@ class FinanceHandler(SimpleHTTPRequestHandler):
             length = int(self.headers.get("Content-Length", "0"))
         except ValueError:
             length = 0
-        if length <= 0 or length > (16384 if endpoint == "/api/home" else 4096):
+        if length <= 0 or length > (16384 if endpoint in {"/api/home", "/api/net-worth"} else 4096):
             self.send_json(400, {"ok": False, "error": "Invalid request size."})
             return
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
             if endpoint == "/api/home":
                 result = save_home(payload)
+            elif endpoint == "/api/net-worth":
+                result = save_net_worth(payload)
             elif endpoint in {"/api/client-heartbeat", "/api/client-disconnect"}:
                 if not isinstance(payload, dict):
                     raise ValueError("Request body must be a JSON object.")
@@ -1635,6 +1685,13 @@ class ShareHandler(SimpleHTTPRequestHandler):
             except Exception:
                 self.send_json(500, {"ok": False, "error": "Could not read Home records."})
             return
+        if path == "/api/net-worth":
+            try:
+                with WRITE_LOCK:
+                    self.send_json(200, dict(read_net_worth(), ok=True))
+            except Exception:
+                self.send_json(500, {"ok": False, "error": "Could not read net-worth records."})
+            return
         if path in SHARE_READ_ONLY_API:
             self.send_json(200, SHARE_READ_ONLY_API[path])
             return
@@ -1780,6 +1837,7 @@ def main():
     with WRITE_LOCK:
         HOME_PUBLIC_PATH.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_json(HOME_PUBLIC_PATH, read_home())
+        atomic_write_json(NET_WORTH_PUBLIC_PATH, read_net_worth())
     server = ThreadingHTTPServer(("127.0.0.1", args.port), FinanceHandler)
     server.auto_stop = args.auto_stop
     lifecycle = DashboardLifecycle(server) if args.auto_stop else None

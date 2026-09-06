@@ -1445,6 +1445,7 @@ class ManualFileBootstrapTests(unittest.TestCase):
         "REMARK_PATH": ("transaction_remarks.json", {"remarksById": {}}),
         "OVERRIDE_PATH": ("transaction_overrides.json", {"overridesById": {}}),
         "AUDIT_PATH": ("audit_history.json", {"entries": []}),
+        "NET_WORTH_PATH": ("net_worth.json", {"revision": 0, "accounts": [], "snapshots": []}),
     }
 
     def setUp(self):

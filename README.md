@@ -222,6 +222,26 @@ household's second clone before the owner is asked; a record notes who paid
 in `funding`. As of 5 September 2026 every item in the collection is
 Verified with a document link and a settled warranty state.
 
+The **Net worth** tab is assets minus liabilities from two kinds of series.
+Dated balance snapshots recorded by hand live in Git-ignored
+`manual/net_worth.json` (accounts grouped as cash, CPF, investments,
+insurance, property and liabilities; each snapshot is a date, a value and
+where it was read). Derived series come from data the dashboard already has:
+the UOB ONE closing balance on every statement, and a mortgage balance when
+the Home register records one. A value carries forward from its snapshot date
+until the next snapshot, so the tab shows each account's as-at date and marks
+anything more than three months old. The history chart stacks the groups by
+month with liabilities below zero and a net-worth line; the balances panel
+records, lists and removes snapshots and adds accounts through
+`/api/net-worth`, which uses the same revision check, backups, atomic
+publish and rollback as Home saves, publishing the read-only snapshot to
+`app/data/net_worth.json` (regenerated on server start). A final panel totals
+the money moved from the bank account to brokers, SRS and fixed deposits per
+counterparty, net of what came back, as a reference when a broker value is
+recorded; it is not a valuation. Insurance counts at net surrender value,
+never premiums paid, and property stays out of the total until a value is
+recorded.
+
 The Transactions page supports period, search, category/flow, owner, direction, and
 review-status filters.
 

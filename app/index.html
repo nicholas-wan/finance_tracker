@@ -18,6 +18,7 @@
   })();
 </script>
 <link rel="stylesheet" href="css/home.css?v=21">
+<link rel="stylesheet" href="css/networth.css?v=1">
 </head>
 <body>
 <svg class="sprite" aria-hidden="true" focusable="false"><defs>
@@ -74,6 +75,7 @@
       <button class="tab" id="tab-income" role="tab" aria-selected="false" aria-controls="pane-income" data-tab="income"><svg class="icon"><use href="#i-wallet"/></svg>Income</button>
       <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
       <button class="tab" id="tab-home" role="tab" aria-selected="false" aria-controls="pane-home" data-tab="home"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/></svg>Home</button>
+      <button class="tab" id="tab-networth" role="tab" aria-selected="false" aria-controls="pane-networth" data-tab="networth"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/></svg>Net worth</button>
       <button class="tab" id="tab-games" role="tab" aria-selected="false" aria-controls="pane-games" data-tab="games"><svg class="icon"><use href="#i-gamepad"/></svg>Games</button>
       <button class="tab" id="tab-split" role="tab" aria-selected="false" aria-controls="pane-split" data-tab="split"><svg class="icon"><use href="#i-users"/></svg>Split</button>
       <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
@@ -468,6 +470,8 @@
 
   <section class="pane hidden" id="pane-home" role="tabpanel" aria-labelledby="tab-home"><p>Loading Home records…</p></section>
 
+  <section class="pane hidden" id="pane-networth" role="tabpanel" aria-labelledby="tab-networth"><p>Loading net worth…</p></section>
+
   <footer class="foot" id="meta-foot"></footer>
 </main>
 
@@ -531,5 +535,6 @@
 <script src="js/transaction-grouping.js?v=20260904-1"></script>
 <script src="js/app.js?v=20260905-50"></script>
 <script src="js/home.js?v=23"></script>
+<script src="js/networth.js?v=2"></script>
 </body>
 </html>

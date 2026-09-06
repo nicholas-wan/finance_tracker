@@ -41,6 +41,26 @@
   new documents were uploaded, read them and fill the records; do not ask the
   owner to transcribe them.
 
+## Net worth (`manual/net_worth.json`)
+
+- CPF balances are read from the CPF portal in the owner's Chrome (the tab
+  must be dragged into the Claude tab group first). The dashboard shows
+  today's OA/SA/MA; **Yearly Statement of Account** gives 31 Dec balances
+  per year (year selector); **Transaction history** with a 12-month range
+  and "See balances" gives the balance at the window start. Snapshots are
+  recorded to the day they are "as at", with the page named as the source.
+- **DBS home loan**: first disbursement taken as 26 Mar 2026 from the CPF OA
+  deductions (S$1,500 + S$245.29 that day; HDB's S$602 stopped after 8 Feb
+  2026); DBS deducts S$495 from OA monthly from 12 Jun 2026. Lock-in end
+  26 Mar 2029, notice 60 days. The outstanding balance and the cash part of
+  the instalment are not on any imported statement - only DBS digibank has
+  them. The Yx tracker has no loan debits either.
+- IBKR, SRS and fixed-deposit **contributions** are derived from the bank
+  statements (flows panel); they are never used as values. A broker value
+  must come from the broker's portal or statement.
+- Insurance counts at net surrender value from `manual/insurance.json`
+  valuations, never premiums paid.
+
 ## Working in Google Drive through Chrome
 
 Drive pages stall script injection after the first interaction. `navigate` +

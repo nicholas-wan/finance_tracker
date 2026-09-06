@@ -1,0 +1,132 @@
+/* Net worth tab: balance snapshots from portals combined with the bank
+   closing balances derived from statements. Every colour goes through the
+   theme tokens in styles.css plus the group tokens below. */
+#pane-networth {
+  --nw-line: color-mix(in srgb, var(--text) 11%, transparent);
+  --nw-tint: #e8eef7;
+  --nw-tint-2: #e6efe8;
+  --nw-cash: #185fa5;
+  --nw-cpf: #0f7a5f;
+  --nw-investments: #7f77dd;
+  --nw-insurance: #2e8b83;
+  --nw-property: #d99024;
+  --nw-liabilities: #a32d2d;
+  gap: 0;
+}
+:root[data-theme="dark"] #pane-networth {
+  --nw-tint: #1b2230; --nw-tint-2: #1c2622;
+  --nw-cash: #5b9de0; --nw-cpf: #4fc79e; --nw-investments: #afa9ec;
+  --nw-insurance: #5fc0b6; --nw-property: #e6b866; --nw-liabilities: #f09595;
+}
+.nw-dialog {
+  --nw-line: color-mix(in srgb, var(--text) 11%, transparent);
+  --nw-shadow-modal: 0 24px 60px rgba(28, 28, 26, .22);
+}
+:root[data-theme="dark"] .nw-dialog { --nw-shadow-modal: 0 24px 60px rgba(0, 0, 0, .55); }
+
+/* ---------- Heading band ---------- */
+.nw-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 22px 24px; margin: 0 0 18px; border-radius: 16px; background: linear-gradient(115deg, var(--nw-tint) 0%, var(--nw-tint-2) 100%); border: 1px solid var(--nw-line); }
+.nw-heading h2 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; letter-spacing: -.03em; font-size: 34px; line-height: 1.1; margin: 0 0 6px; }
+.nw-heading p { color: var(--text-2); font-size: var(--fs-md); margin: 0; max-width: 60ch; }
+.nw-total { text-align: right; flex-shrink: 0; }
+.nw-total span, .nw-total small { display: block; color: var(--text-2); font-size: var(--fs-small); }
+.nw-total strong { display: block; font-size: 30px; font-weight: 500; letter-spacing: -.03em; font-variant-numeric: tabular-nums; margin: 4px 0; }
+.nw-muted { color: var(--text-2); font-size: var(--fs-small); }
+.nw-icon { width: 1em; height: 1em; flex: 0 0 auto; vertical-align: -0.12em; }
+
+/* ---------- KPI row ---------- */
+.nw-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.nw-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-soft); }
+.nw-kpi .label { font-size: var(--fs-small); color: var(--text-3); margin: 0 0 3px; display: flex; align-items: center; gap: 6px; }
+.nw-kpi .value { font-size: var(--fs-stat); font-weight: 650; margin: 0; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }
+.nw-kpi .value.good { color: var(--green); }
+.nw-kpi .value.bad { color: var(--red); }
+.nw-kpi .delta { font-size: var(--fs-small); margin: 2px 0 0; color: var(--text-3); }
+
+/* ---------- Panels ---------- */
+.nw-panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow-soft); margin-bottom: 18px; }
+.nw-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; margin-bottom: 10px; flex-wrap: wrap; }
+.nw-panel-head h3 { margin: 0; font-size: var(--fs-lg); font-weight: 600; }
+.nw-panel-head p { margin: 2px 0 0; }
+.nw-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+
+/* ---------- Chart ---------- */
+.nw-chart { position: relative; }
+.nw-chart svg { width: 100%; height: auto; display: block; overflow: visible; }
+.nw-chart .axis text { fill: var(--text-3); font-size: 11px; }
+.nw-chart .axis line { stroke: var(--nw-line); }
+.nw-chart .net { fill: none; stroke: var(--text); stroke-width: 2; }
+.nw-chart .hover { fill: none; stroke: var(--text-3); stroke-dasharray: 3 3; }
+.nw-area[data-group="cash"] { fill: var(--nw-cash); }
+.nw-area[data-group="cpf"] { fill: var(--nw-cpf); }
+.nw-area[data-group="investments"] { fill: var(--nw-investments); }
+.nw-area[data-group="insurance"] { fill: var(--nw-insurance); }
+.nw-area[data-group="property"] { fill: var(--nw-property); }
+.nw-area[data-group="liabilities"] { fill: var(--nw-liabilities); }
+.nw-area { fill-opacity: .55; }
+.nw-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: var(--fs-small); color: var(--text-2); }
+.nw-legend span { display: inline-flex; align-items: center; gap: 6px; }
+.nw-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.nw-legend i.net { width: 14px; height: 2px; border-radius: 0; background: var(--text); }
+.nw-dot-cash { background: var(--nw-cash); } .nw-dot-cpf { background: var(--nw-cpf); } .nw-dot-investments { background: var(--nw-investments); }
+.nw-dot-insurance { background: var(--nw-insurance); } .nw-dot-property { background: var(--nw-property); } .nw-dot-liabilities { background: var(--nw-liabilities); }
+.nw-tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: var(--fs-small); box-shadow: var(--shadow-soft); min-width: 150px; z-index: 2; }
+.nw-tip strong { display: block; margin-bottom: 4px; }
+.nw-tip div { display: flex; justify-content: space-between; gap: 12px; font-variant-numeric: tabular-nums; }
+.nw-chart-empty { padding: 28px 12px; text-align: center; }
+
+/* ---------- Breakdown ---------- */
+.nw-groups { display: grid; gap: 14px; }
+.nw-group { border: 1px solid var(--nw-line); border-radius: 12px; overflow: hidden; }
+.nw-group-head { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 10px 14px; background: color-mix(in srgb, var(--text) 3%, transparent); }
+.nw-group-head h4 { margin: 0; font-size: var(--fs-md); font-weight: 600; display: flex; align-items: center; gap: 8px; }
+.nw-group-head h4 i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
+.nw-group-head strong { font-variant-numeric: tabular-nums; font-weight: 600; }
+.nw-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+.nw-table th { text-align: left; font-weight: 500; color: var(--text-3); font-size: var(--fs-caption); padding: 6px 14px; border-top: 1px solid var(--nw-line); }
+.nw-table td { padding: 9px 14px; border-top: 1px solid var(--nw-line); vertical-align: top; }
+.nw-table td.num, .nw-table th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.nw-table td.act { text-align: right; white-space: nowrap; }
+.nw-name { font-weight: 500; }
+.nw-note { display: block; color: var(--text-2); font-size: var(--fs-small); margin-top: 2px; }
+.nw-stale { color: var(--red); }
+.nw-fresh { color: var(--text-3); }
+.nw-none { color: var(--text-3); font-style: italic; }
+.nw-history { border-top: 1px solid var(--nw-line); background: color-mix(in srgb, var(--text) 2%, transparent); }
+.nw-history td { padding: 6px 14px; border-top: 0; font-size: var(--fs-small); }
+.nw-history table { width: 100%; border-collapse: collapse; }
+.nw-empty { padding: 14px; color: var(--text-3); font-size: var(--fs-small); }
+
+/* ---------- Buttons ---------- */
+.nw-button { border: 1px solid var(--border); background: var(--surface); color: var(--text); font: inherit; font-size: var(--fs-small); padding: 6px 10px; border-radius: 8px; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.nw-button:hover { border-color: var(--text-3); }
+.nw-button.primary { background: var(--brand); color: var(--brand-ink); border-color: var(--brand); font-weight: 600; }
+.nw-button.link { border: 0; background: none; color: var(--accent); padding: 2px 4px; }
+.nw-button.danger { color: var(--red); }
+.nw-button:disabled { opacity: .5; cursor: default; }
+
+/* ---------- Statement flows ---------- */
+.nw-flows { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; }
+.nw-flow { border: 1px solid var(--nw-line); border-radius: 10px; padding: 10px 12px; }
+.nw-flow strong { display: block; font-variant-numeric: tabular-nums; font-size: var(--fs-lg); font-weight: 600; margin: 2px 0; }
+.nw-flow span { color: var(--text-2); font-size: var(--fs-small); display: block; }
+
+/* ---------- Dialog ---------- */
+.nw-dialog { border: 0; border-radius: 16px; padding: 0; width: min(520px, calc(100vw - 32px)); background: var(--surface); color: var(--text); box-shadow: var(--nw-shadow-modal); }
+.nw-dialog::backdrop { background: rgba(0, 0, 0, .35); }
+.nw-dialog-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 18px 20px 10px; }
+.nw-dialog-head h2 { margin: 0; font-size: var(--fs-xl); font-weight: 600; }
+.nw-dialog-body { padding: 0 20px 8px; display: grid; gap: 12px; }
+.nw-dialog-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px 18px; }
+.nw-field { display: grid; gap: 4px; font-size: var(--fs-small); color: var(--text-2); }
+.nw-field input, .nw-field select, .nw-field textarea { font: inherit; font-size: var(--fs-body); color: var(--text); background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; }
+.nw-field textarea { min-height: 60px; resize: vertical; }
+.nw-grid-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+#nw-error { color: var(--red); font-size: var(--fs-small); margin: 0; min-height: 1em; }
+
+@media (max-width: 760px) {
+  .nw-heading { flex-direction: column; align-items: flex-start; }
+  .nw-total { text-align: left; }
+  .nw-table th:nth-child(3), .nw-table td:nth-child(3) { display: none; }
+  .nw-grid-2 { grid-template-columns: 1fr; }
+}

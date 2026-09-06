@@ -6,6 +6,12 @@
       "runtimeExecutable": "python",
       "runtimeArgs": ["scripts/serve.py", "--port", "3402"],
       "port": 3402
+    },
+    {
+      "name": "dashboard-3405",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["scripts/serve.py", "--port", "3405"],
+      "port": 3405
     }
   ]
 }
