@@ -2158,3 +2158,28 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   table { font-size: 11px; }
   .nw-heading, .home-heading { background: none; border: 0; padding: 0 0 8px; }
 }
+
+/* ---------- Year so far ---------- */
+.year-review-panel .panel-head { margin-bottom: 10px; }
+.year-review.kpis .kpi { box-shadow: none; background: var(--surface-2); border-color: transparent; }
+
+/* ---------- Recurring charges ---------- */
+.recurring-summary { margin: 0 0 10px; color: var(--text-2); font-size: var(--fs-body); }
+.recurring-table { width: 100%; border-collapse: collapse; font-size: var(--fs-body); }
+.recurring-table th { text-align: left; font-weight: 500; color: var(--text-3); font-size: var(--fs-caption); padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.recurring-table td { padding: 8px 10px; border-bottom: 1px solid color-mix(in srgb, var(--text) 8%, transparent); vertical-align: top; }
+.recurring-table .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.recurring-name { font-weight: 500; display: block; }
+.recurring-meta { display: block; color: var(--text-3); font-size: var(--fs-caption); margin-top: 1px; }
+.recurring-status { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: var(--fs-caption); font-weight: 600; white-space: nowrap; background: var(--surface-2); color: var(--text-2); }
+.recurring-status.due { background: var(--accent-soft); color: var(--accent); }
+.recurring-status.missing { background: var(--red-soft); color: var(--red); }
+.recurring-status.stopped { color: var(--text-3); }
+.recurring-row.actionable { cursor: pointer; }
+.recurring-row.actionable:hover td { background: color-mix(in srgb, var(--text) 3%, transparent); }
+.recurring-stopped { margin-top: 10px; }
+.recurring-stopped summary { cursor: pointer; color: var(--text-2); font-size: var(--fs-small); padding: 6px 0; }
+.recurring-stopped .recurring-row td { color: var(--text-3); }
+@media (max-width: 760px) {
+  .recurring-table th:nth-child(3), .recurring-table td:nth-child(3), .recurring-table th:nth-child(4), .recurring-table td:nth-child(4) { display: none; }
+}

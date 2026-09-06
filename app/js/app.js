@@ -2050,6 +2050,181 @@
 
   // ---------- Overview ----------
 
+  // ---------- Year so far ----------
+  // Sums the statement months of the selected month's year, up to and
+  // including that month, and compares with the same months a year earlier
+  // when every one of them has a statement.
+  function yearSoFar(month) {
+    var year = month.slice(0, 4);
+    var months = data.months.filter(function (m) { return m.slice(0, 4) === year && m <= month; });
+    var prior = months.map(function (m) { return String(parseInt(year, 10) - 1) + m.slice(4); });
+    var priorComplete = prior.every(function (m) { return data.months.indexOf(m) !== -1; });
+    function sums(list) {
+      var out = { income: 0, spend: 0, invested: 0, incomeMonths: 0 };
+      list.forEach(function (m) {
+        var income = incomeFor(m);
+        out.income += income; if (income > 0) out.incomeMonths += 1;
+        out.spend += cardSpend(m);
+        out.invested += investedFor(m);
+      });
+      return out;
+    }
+    return { year: year, months: months, now: sums(months), prior: priorComplete && prior.length ? sums(prior) : null, priorMonths: prior };
+  }
+  function pctDelta(now, then) {
+    if (!then) return null;
+    var pc = ((now - then) / Math.abs(then)) * 100;
+    return (pc >= 0 ? "+" : "") + pc.toFixed(0) + "%";
+  }
+  function renderYearReview() {
+    var wrap = document.getElementById("year-review");
+    if (!wrap) return;
+    clear(wrap);
+    var y = yearSoFar(state.month);
+    var first = y.months[0], last = y.months[y.months.length - 1];
+    var span = y.months.length === 1 ? monthLabel(first) : monthLabel(first).replace(/ \d{4}$/, "") + "–" + monthLabel(last);
+    document.getElementById("year-review-heading").textContent = y.year + " so far";
+    document.getElementById("year-review-hint").textContent = span + " · " + y.months.length + " statement" + (y.months.length === 1 ? "" : "s") +
+      (y.prior ? " · vs " + monthLabel(y.priorMonths[0]).replace(/ \d{4}$/, "") + "–" + monthLabel(y.priorMonths[y.priorMonths.length - 1]) : " · no full comparison period last year");
+    var n = y.now, p = y.prior;
+    var left = n.income - n.spend;
+    wrap.appendChild(metric("Income", n.income ? fmt0(n.income) : "—",
+      n.income ? (p ? pctDelta(n.income, p.income) + " vs last year" : n.incomeMonths + " salary months") : "no salary credits", null, "wallet"));
+    wrap.appendChild(metric("Card spending", fmt0(n.spend),
+      (p ? pctDelta(n.spend, p.spend) + " vs last year · " : "") + fmt0(n.spend / Math.max(y.months.length, 1)) + " a month", null, "card"));
+    wrap.appendChild(metric("Invested", n.invested ? fmt0(n.invested) : "—",
+      n.invested ? (p ? pctDelta(n.invested, p.invested) + " vs last year" : "moved to investments") : "nothing moved", null, "up"));
+    wrap.appendChild(metric("After card spending", n.income ? fmt0(left) : "—",
+      n.income ? Math.round((left / n.income) * 100) + "% of income kept" + (n.invested > left ? " · investing drew on savings" : "") : "needs salary credits",
+      n.income ? (left >= 0 ? "good" : "bad") : null, "coins"));
+  }
+
+  // ---------- Recurring charges ----------
+  // A merchant that charges at a steady interval and a steady amount: monthly
+  // subscriptions, yearly fees, GIRO premiums. Detected from the rows alone,
+  // so a new subscription appears after its third charge and a cancelled one
+  // shows up as "not seen since".
+  var CADENCES = [
+    { name: "weekly", min: 6, max: 8, perMonth: 30.4 / 7 },
+    { name: "monthly", min: 25, max: 36, perMonth: 1 },
+    { name: "every 2 months", min: 55, max: 70, perMonth: 0.5 },
+    { name: "quarterly", min: 82, max: 100, perMonth: 1 / 3 },
+    { name: "half-yearly", min: 170, max: 195, perMonth: 1 / 6 },
+    { name: "yearly", min: 350, max: 380, perMonth: 1 / 12 }
+  ];
+  var RECURRING_BANK_FLOWS = { "Insurance": 1, "Other": 1, "Cash & NETS": 1 };
+  function dayDiff(a, b) { return Math.round((Date.parse(b + "T00:00:00Z") - Date.parse(a + "T00:00:00Z")) / 86400000); }
+  function addDays(date, days) { var d = new Date(date + "T00:00:00Z"); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); }
+  function median(list) { var s = list.slice().sort(function (a, b) { return a - b; }); var m = s.length >> 1; return s.length % 2 ? s[m] : (s[m - 1] + s[m]) / 2; }
+  function detectRecurring() {
+    var series = {};
+    function add(key, label, row, amount, source) {
+      if (!row.date) return;
+      var s = series[key] || (series[key] = { key: key, label: label, source: source, rows: [] });
+      s.rows.push({ date: row.date, amount: amount, id: row.id, month: row.month });
+    }
+    data.transactions.forEach(function (t) {
+      if (t.type !== "debit" || t.category === "Payment" || t.category === "Rebates") return;
+      add("card:" + (t.merchantKey || t.description), t.displayName || window.FinanceGrouping.merchantDisplayName(t.description), t, t.amount, "card");
+    });
+    account.transactions.forEach(function (t) {
+      if (t.direction !== "withdrawal" || !RECURRING_BANK_FLOWS[t.flow]) return;
+      var who = window.FinanceGrouping.accountCounterparty(t.description) || t.description;
+      add("bank:" + who.toUpperCase(), who, t, t.amount, "bank");
+    });
+    var through = (data.freshness && data.freshness.sourceThrough) || data.months[data.months.length - 1] + "-28";
+    var found = [];
+    Object.keys(series).forEach(function (key) {
+      var s = series[key];
+      var rows = s.rows.slice().sort(function (a, b) { return a.date.localeCompare(b.date); });
+      // One charge per day at most: a same-day duplicate is a review matter, not a cadence.
+      var perDay = {};
+      rows.forEach(function (r) { if (!perDay[r.date]) perDay[r.date] = r; });
+      rows = Object.keys(perDay).sort().map(function (d) { return perDay[d]; });
+      if (rows.length < 3) return;
+      var gaps = [];
+      for (var i = 1; i < rows.length; i++) gaps.push(dayDiff(rows[i - 1].date, rows[i].date));
+      var gap = median(gaps);
+      var cadence = null;
+      CADENCES.forEach(function (c) { if (!cadence && gap >= c.min && gap <= c.max) cadence = c; });
+      if (!cadence) return;
+      // Most gaps must sit inside the cadence band, or this is a habit, not a bill.
+      var regular = gaps.filter(function (g) { return g >= cadence.min * 0.8 && g <= cadence.max * 1.2; }).length;
+      if (regular < Math.ceil(gaps.length * 0.6)) return;
+      var amounts = rows.map(function (r) { return r.amount; });
+      var typical = median(amounts);
+      // A S$1 vending-machine coin that happens to land a year apart is not a bill.
+      if (typical < 5) return;
+      var stable = amounts.filter(function (a) { return Math.abs(a - typical) <= Math.max(typical * 0.15, 1); }).length;
+      if (stable < Math.ceil(amounts.length * 0.6)) return;
+      var last = rows[rows.length - 1];
+      var next = addDays(last.date, Math.round(gap));
+      var tolerance = Math.max(7, Math.round(gap * 0.35));
+      var status, tone;
+      if (dayDiff(next, through) > tolerance * 2 + gap) { status = "Stopped · last " + shortDate(last.date, true); tone = "stopped"; }
+      else if (dayDiff(next, through) > tolerance) { status = "Not seen since " + shortDate(last.date, true); tone = "missing"; }
+      else if (dayDiff(through, next) <= 14) { status = "Due " + shortDate(next, true); tone = "due"; }
+      else { status = "Next " + shortDate(next, true); tone = "active"; }
+      found.push({ key: key, label: s.label, source: s.source, cadence: cadence.name, perMonth: cadence.perMonth,
+        amount: last.amount, typical: typical, count: rows.length, first: rows[0].date, last: last.date, next: next,
+        status: status, tone: tone, monthly: last.amount * cadence.perMonth });
+    });
+    found.sort(function (a, b) {
+      var rank = { missing: 0, due: 1, active: 2, stopped: 3 };
+      return rank[a.tone] - rank[b.tone] || b.monthly - a.monthly;
+    });
+    return { items: found, through: through };
+  }
+  function renderRecurring() {
+    var list = document.getElementById("recurring-list");
+    if (!list) return;
+    clear(list);
+    var result = detectRecurring(), items = result.items;
+    var live = items.filter(function (r) { return r.tone !== "stopped"; });
+    var monthly = live.reduce(function (n, r) { return n + r.monthly; }, 0);
+    var yearly = live.filter(function (r) { return r.cadence === "yearly"; });
+    var missing = live.filter(function (r) { return r.tone === "missing"; });
+    document.getElementById("recurring-hint").textContent = "from statements through " + shortDate(result.through, true);
+    document.getElementById("recurring-summary").textContent = live.length
+      ? "About " + fmt0(monthly) + " a month across " + live.length + " recurring charge" + (live.length === 1 ? "" : "s") +
+        (yearly.length ? ", including " + yearly.length + " yearly" : "") + "." +
+        (missing.length ? " " + missing.length + " expected charge" + (missing.length === 1 ? " has" : "s have") + " not appeared - cancelled, or a missed payment." : "")
+      : "No charge repeats at a steady interval and amount yet; a subscription appears here after its third charge.";
+    if (!items.length) return;
+    var table = el("table", "recurring-table");
+    var head = el("thead"); var hr = el("tr");
+    ["Charge", "Amount", "Every", "Last", "Status"].forEach(function (h, i) { var th = el("th", i === 1 ? "num" : "", h); hr.appendChild(th); });
+    head.appendChild(hr); table.appendChild(head);
+    var body = el("tbody");
+    var stopped = items.filter(function (r) { return r.tone === "stopped"; });
+    function row(r) {
+      var tr = el("tr", "recurring-row " + r.tone);
+      var name = el("td"); name.appendChild(el("span", "recurring-name", r.label));
+      name.appendChild(el("small", "recurring-meta", r.source === "bank" ? "bank · " + r.count + " payments since " + shortDate(r.first, true) : r.count + " charges since " + shortDate(r.first, true)));
+      tr.appendChild(name);
+      var amt = el("td", "num", fmt(r.amount));
+      if (Math.abs(r.amount - r.typical) > Math.max(r.typical * 0.05, 0.5)) amt.appendChild(el("small", "recurring-meta", "usually " + fmt(r.typical)));
+      tr.appendChild(amt);
+      tr.appendChild(el("td", "", r.cadence));
+      tr.appendChild(el("td", "", shortDate(r.last, true)));
+      var st = el("td"); st.appendChild(el("span", "recurring-status " + r.tone, r.status)); tr.appendChild(st);
+      makeActionable(tr, "Show " + r.label + " in Transactions", function () {
+        openTransactions({ source: r.source, search: r.label, month: r.last.slice(0, 7) });
+      });
+      return tr;
+    }
+    live.forEach(function (r) { body.appendChild(row(r)); });
+    table.appendChild(body);
+    list.appendChild(table);
+    if (stopped.length) {
+      var details = el("details", "recurring-stopped");
+      details.appendChild(el("summary", "", stopped.length + " stopped (no charge for over two intervals)"));
+      var t2 = el("table", "recurring-table"); var b2 = el("tbody");
+      stopped.forEach(function (r) { b2.appendChild(row(r)); });
+      t2.appendChild(b2); details.appendChild(t2); list.appendChild(details);
+    }
+  }
+
   function renderKpis() {
     var wrap = document.getElementById("kpis");
     clear(wrap);
@@ -5532,6 +5707,8 @@
     renderFreshness();
     renderCardFeeAlerts();
     renderKpis();
+    renderYearReview();
+    renderRecurring();
     renderDataQuality();
     renderStacked();
     renderKeyMetrics();
@@ -5558,6 +5735,7 @@
     monthSelect.value = m;
     monthSelect.title = statementRange(m);
     renderKpis();
+    renderYearReview();
     renderStacked();
     renderKeyMetrics();
     renderInsights();

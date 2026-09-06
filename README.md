@@ -64,7 +64,16 @@ an existing month is rejected.
 
 - **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
   summary, categories, outflows and the month's ledger. 6M/12M figures on the
-  Transactions page are means; overview baselines are medians.
+  Transactions page are means; overview baselines are medians. **Year so
+  far** sums the selected month's year to date (income, card spending,
+  invested, kept) and compares with the same months a year earlier when all
+  of them have statements. **Recurring charges** lists every merchant or
+  payee that charges at a steady interval (weekly to yearly) and a steady
+  amount, detected from the rows alone after the third charge: latest
+  amount against the usual one, cadence, last and next date, and a status of
+  due, not seen since, or stopped (no charge for over two intervals); the
+  summary states the monthly equivalent. Selecting a row opens it in
+  Transactions.
 - **Income** — the hand-entered salary sheet (`manual/salary.json`) and an
   outlook derived from salary-labelled bank credits: recurring payroll sets
   the base, a bonus month is forecast only when it beat ordinary pay by 25% in
