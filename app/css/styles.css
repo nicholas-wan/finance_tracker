@@ -135,18 +135,23 @@ h2 {
 }
 h2 .icon { color: var(--text-3); }
 
+/* Two-row header: the brand row scrolls away, the tab row below it stays
+   pinned to the top of the window (the same shape as the Avery Plan app). */
 .topbar {
-  position: sticky; top: 0;
   background: color-mix(in srgb, var(--bg) 88%, transparent);
-  border-bottom: 1px solid var(--border); z-index: 5;
-  backdrop-filter: blur(14px);
 }
-/* Equal gutters keep the primary tab bar centred between the title and theme. */
 .topbar-inner {
-  max-width: 1060px; margin: 0 auto; padding: 14px 20px;
-  display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  max-width: 1060px; margin: 0 auto; padding: 14px 20px 10px;
+  display: grid; grid-template-columns: minmax(0, 1fr) auto;
   align-items: center; gap: 16px;
 }
+.tabbar {
+  position: sticky; top: 0; z-index: 5;
+  background: color-mix(in srgb, var(--bg) 88%, transparent);
+  border-bottom: 1px solid var(--border);
+  backdrop-filter: blur(14px);
+}
+.tabbar-inner { max-width: 1060px; margin: 0 auto; padding: 8px 20px; }
 .topbar-inner h1 { justify-self: start; }
 /* Brand lockup: a compact monogram beside the wordmark, sized to the header
    controls (34px) rather than the heading, with the brand colour carried
@@ -408,12 +413,12 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 }
 .insight.actionable:hover::after { color: var(--accent); }
 
-.tabs { display: flex; gap: 2px; justify-self: center; flex-wrap: wrap; }
+.tabs { display: flex; gap: 4px; justify-content: flex-start; flex-wrap: wrap; }
 /* Weight stays fixed across states so the active tab never changes width and
    nudges the centred bar sideways. */
 .tab {
   border: none; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-body);
-  font-weight: 500; padding: 6px 12px; border-radius: 8px; cursor: pointer;
+  font-weight: 500; padding: 7px 14px; border-radius: 999px; cursor: pointer;
   display: flex; align-items: center; gap: 6px;
   transition: transform var(--motion-fast) var(--motion-ease),
     color var(--motion-fast) ease, background-color var(--motion-fast) ease;
@@ -2395,3 +2400,9 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 .subpane.hidden { display: none; }
 .recurring-name-cell .recurring-icon { display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--text-2); background: var(--surface-2); }
 .recurring-name-cell .recurring-icon .icon { width: 15px; height: 15px; }
+
+/* Two-row header on phones: brand row, then the pinned tab row. */
+@media (max-width: 760px) {
+  .tabbar-inner { padding: 6px 10px; }
+  .tabs { order: 0; flex: none; }
+}

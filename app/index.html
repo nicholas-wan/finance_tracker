@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260906-37">
+<link rel="stylesheet" href="css/styles.css?v=20260906-38">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -73,14 +73,6 @@
       <span class="brand-name">Finances</span>
       </button>
     </h1>
-    <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
-      <button class="tab" id="tab-wealth" role="tab" aria-selected="false" aria-controls="pane-wealth" data-tab="wealth"><svg class="icon"><use href="#i-wallet"/></svg>Wealth</button>
-      <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
-      <button class="tab" id="tab-home" role="tab" aria-selected="false" aria-controls="pane-home" data-tab="home"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/></svg>Home</button>
-      <button class="tab" id="tab-travel" role="tab" aria-selected="false" aria-controls="pane-travel" data-tab="travel"><svg class="icon"><use href="#i-plane"/></svg>Travel</button>
-      <button class="tab" id="tab-split" role="tab" aria-selected="false" aria-controls="pane-split" data-tab="split"><svg class="icon"><use href="#i-users"/></svg>Split</button>
-      <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
-    </nav>
     <div class="top-right">
       <div class="share-control hidden" id="share-control">
         <button id="share-button" class="share-button" type="button" aria-haspopup="dialog" aria-expanded="false"
@@ -93,6 +85,19 @@
     </div>
   </div>
 </header>
+
+<div class="tabbar" id="tabbar">
+  <div class="tabbar-inner">
+  <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
+    <button class="tab" id="tab-wealth" role="tab" aria-selected="false" aria-controls="pane-wealth" data-tab="wealth"><svg class="icon"><use href="#i-wallet"/></svg>Wealth</button>
+    <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
+    <button class="tab" id="tab-home" role="tab" aria-selected="false" aria-controls="pane-home" data-tab="home"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/></svg>Home</button>
+    <button class="tab" id="tab-travel" role="tab" aria-selected="false" aria-controls="pane-travel" data-tab="travel"><svg class="icon"><use href="#i-plane"/></svg>Travel</button>
+    <button class="tab" id="tab-split" role="tab" aria-selected="false" aria-controls="pane-split" data-tab="split"><svg class="icon"><use href="#i-users"/></svg>Split</button>
+    <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
+  </nav>
+  </div>
+</div>
 
 <main>
   <div class="context-toolbar" id="month-nav">

@@ -71,9 +71,11 @@ an existing month is rejected.
 
 ## Dashboard
 
-The logo is the way to the Overview; there is no Overview tab. Income and
-Net worth are sub-tabs of **Wealth**, and Games is a sub-tab of
-**Transactions**, so the header holds at most six tabs; each clone lists
+The header is two rows: the brand row (logo, wordmark, share and theme)
+scrolls away, and the tab row beneath it stays pinned to the top of the
+window. The logo is the way to the Overview; there is no Overview tab.
+Income and Net worth are sub-tabs of **Wealth**, and Games is a sub-tab of
+**Transactions**, so the tab row holds at most six tabs; each clone lists
 the ones it shows in `manual/branding.json`.
 
 - **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
