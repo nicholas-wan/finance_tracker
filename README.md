@@ -167,15 +167,26 @@ Every save also keeps the newest 30 timestamped copies of each changed file in
 `python scripts/build_data.py` to undo. The server seeds its own empty manual
 files on a fresh clone.
 
-## Review status and limitations
+## Safeguards
 
-A September 2026 adversarial review moved private identity into
-`manual/identity.json` (history rewritten), locked the write API to the
-dashboard's own origin, made "Unassigned" clear tags everywhere, anchored
-short classifier tokens at word edges, and added rotating backups. Still
-open: negative patterns for whole-word classifier collisions, a card-testing
-velocity check, a pre-commit grep for names and account numbers, and
-order-dependent occurrence numbers for identical same-day charges.
+Private identity lives only in Git-ignored `manual/identity.json`; the write
+API accepts the dashboard's own origin only; every save keeps rotating
+backups. Classifier tokens match at word edges and a rule can veto phrases
+that contain its token (GIANT LEAP is not a supermarket, COFFEE TABLE is not
+a cafe). Suspicious checks include same-day duplicates, first-seen
+high-value merchants, spikes and outliers, bursts, subscription jumps,
+first foreign-currency use, unmatched large credits, **card testing**
+(three or more charges of S$20 or less on one day from merchants never seen
+before) and **new-merchant velocity** (a merchant first seen within three
+days already charging on its third day for S$100 or more). Identical
+same-day charges are numbered by their printed page and line, so a parser
+change cannot swap their IDs. `./scripts/install_hooks.ps1` installs a
+pre-commit hook that refuses a commit whose staged diff adds the
+statement-holder name, an own-account number, a full trusted-counterparty
+name, an NRIC/FIN or an account-number shape (`--no-verify` bypasses a
+deliberate exception).
+
+## Limitations
 
 Categories and suspicious checks are rule-based; statements carry no
 receipts, device data, precise time, merchant category codes or order

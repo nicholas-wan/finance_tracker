@@ -123,7 +123,9 @@ CATEGORY_RULES = [
                    "GIANT-", "NTUC FP-", "CHEERS HOLDINGS", "DON DON DONKI",
                    "PRIME SUPERMARKET", "BBQ WHOLESALE CENTRE", "CS FRESH", "JAYA GROCER",
                    "KAPITAN GROCERY", "7-ELEVEN", "7 ELEVEN", "ESSO-CHEERS", "LEE MART",
-                   "NTUC FP ", "ACE DYNAMIC HOLDINGS"]),
+                   "NTUC FP ", "ACE DYNAMIC HOLDINGS"],
+     # Vetoes: the supermarket token inside an unrelated business name.
+     ["GIANT LEAP", "GIANT SWING", "GIANT CYCLE"]),
     ("Food & dining", ["FOOD PANDA", "FP*FOOD", "FOODPANDA", "KOPITIAM", "WOK N RICE", "URBAN GRILL",
                        "WATAMI", "SWENSEN", "FUN TOAST", "POULET", "SUSHI", "LLAO LLAO", "LUCKIN",
                        "DSTA DRINKS", "BOOST JUICE", "MCDONALD", " KFC", "STARBUCKS", "DELIVEROO",
@@ -159,7 +161,9 @@ CATEGORY_RULES = [
                        "TINO JC", "Q'SON GROUP", "AURESYS PL", "ABBA OL2",
                        # Inception SG bills the Starbucks drink kiosk, not a game store.
                        "INCEPTION SG",
-                       "SB125-AEON BUKIT INDAH", "AIF 111-ORH006", "ANDO.SG"]),
+                       "SB125-AEON BUKIT INDAH", "AIF 111-ORH006", "ANDO.SG"],
+     # Vetoes: cafe and food tokens inside furniture and appliance names.
+     ["COFFEE TABLE", "COFFEE MACHINE", "COFFEE MAKER", "FOOD PROCESSOR", "BURGER PRESS"]),
     # "STEAM" and "RIOT" must stay anchored to the biller strings: bare
     # substrings filed steamboat restaurants and MARRIOTT hotels under Games.
     ("Games", ["HOYOVERSE", "COGNOSPHERE", "G2G.COM", "ZEUSX", "STEAMGAMES", "PLAYSTATION", "NINTENDO",
@@ -239,10 +243,19 @@ def categorize(description):
 
 
 def category_matches(description):
-    """Return every matching rule category, preserving rule precedence."""
+    """Return every matching rule category, preserving rule precedence.
+
+    A rule may carry a third element: phrases that veto the match even though
+    one of its tokens is present. " GIANT " marks the supermarket, but GIANT
+    LEAP is a gym; " COFFEE" marks a cafe, but COFFEE TABLE is furniture.
+    """
     d = padded(description)
     matches = []
-    for category, patterns in CATEGORY_RULES:
+    for rule in CATEGORY_RULES:
+        category, patterns = rule[0], rule[1]
+        exclusions = rule[2] if len(rule) > 2 else ()
+        if any(x in d for x in exclusions):
+            continue
         for p in patterns:
             if p in d:
                 matches.append(category)

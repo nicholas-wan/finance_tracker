@@ -65,6 +65,26 @@ DUPLICATE_MIN_TOTAL = 40.0
 # quiet because their merchant has prior charges.
 UNMATCHED_CREDIT_MIN = 200.0
 
+# Card testing: a stolen card is probed with a few tiny charges at merchants
+# the card has never seen, all on one day, before a real charge is tried.
+# Three or more such charges on one day is the shape worth a look; the amount
+# ceiling keeps ordinary first visits to a new hawker stall out of it.
+CARD_TEST_MAX_AMOUNT = 20.0
+CARD_TEST_MIN_MERCHANTS = 3
+
+# New-merchant velocity: a merchant first seen only days ago that is already
+# charging on its third distinct day is either a new habit or a compromised
+# card being drained in small pieces. The window is short and the total floor
+# keeps a new coffee place from tripping it.
+VELOCITY_WINDOW_DAYS = 3
+VELOCITY_MIN_DAYS = 3
+VELOCITY_MIN_TOTAL = 100.0
+
+# Both "never seen before" checks are meaningless at the start of the
+# available history, when every merchant is new. They stay silent until this
+# many days of statements exist before the day under review.
+HISTORY_WARMUP_DAYS = 30
+
 CENT = 0.005
 
 
@@ -266,7 +286,16 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
 
     signals = []
     merchant_history = defaultdict(list)
+    # Distinct charge days and per-day nets per merchant, for the velocity check.
+    merchant_days = defaultdict(list)
+    merchant_net = defaultdict(list)
     foreign_history = set()
+    history_days = [_day_ordinal(when) for when, _ in debit_groups]
+    history_start = min((d for d in history_days if d is not None), default=None)
+
+    def warmed_up(day):
+        return (day is not None and history_start is not None
+                and day - history_start >= HISTORY_WARMUP_DAYS)
 
     for when, key in sorted(debit_groups, key=lambda item: (item[0] or "", item[1])):
         debits = debit_groups[(when, key)]
@@ -358,6 +387,31 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
                 "high" if len(debits) >= 10 or net >= 1000 else "medium",
             )
 
+        day = _day_ordinal(when)
+        days = merchant_days[key]
+        if (
+            amount_checks
+            and warmed_up(day)
+            and days
+            and day - days[0] <= VELOCITY_WINDOW_DAYS
+            and day not in days
+            and len(days) + 1 >= VELOCITY_MIN_DAYS
+        ):
+            since = sum(merchant_net[key]) + net
+            if since >= VELOCITY_MIN_TOTAL:
+                reasons.append(
+                    "New merchant charged on %d of its first %d days, S$%.2f so far"
+                    % (len(days) + 1, day - days[0] + 1, since)
+                )
+                checks.append("new-merchant-velocity")
+                severity = _stronger(
+                    severity,
+                    "high" if since >= 500 else "medium",
+                )
+        if day is not None and day not in days:
+            days.append(day)
+        merchant_net[key].append(net)
+
         if category == "Subscriptions" and len(debits) == 1 and len(history) >= 4:
             recent = history[-6:]
             subscription_typical = median(recent)
@@ -448,6 +502,49 @@ def detect_risks(transactions, merchant_key, recognized_signals=None):
             continue
         if key not in first_debit_day or day < first_debit_day[key]:
             first_debit_day[key] = day
+
+    # Card testing: several tiny charges on one day, each from a merchant the
+    # card had never seen before that day. The per-merchant loop above cannot
+    # see this shape because each probe is a different merchant.
+    probes_by_day = defaultdict(list)
+    for (when, key), debits in debit_groups.items():
+        day = _day_ordinal(when)
+        if not warmed_up(day) or first_debit_day.get(key) != day:
+            continue
+        if _rule_category(debits[0]) in DUPLICATE_ONLY_CATEGORIES:
+            continue
+        small = [row for row in debits if float(row["amount"]) <= CARD_TEST_MAX_AMOUNT]
+        if small and len(small) == len(debits):
+            probes_by_day[when].append((key, small))
+    for when in sorted(probes_by_day):
+        probes = probes_by_day[when]
+        if len(probes) < CARD_TEST_MIN_MERCHANTS:
+            continue
+        rows = [row for _, small in probes for row in small]
+        total = round(sum(float(row["amount"]) for row in rows), 2)
+        checks = ["card-testing"]
+        group_ids = sorted(row["id"] for row in rows)
+        identity = signal_key(group_ids, checks)
+        risk = {
+            "key": identity,
+            "severity": "high" if len(probes) >= 5 else "medium",
+            "reasons": [
+                "%d small charges (S$%.2f or less each) on one day from %d merchants"
+                " never seen before, S$%.2f in total"
+                % (len(rows), CARD_TEST_MAX_AMOUNT, len(probes), total)
+            ],
+            "checks": checks,
+            "groupIds": group_ids,
+            "reviewAmount": total,
+            "recognized": identity in known,
+        }
+        representative = sorted(rows, key=lambda row: (-float(row["amount"]), row["id"]))[0]
+        for row in rows:
+            # A probe row may already carry a per-merchant signal; the
+            # card-testing signal is the more specific story, so it wins.
+            row["risk"] = dict(risk, primary=row["id"] == representative["id"])
+        signals = [s for s in signals if s["transaction"]["id"] not in set(group_ids)]
+        signals.append({"transaction": representative, "risk": representative["risk"]})
 
     for key, pool in refund_pool.items():
         for refund in pool:

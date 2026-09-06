@@ -54,15 +54,29 @@ def row_section(row):
 def assign_provenance(rows, source_type, source_file, verified=False):
     """Annotate rows in source order and return the same list.
 
-    ``rows`` must arrive in statement order: the occurrence counter is what
-    separates two identical charges on one day, and it is only stable because
-    the parsers append rows page by page and line by line. Sorting happens after
-    this call, never before it.
+    The occurrence counter is what separates two identical charges on one day.
+    It follows the printed position (page, then line) of each copy on the
+    statement, not the order the parser happened to append rows in, so the
+    first printed copy is always occurrence 1 even if a parser change or a
+    caller ever hands the rows over reordered. Rows without page and line
+    coordinates fall back to arrival order.
     """
-    occurrences = defaultdict(int)
-    for row in rows:
+    coordinates = {}
+    for index, row in enumerate(rows):
         page = row.pop("_sourcePage", None)
         line = row.pop("_sourceLine", None)
+        coordinates[id(row)] = (page, line, index)
+
+    def printed_order(row):
+        page, line, index = coordinates[id(row)]
+        # Rows with coordinates sort by them; rows without keep their arrival
+        # index, which only matters for a group mixing both kinds.
+        return (page if page is not None else float("inf"),
+                line if line is not None else float("inf"), index)
+
+    occurrences = defaultdict(int)
+    for row in sorted(rows, key=printed_order):
+        page, line, _ = coordinates[id(row)]
         section = row_section(row)
         identity = content_identity(row, source_type, section)
         occurrence_key = json.dumps(identity, ensure_ascii=True, separators=(",", ":"))
