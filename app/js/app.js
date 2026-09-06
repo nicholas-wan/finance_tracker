@@ -272,6 +272,9 @@
   // older file without an "identity" key simply configures nothing.
   function applyIdentity() {
     window.FinanceGrouping.configure((data && data.identity) || {});
+    // A single-owner clone (identity.json singleOwner) hides owner controls;
+    // the build publishes the flag so no clone needs its own markup.
+    document.body.classList.toggle("yx-single-owner", !!(data && data.identity && data.identity.singleOwner));
   }
   function refreshAccountAnalysis() {
     var analysis = window.FinanceGrouping.analyzeAccountTransactions(
@@ -577,6 +580,7 @@
     }
     renderDataQuality();
     renderLedger();
+    renderSplit();
     renderInsights();
     renderSpendingSummary();
     renderKeyMetrics();
@@ -1015,7 +1019,7 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         id: t.id,
-        owner: document.body.classList.contains("yx-single-owner") ? "Yx" : values.owner,
+        owner: (data.identity && data.identity.singleOwner) || values.owner,
         category: values.category,
         displayName: values.displayName,
         remark: values.remark,
@@ -3162,6 +3166,9 @@
     }
     if (/salary/i.test(title)) {
       return function () { setTab("income"); };
+    }
+    if (/Yx/i.test(title)) {
+      return function () { setTab("split"); };
     }
     if (/^Largest charge:/i.test(title) && item.detail) {
       var description = item.detail.split(" on ")[0];
@@ -5314,13 +5321,6 @@
     });
   }
 
-  // Yx's clone presents the settlement from her side of the balance.
-  function yxSettlementPosition(amount) {
-    return amount >= 0
-      ? "Nic owes you " + fmt(amount)
-      : "You owe Nic " + fmt(Math.abs(amount));
-  }
-
   function auditRow(operator, label, detail, amount, tone, total) {
     var row = el("div", "settlement-audit-row" + (total ? " total" : ""));
     row.appendChild(el("span", "settlement-operator", operator));
@@ -5366,14 +5366,14 @@
     var grid = el("div", "kpis");
     grid.appendChild(metric(
       opening ? "Current settlement position · " + position.scopeLabel
-        : "Nic owes you for " + state.splitYear,
+        : "Yx owes you for " + state.splitYear,
       fmt(Math.abs(netPosition)),
       opening
-        ? yxSettlementPosition(-netPosition) + " · " + position.scopeLabel
+        ? settlementPosition(netPosition) + " · " + position.scopeLabel
         : "confirmed tags: half of shared" +
           (totals.Yx > 0 ? " plus her direct charges" : "") +
           " · " + position.scopeLabel,
-      netPosition <= 0 ? "good" : "bad",
+      netPosition >= 0 ? "good" : "bad",
       "coins"
     ));
     grid.appendChild(metric("New Yx share", fmt(newYxShare),
@@ -5391,7 +5391,7 @@
       warningText.appendChild(el("strong", "", "Audit incomplete. "));
       warningText.appendChild(document.createTextNode(
         fmt(totals.Untagged) + " (" + pct.toFixed(1) +
-        "% of spending) has no owner and is excluded from the amount Nic owes you."));
+        "% of spending) has no owner and is excluded from the amount Yx owes."));
       warning.appendChild(warningText);
       var review = el("button", "link-button", "Review unassigned");
       review.addEventListener("click", function () {
@@ -5412,7 +5412,7 @@
     var auditHead = el("div", "settlement-audit-head");
     var auditTitle = el("div", "");
     auditTitle.appendChild(el("strong", "", "How this balance is calculated"));
-    auditTitle.appendChild(el("span", "", "Positive amounts below reduce what Nic owes you."));
+    auditTitle.appendChild(el("span", "", "Positive amounts below reduce what you owe."));
     auditHead.appendChild(auditTitle);
     auditHead.appendChild(el("span", "audit-check", "Balances to the cent"));
     audit.appendChild(auditHead);
@@ -5424,7 +5424,7 @@
               " closing balance, recorded from " + dateLabel(position.openingFrom + "-01")
             : "Recorded from " + dateLabel(position.openingFrom + "-01"))
         : "No opening balance recorded, so no running position is carried",
-      fmt(openingYouOwe), "settlement-receivable", false
+      fmt(openingYouOwe), "settlement-payable", false
     ));
     audit.appendChild(auditRow(
       "−", "Your credit for shared spending",
@@ -5452,7 +5452,7 @@
       fmt(receivedFromYx), "", false
     ));
     audit.appendChild(auditRow(
-      "=", yxSettlementPosition(-netPosition) + " · " + position.scopeLabel,
+      "=", settlementPosition(netPosition) + " · " + position.scopeLabel,
       "Opening − credits − payments to YX + payments from YX",
       fmt(Math.abs(netPosition)),
       netPosition >= 0 ? "settlement-receivable" : "settlement-payable",
@@ -5481,7 +5481,7 @@
       openingRow.appendChild(el("td", "num", "—"));
       openingRow.appendChild(el("td", "num", "—"));
       openingRow.appendChild(el("td", "num strong settlement-payable",
-      yxSettlementPosition(-openingYouOwe)));
+        "You owe Yx " + fmt(openingYouOwe)));
       table.appendChild(openingRow);
     }
     yearMonths.forEach(function (m) {
@@ -5492,7 +5492,7 @@
       tr.appendChild(el("td", "num", fmt(r.Shared)));
       tr.appendChild(el("td", "num", r.Yx ? fmt(r.Yx) : "—"));
       tr.appendChild(el("td", "num", r.Untagged ? fmt(r.Untagged) : "—"));
-      tr.appendChild(el("td", "num strong", fmt(-r.yxShare)));
+      tr.appendChild(el("td", "num strong", fmt(r.yxShare)));
       table.appendChild(tr);
     });
     var foot = document.createElement("tr");
@@ -5504,8 +5504,8 @@
     foot.appendChild(el("td", "num", totals.Yx ? fmt(totals.Yx) : "—"));
     foot.appendChild(el("td", "num", totals.Untagged ? fmt(totals.Untagged) : "—"));
     foot.appendChild(el("td", "num strong " +
-      (netPosition <= 0 ? "settlement-receivable" : "settlement-payable"),
-      yxSettlementPosition(-netPosition)));
+      (netPosition >= 0 ? "settlement-receivable" : "settlement-payable"),
+      settlementPosition(netPosition)));
     table.appendChild(foot);
     wrap.appendChild(table);
   }
@@ -7201,6 +7201,8 @@
     renderLedger();
     renderIncome();
     renderInsurance();
+    renderGames();
+    renderSplit();
     renderTravel();
     var idx = data.months.indexOf(state.month);
     document.getElementById("prev-month").disabled = idx <= 0;

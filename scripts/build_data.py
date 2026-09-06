@@ -24,7 +24,24 @@ from data_ids import assign_provenance
 from risk_checks import detect_risks
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PROFILE_OWNER = "Yx"
+# A clone whose ledger belongs to one person can say so in manual/identity.json
+# ("singleOwner": "Yx"); every imported charge then carries that owner and
+# nothing stays unassigned. Without it, owners come from stable-ID tags,
+# legacy tags and merchant rules, and the rest is Untagged.
+_PROFILE = {}
+
+
+def profile_owner():
+    if "owner" not in _PROFILE:
+        path = os.path.join(MANUAL_DIR, "identity.json")
+        value = None
+        try:
+            with open(path, encoding="utf-8") as handle:
+                value = json.load(handle).get("singleOwner")
+        except (OSError, ValueError, AttributeError):
+            value = None
+        _PROFILE["owner"] = value.strip() if isinstance(value, str) and value.strip() else None
+    return _PROFILE["owner"]
 MANUAL_DIR = os.path.join(REPO_ROOT, "manual")
 DATA_DIR = os.environ.get(
     "FINANCE_DATA_DIR", os.path.join(REPO_ROOT, "app", "data")
@@ -2107,10 +2124,11 @@ def main():
                                     if rule_is_confirmed(r["description"]) else "merchant-rule")
         if not owner:
             owner_source = "unassigned"
-        # Yx's clone is a single-owner ledger; legacy/shared owner tags do not
-        # apply and imported charges should never remain unassigned.
-        owner = PROFILE_OWNER
-        owner_source = "profile-default"
+        # A single-owner ledger: tags and rules do not apply and no charge
+        # stays unassigned. Everyone else keeps the tag/rule pipeline above.
+        if profile_owner():
+            owner = profile_owner()
+            owner_source = "profile-default"
         record = {
             "id": r["id"],
             "date": r.get("date"),
@@ -2262,6 +2280,10 @@ def main():
         "knownAccounts": identity_file.get("knownAccounts") or {},
         "trustedCounterparties": identity_file.get("trustedCounterparties") or [],
     }
+    # A single-owner clone publishes the flag so the page can hide owner
+    # controls; everyone else's identity block is unchanged.
+    if profile_owner():
+        identity["singleOwner"] = profile_owner()
     for s in sales:
         s["publisher"] = publisher_of(s.get("game", ""))
     sales.sort(key=lambda s: (s.get("month", ""), s.get("game", "")))

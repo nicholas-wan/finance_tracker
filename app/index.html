@@ -20,7 +20,7 @@
 <link rel="stylesheet" href="css/home.css?v=21">
 <link rel="stylesheet" href="css/networth.css?v=1">
 </head>
-<body class="yx-single-owner">
+<body>
 <svg class="sprite" aria-hidden="true" focusable="false"><defs>
   <symbol id="i-dashboard" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="9" rx="1"/><rect x="14" y="3" width="7" height="5" rx="1"/><rect x="14" y="12" width="7" height="9" rx="1"/><rect x="3" y="16" width="7" height="5" rx="1"/></symbol>
   <symbol id="i-bulb" viewBox="0 0 24 24"><path d="M9 18h6"/><path d="M10 21.5h4"/><path d="M15.1 14c.2-1 .7-1.7 1.4-2.5A4.6 4.6 0 0 0 18 8 6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.8 1.2 1.5 1.4 2.5"/></symbol>
@@ -358,6 +358,62 @@
     </section>
   </section>
 
+  <section class="pane hidden" id="pane-games" role="tabpanel" aria-labelledby="tab-games">
+    <div class="kpis" id="games-kpis"></div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-gamepad"/></svg>Spending by game</h2>
+        <div class="year-pills" id="games-years"></div>
+      </div>
+      <div class="filters">
+        <div class="pills" id="game-pills"></div>
+      </div>
+      <div id="games-breakdown" class="cat-bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-bars"/></svg>Month by month</h2>
+        <span class="hint" id="games-trend-hint"></span>
+      </div>
+      <div id="games-trend" class="cat-bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
+        <span class="hint" id="games-count"></span>
+      </div>
+      <table class="ledger" id="bank-transactions">
+        <thead>
+          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game</th><th class="col-amt">Amount</th></tr>
+        </thead>
+        <tbody id="games-body"></tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-coins"/></svg>Account sales</h2>
+        <span class="hint" id="sales-hint"></span>
+      </div>
+      <div id="sales-list" class="cat-bars"></div>
+    </section>
+  </section>
+
+  <section class="pane hidden" id="pane-split" role="tabpanel" aria-labelledby="tab-split">
+    <div class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-users"/></svg>Settlement with Yx</h2>
+        <div class="year-pills" id="split-years"></div>
+      </div>
+      <div id="split-summary"></div>
+      <div id="settlement-audit"></div>
+      <div class="section-divider-head">
+        <span>Monthly evidence</span>
+        <span class="hint" id="settlement-evidence-hint"></span>
+      </div>
+      <div id="split-table"></div>
+    </div>
+  </section>
+
   <section class="pane hidden" id="pane-transactions" role="tabpanel" aria-labelledby="tab-transactions">
     <div class="panel">
       <div class="panel-head">
@@ -547,7 +603,7 @@
 <script src="js/charts.js?v=20260905-2"></script>
 <script src="js/insights.js?v=20260905-4"></script>
 <script src="js/transaction-grouping.js?v=20260904-1"></script>
-<script src="js/app.js?v=20260906-54"></script>
+<script src="js/app.js?v=20260906-56"></script>
 <script src="js/home.js?v=25"></script>
 <script src="js/networth.js?v=5"></script>
 </body>

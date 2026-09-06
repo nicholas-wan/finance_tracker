@@ -16,6 +16,11 @@
   Insurance, Net worth, Travel, Split, Transactions (no Home, no Games).
   Features unique to one person stay unique by that list, not by code; do
   not add a tab to the other clone's list unless asked.
+- Ownership: Yx's ledger is single-owner via `"singleOwner": "Yx"` in her
+  `manual/identity.json` (every charge hers, owner controls hidden). This
+  clone has no such key, so owners come from stable-ID tags, legacy tags and
+  merchant rules. Never hard-code a person's name in shared code; read it
+  from identity or branding.
 - Yx's in-page "mark verified" insurance control was dropped in the merge;
   verification lives on the policy record (`verification` object).
 - The pre-commit privacy hook stops on 10-digit numbers; Yx's test fixtures
