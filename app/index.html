@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260906-38">
+<link rel="stylesheet" href="css/styles.css?v=20260906-39">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -88,6 +88,9 @@
 
 <div class="tabbar" id="tabbar">
   <div class="tabbar-inner">
+  <button type="button" class="tabbar-home" id="tabbar-home" aria-label="Overview" title="Overview">
+    <span class="brand-mark" aria-hidden="true"><svg viewBox="0 0 32 32" focusable="false"><rect class="brand-base" width="32" height="32" rx="8"/><rect width="32" height="32" rx="8" fill="url(#brand-gloss)"/><text x="16" y="21.8" text-anchor="middle">N</text></svg></span>
+  </button>
   <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
     <button class="tab" id="tab-wealth" role="tab" aria-selected="false" aria-controls="pane-wealth" data-tab="wealth"><svg class="icon"><use href="#i-wallet"/></svg>Wealth</button>
     <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
@@ -295,6 +298,7 @@
   </section>
 
   <section class="pane hidden" id="pane-insurance" role="tabpanel" aria-labelledby="tab-insurance">
+    <div class="subtabs" id="insurance-subtabs" role="tablist" aria-label="Insured person"></div>
     <section class="insurance-portfolio-bar" aria-labelledby="insurance-portfolio-title">
       <div class="insurance-portfolio-identity">
         <span class="insurance-portfolio-icon" aria-hidden="true"><svg class="icon"><use href="#i-shield"/></svg></span>
@@ -304,7 +308,6 @@
           <p id="insurance-source-meta"></p>
         </div>
       </div>
-      <div class="pills insurance-person-pills" id="insurance-person-pills" aria-label="Insured person"></div>
     </section>
 
     <div class="kpis insurance-kpis" id="insurance-kpis"></div>
@@ -617,7 +620,7 @@
 <script src="js/charts.js?v=20260905-2"></script>
 <script src="js/insights.js?v=20260905-4"></script>
 <script src="js/transaction-grouping.js?v=20260904-1"></script>
-<script src="js/app.js?v=20260906-57"></script>
+<script src="js/app.js?v=20260906-59"></script>
 <script src="js/home.js?v=25"></script>
 <script src="js/networth.js?v=5"></script>
 </body>

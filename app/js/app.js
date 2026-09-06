@@ -4983,9 +4983,10 @@
   function renderInsurance() {
     if (!data.insurance) return;
     var people = insurancePeople();
-    if (state.insurancePerson !== "all" && !people.some(function (person) {
-      return person.id === state.insurancePerson;
-    })) state.insurancePerson = "all";
+    // One person at a time, as sub-tabs like the other tabs; no combined view.
+    if (!people.some(function (person) { return person.id === state.insurancePerson; })) {
+      state.insurancePerson = people.length ? people[0].id : "all";
+    }
 
     var selected = selectedInsurancePeople();
     var currentPerson = selected.length === 1 ? selected[0] : null;
@@ -5008,20 +5009,20 @@
       (verifiedCount ? " · " + verifiedCount + " insurer-verified" : "") +
       " · premiums annualised for comparison";
 
-    var personPills = document.getElementById("insurance-person-pills");
-    clear(personPills);
-    // A single insured person needs no All/Name switch.
-    personPills.classList.toggle("hidden", people.length <= 1);
-    if (people.length > 1) {
-      [{ id: "all", name: "All" }].concat(people).forEach(function (person) {
+    var personTabs = document.getElementById("insurance-subtabs");
+    if (personTabs) {
+      clear(personTabs);
+      people.forEach(function (person) {
         var active = person.id === state.insurancePerson;
-        var button = el("button", "pill" + (active ? " active" : ""), person.name);
-        setPressed(button, active);
+        var button = el("button", "subtab" + (active ? " active" : ""), person.name);
+        button.type = "button";
+        button.setAttribute("role", "tab");
+        button.setAttribute("aria-selected", active ? "true" : "false");
         button.addEventListener("click", function () {
           state.insurancePerson = person.id;
           renderInsurance();
         });
-        personPills.appendChild(button);
+        personTabs.appendChild(button);
       });
     }
 
@@ -7319,6 +7320,16 @@
     // The logo is the way back to the Overview; there is no Overview tab.
     var brandHome = document.getElementById("brand-home");
     if (brandHome) brandHome.addEventListener("click", function () { setTab("overview"); window.scrollTo(0, 0); });
+    var tabbarHome = document.getElementById("tabbar-home");
+    if (tabbarHome) tabbarHome.addEventListener("click", function () { setTab("overview"); window.scrollTo(0, 0); });
+    // Show the small monogram on the pinned tab row only while the brand row
+    // is out of view.
+    var topbar = document.querySelector("header.topbar"), tabbar = document.getElementById("tabbar");
+    if (topbar && tabbar && window.IntersectionObserver) {
+      new IntersectionObserver(function (entries) {
+        tabbar.classList.toggle("compact", !entries[0].isIntersecting);
+      }, { threshold: 0 }).observe(topbar);
+    }
     Array.prototype.forEach.call(document.querySelectorAll(".subtab"), function (b) {
       b.addEventListener("click", function () { setSubtab(b.closest(".pane"), b.getAttribute("data-subtab")); });
     });
@@ -7658,10 +7669,11 @@
     if (light || lightInk) css += ":root{" + (light ? "--brand:" + light + ";" : "") + (lightInk ? "--brand-ink:" + lightInk + ";" : "") + "}";
     if (dark || darkInk) css += ":root[data-theme=\"dark\"]{" + (dark ? "--brand:" + dark + ";" : "") + (darkInk ? "--brand-ink:" + darkInk + ";" : "") + "}";
     if (css) { var style = document.createElement("style"); style.id = "branding-style"; style.textContent = css; document.head.appendChild(style); }
-    var mark = document.querySelector(".brand-mark text");
-    if (mark && branding.monogram) {
-      mark.textContent = String(branding.monogram).slice(0, 3);
-      if (mark.textContent.length > 1) mark.style.fontSize = mark.textContent.length > 2 ? "11px" : "14px";
+    if (branding.monogram) {
+      Array.prototype.forEach.call(document.querySelectorAll(".brand-mark text"), function (mark) {
+        mark.textContent = String(branding.monogram).slice(0, 3);
+        if (mark.textContent.length > 1) mark.style.fontSize = mark.textContent.length > 2 ? "11px" : "14px";
+      });
     }
     if (branding.title) {
       document.title = String(branding.title).slice(0, 60);
