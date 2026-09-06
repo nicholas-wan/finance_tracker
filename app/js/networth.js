@@ -21,13 +21,15 @@
   function money(v, dp) { return v == null ? '—' : (v < 0 ? '-' : '') + 'S$' + Math.abs(v).toLocaleString('en-SG', { minimumFractionDigits: dp == null ? 2 : dp, maximumFractionDigits: dp == null ? 2 : dp }); }
   function money0(v) { return money(v == null ? null : Math.round(v), 0); }
   function signed(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + 'S$' + Math.abs(Math.round(v)).toLocaleString('en-SG'); }
-  // en-GB gives "Sep" like the rest of the dashboard; en-SG renders "Sept".
-  function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'; }
+  // Fixed month names: Chrome's en-GB and en-SG both render September as
+  // "Sept", and the rest of the dashboard says "Sep".
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function date(v) { return v ? parseInt(v.slice(8, 10), 10) + ' ' + MONTHS[parseInt(v.slice(5, 7), 10) - 1] + ' ' + v.slice(0, 4) : '—'; }
   function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function monthOf(d) { return d.slice(0, 7); }
   function monthEnd(m) { var y = +m.slice(0, 4), mo = +m.slice(5, 7); return m + '-' + String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0'); }
   function addMonths(m, n) { var y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1 + n; return (y + Math.floor(mo / 12)) + '-' + String((mo % 12 + 12) % 12 + 1).padStart(2, '0'); }
-  function monthLabel(m) { return new Date(m + '-01T00:00:00').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }); }
+  function monthLabel(m) { return MONTHS[parseInt(m.slice(5, 7), 10) - 1] + ' ' + m.slice(0, 4); }
   function monthsBetween(a, b) { return (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7)); }
   function monthsOld(d) { return monthsBetween(monthOf(d), monthOf(today())); }
   var ICONS = { close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>', down: '<path d="m6 10 6 6 6-6"/>', up: '<path d="m6 14 6-6 6 6"/>', trend: '<path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/>', scale: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0L7 7Zm10 0-3 7a3 3 0 0 0 6 0l-3-7Z"/>' };

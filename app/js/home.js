@@ -66,8 +66,10 @@
   };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function money(v) { return v == null || v === '' ? 'Not recorded' : 'S$' + Number(v).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-  // en-GB gives "Sep" like the rest of the dashboard; en-SG renders "Sept".
-  function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'Not recorded'; }
+  // Fixed month names: Chrome's en-GB and en-SG both render September as
+  // "Sept", and the rest of the dashboard says "Sep".
+  var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  function date(v) { return v ? parseInt(v.slice(8, 10), 10) + ' ' + MONTHS[parseInt(v.slice(5, 7), 10) - 1] + ' ' + v.slice(0, 4) : 'Not recorded'; }
   // Short, specific reasons a record still needs attention; the first one labels the card.
   function attention(r) {
     var out=[];
