@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260906-36">
+<link rel="stylesheet" href="css/styles.css?v=20260906-37">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -56,6 +56,7 @@
 <header class="topbar">
   <div class="topbar-inner">
     <h1 class="brand" title="Nic's finance tracker">
+      <button type="button" class="brand-link" id="brand-home" aria-label="Overview" aria-current="page">
       <span class="brand-mark" aria-hidden="true">
         <svg viewBox="0 0 32 32" focusable="false">
           <defs>
@@ -70,15 +71,13 @@
         </svg>
       </span>
       <span class="brand-name">Finances</span>
+      </button>
     </h1>
     <nav class="tabs" id="tabs" role="tablist" aria-label="Finance dashboard">
-      <button class="tab active" id="tab-overview" role="tab" aria-selected="true" aria-controls="pane-overview" data-tab="overview"><svg class="icon"><use href="#i-dashboard"/></svg>Overview</button>
-      <button class="tab" id="tab-income" role="tab" aria-selected="false" aria-controls="pane-income" data-tab="income"><svg class="icon"><use href="#i-wallet"/></svg>Income</button>
+      <button class="tab" id="tab-wealth" role="tab" aria-selected="false" aria-controls="pane-wealth" data-tab="wealth"><svg class="icon"><use href="#i-wallet"/></svg>Wealth</button>
       <button class="tab" id="tab-insurance" role="tab" aria-selected="false" aria-controls="pane-insurance" data-tab="insurance"><svg class="icon"><use href="#i-shield"/></svg>Insurance</button>
       <button class="tab" id="tab-home" role="tab" aria-selected="false" aria-controls="pane-home" data-tab="home"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 10 9-7 9 7v11h-6v-7H9v7H3Z"/></svg>Home</button>
-      <button class="tab" id="tab-networth" role="tab" aria-selected="false" aria-controls="pane-networth" data-tab="networth"><svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/></svg>Net worth</button>
       <button class="tab" id="tab-travel" role="tab" aria-selected="false" aria-controls="pane-travel" data-tab="travel"><svg class="icon"><use href="#i-plane"/></svg>Travel</button>
-      <button class="tab" id="tab-games" role="tab" aria-selected="false" aria-controls="pane-games" data-tab="games"><svg class="icon"><use href="#i-gamepad"/></svg>Games</button>
       <button class="tab" id="tab-split" role="tab" aria-selected="false" aria-controls="pane-split" data-tab="split"><svg class="icon"><use href="#i-users"/></svg>Split</button>
       <button class="tab" id="tab-transactions" role="tab" aria-selected="false" aria-controls="pane-transactions" data-tab="transactions"><svg class="icon"><use href="#i-list"/></svg>Transactions</button>
     </nav>
@@ -201,46 +200,6 @@
     </section>
   </section>
 
-  <section class="pane hidden" id="pane-income" role="tabpanel" aria-labelledby="tab-income">
-    <div class="kpis" id="income-kpis"></div>
-    <section class="panel" id="salary-steps-panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-up"/></svg>Salary steps</h2>
-        <span class="hint">effective month and monthly gross</span>
-      </div>
-      <div id="salary-steps"></div>
-    </section>
-    <div class="two-col" id="income-history-grid">
-      <section class="panel" id="salary-years-panel">
-        <div class="panel-head"><h2><svg class="icon"><use href="#i-calendar"/></svg>Annual income</h2><span class="hint">from your Salary sheet</span></div>
-        <div id="salary-years"></div>
-      </section>
-      <section class="panel">
-        <div class="panel-head"><h2><svg class="icon"><use href="#i-wallet"/></svg>Monthly credits</h2><span class="hint">bonus months stand out</span></div>
-        <div id="income-months"></div>
-      </section>
-    </div>
-    <section class="panel income-outlook-panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-target"/></svg>Income outlook</h2>
-        <span class="hint" id="income-outlook-period"></span>
-      </div>
-      <div class="income-stat-grid" id="income-stats"></div>
-      <div class="income-long-head">
-        <div>
-          <h3>Long-range forecast</h3>
-          <p>Projected annual income and total earned over each horizon</p>
-        </div>
-        <span class="income-forecast-basis">3%–7% growth range · 5% midpoint</span>
-      </div>
-      <div class="income-long-grid" id="income-long-range"></div>
-      <details class="income-methodology">
-        <summary>How this forecast is calculated</summary>
-        <div class="income-methodology-content" id="income-methodology-content"></div>
-      </details>
-    </section>
-  </section>
-
   <section class="pane hidden" id="pane-travel" role="tabpanel" aria-labelledby="tab-travel">
     <div class="pills travel-payer-pills hidden" id="travel-payer-pills" aria-label="Paid by"></div>
     <div class="kpis" id="travel-kpis"></div>
@@ -283,6 +242,53 @@
       <div class="other-source-rows"></div>
     </section>
   </section>
+  <section class="pane hidden" id="pane-wealth" role="tabpanel" aria-labelledby="tab-wealth">
+    <div class="subtabs" role="tablist" aria-label="Wealth sections">
+      <button type="button" class="subtab active" id="subtab-income" role="tab" data-subtab="income" aria-selected="true">Income</button>
+      <button type="button" class="subtab" id="subtab-networth" role="tab" data-subtab="networth" aria-selected="false">Net worth</button>
+    </div>
+  <section class="subpane" data-subpane="income" id="pane-income" role="tabpanel" aria-labelledby="subtab-income">
+    <div class="kpis" id="income-kpis"></div>
+    <section class="panel" id="salary-steps-panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-up"/></svg>Salary steps</h2>
+        <span class="hint">effective month and monthly gross</span>
+      </div>
+      <div id="salary-steps"></div>
+    </section>
+    <div class="two-col" id="income-history-grid">
+      <section class="panel" id="salary-years-panel">
+        <div class="panel-head"><h2><svg class="icon"><use href="#i-calendar"/></svg>Annual income</h2><span class="hint">from your Salary sheet</span></div>
+        <div id="salary-years"></div>
+      </section>
+      <section class="panel">
+        <div class="panel-head"><h2><svg class="icon"><use href="#i-wallet"/></svg>Monthly credits</h2><span class="hint">bonus months stand out</span></div>
+        <div id="income-months"></div>
+      </section>
+    </div>
+    <section class="panel income-outlook-panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-target"/></svg>Income outlook</h2>
+        <span class="hint" id="income-outlook-period"></span>
+      </div>
+      <div class="income-stat-grid" id="income-stats"></div>
+      <div class="income-long-head">
+        <div>
+          <h3>Long-range forecast</h3>
+          <p>Projected annual income and total earned over each horizon</p>
+        </div>
+        <span class="income-forecast-basis">3%–7% growth range · 5% midpoint</span>
+      </div>
+      <div class="income-long-grid" id="income-long-range"></div>
+      <details class="income-methodology">
+        <summary>How this forecast is calculated</summary>
+        <div class="income-methodology-content" id="income-methodology-content"></div>
+      </details>
+    </section>
+  </section>
+  <section class="subpane hidden" data-subpane="networth" id="pane-networth" role="tabpanel" aria-labelledby="subtab-networth"><p>Loading net worth…</p></section>
+  </section>
+
   <section class="pane hidden" id="pane-insurance" role="tabpanel" aria-labelledby="tab-insurance">
     <section class="insurance-portfolio-bar" aria-labelledby="insurance-portfolio-title">
       <div class="insurance-portfolio-identity">
@@ -358,46 +364,6 @@
     </section>
   </section>
 
-  <section class="pane hidden" id="pane-games" role="tabpanel" aria-labelledby="tab-games">
-    <div class="kpis" id="games-kpis"></div>
-    <section class="panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-gamepad"/></svg>Spending by game</h2>
-        <div class="year-pills" id="games-years"></div>
-      </div>
-      <div class="filters">
-        <div class="pills" id="game-pills"></div>
-      </div>
-      <div id="games-breakdown" class="cat-bars"></div>
-    </section>
-    <section class="panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-bars"/></svg>Month by month</h2>
-        <span class="hint" id="games-trend-hint"></span>
-      </div>
-      <div id="games-trend" class="cat-bars"></div>
-    </section>
-    <section class="panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
-        <span class="hint" id="games-count"></span>
-      </div>
-      <table class="ledger" id="bank-transactions">
-        <thead>
-          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game</th><th class="col-amt">Amount</th></tr>
-        </thead>
-        <tbody id="games-body"></tbody>
-      </table>
-    </section>
-    <section class="panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-coins"/></svg>Account sales</h2>
-        <span class="hint" id="sales-hint"></span>
-      </div>
-      <div id="sales-list" class="cat-bars"></div>
-    </section>
-  </section>
-
   <section class="pane hidden" id="pane-split" role="tabpanel" aria-labelledby="tab-split">
     <div class="panel">
       <div class="panel-head">
@@ -415,6 +381,11 @@
   </section>
 
   <section class="pane hidden" id="pane-transactions" role="tabpanel" aria-labelledby="tab-transactions">
+    <div class="subtabs" role="tablist" aria-label="Transactions sections">
+      <button type="button" class="subtab active" id="subtab-ledger" role="tab" data-subtab="ledger" aria-selected="true">Transactions</button>
+      <button type="button" class="subtab" id="subtab-games" role="tab" data-subtab="games" aria-selected="false">Games</button>
+    </div>
+    <div class="subpane" data-subpane="ledger" role="tabpanel" aria-labelledby="subtab-ledger">
     <div class="panel">
       <div class="panel-head">
         <h2><svg class="icon"><use href="#i-list"/></svg>Transactions</h2>
@@ -534,11 +505,49 @@
       </table>
       <div class="ledger-foot" id="ledger-foot"></div>
     </div>
+    </div>
+  <section class="subpane hidden" data-subpane="games" id="pane-games" role="tabpanel" aria-labelledby="subtab-games">
+    <div class="kpis" id="games-kpis"></div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-gamepad"/></svg>Spending by game</h2>
+        <div class="year-pills" id="games-years"></div>
+      </div>
+      <div class="filters">
+        <div class="pills" id="game-pills"></div>
+      </div>
+      <div id="games-breakdown" class="cat-bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-bars"/></svg>Month by month</h2>
+        <span class="hint" id="games-trend-hint"></span>
+      </div>
+      <div id="games-trend" class="cat-bars"></div>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
+        <span class="hint" id="games-count"></span>
+      </div>
+      <table class="ledger" id="bank-transactions">
+        <thead>
+          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game</th><th class="col-amt">Amount</th></tr>
+        </thead>
+        <tbody id="games-body"></tbody>
+      </table>
+    </section>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-coins"/></svg>Account sales</h2>
+        <span class="hint" id="sales-hint"></span>
+      </div>
+      <div id="sales-list" class="cat-bars"></div>
+    </section>
+  </section>
   </section>
 
   <section class="pane hidden" id="pane-home" role="tabpanel" aria-labelledby="tab-home"><p>Loading Home records…</p></section>
-
-  <section class="pane hidden" id="pane-networth" role="tabpanel" aria-labelledby="tab-networth"><p>Loading net worth…</p></section>
 
   <footer class="foot" id="meta-foot"></footer>
 </main>
@@ -603,7 +612,7 @@
 <script src="js/charts.js?v=20260905-2"></script>
 <script src="js/insights.js?v=20260905-4"></script>
 <script src="js/transaction-grouping.js?v=20260904-1"></script>
-<script src="js/app.js?v=20260906-56"></script>
+<script src="js/app.js?v=20260906-57"></script>
 <script src="js/home.js?v=25"></script>
 <script src="js/networth.js?v=5"></script>
 </body>

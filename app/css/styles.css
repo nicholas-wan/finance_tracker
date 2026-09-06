@@ -2381,3 +2381,17 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .share-button span { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
   .share-button { padding-left: 9px; padding-right: 9px; }
 }
+
+/* ---------- Logo as the Overview link; sub-tabs inside a tab ---------- */
+.brand-link { display: inline-flex; align-items: center; gap: 10px; border: 0; background: none; padding: 2px 6px 2px 2px; margin: -2px 0 -2px -2px; border-radius: 10px; cursor: pointer; font: inherit; color: inherit; }
+.brand-link:hover { background: color-mix(in srgb, var(--brand) 10%, transparent); }
+.brand-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.brand-link[aria-current="page"] .brand-name { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--brand) 45%, transparent); text-underline-offset: 4px; }
+.subtabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin: 0 0 4px; }
+.subtab { border: 0; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-md); padding: 10px 12px; margin-bottom: -1px; border-bottom: 2px solid transparent; cursor: pointer; border-radius: 6px 6px 0 0; }
+.subtab:hover { color: var(--text); background: color-mix(in srgb, var(--text) 4%, transparent); }
+.subtab.active { color: var(--text); font-weight: 600; border-bottom-color: var(--brand); }
+.subpane { display: flex; flex-direction: column; gap: 16px; }
+.subpane.hidden { display: none; }
+.recurring-name-cell .recurring-icon { display: inline-flex; align-items: center; justify-content: center; padding: 0; color: var(--text-2); background: var(--surface-2); }
+.recurring-name-cell .recurring-icon .icon { width: 15px; height: 15px; }

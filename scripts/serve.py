@@ -63,7 +63,8 @@ def read_branding():
     return result
 
 
-TAB_IDS = ("overview", "income", "insurance", "home", "networth", "travel", "games", "split", "transactions")
+# Overview is the logo; Income and Net worth sit under Wealth; Games under Transactions.
+TAB_IDS = ("wealth", "insurance", "home", "travel", "split", "transactions")
 
 
 DEFAULT_PORT = 3402

@@ -71,6 +71,11 @@ an existing month is rejected.
 
 ## Dashboard
 
+The logo is the way to the Overview; there is no Overview tab. Income and
+Net worth are sub-tabs of **Wealth**, and Games is a sub-tab of
+**Transactions**, so the header holds at most six tabs; each clone lists
+the ones it shows in `manual/branding.json`.
+
 - **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
   summary, categories, outflows and the month's ledger. 6M/12M figures on the
   Transactions page are means; overview baselines are medians. **Year so

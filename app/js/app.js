@@ -652,7 +652,7 @@
     }).then(function (payload) {
       if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      setTab("transactions");
+      setTab("transactions", "ledger");
       showToast(remark ? "Remark saved." : "Remark removed.", "success");
     }).catch(function (error) {
       input.disabled = false;
@@ -726,7 +726,7 @@
     }).then(function (payload) {
       if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      setTab("transactions");
+      setTab("transactions", "ledger");
       // Tagging runs down a list, so the page must not jump back to the top
       // between rows the way a plain re-render would leave it.
       window.scrollTo(0, scrollTop);
@@ -819,7 +819,7 @@
     }).then(function (payload) {
       if (!applySavedRows(payload)) return refetchAfterSave();
     }).then(function () {
-      setTab("transactions");
+      setTab("transactions", "ledger");
       reopenDrawerFor(t.id);
       showToast(
         recognized
@@ -2434,7 +2434,7 @@
     document.getElementById("show-excluded").checked = false;
     renderPeriod();
     renderLedger();
-    setTab("transactions");
+    setTab("transactions", "ledger");
   }
 
   function setIdFilter(ids, label) {
@@ -2802,7 +2802,10 @@
     data.transactions.forEach(function (t) {
       if (t.type !== "debit" || t.category === "Payment" || t.category === "Rebates") return;
       if (t.category === "Insurance" || t.ruleCategory === "Insurance") return;
-      add("card:" + (t.merchantKey || t.description), t.displayName || window.FinanceGrouping.merchantDisplayName(t.description), t, t.amount, "card");
+      var label = /CARD MEMBERSHIP FEE/i.test(t.description || "")
+        ? (t.card ? String(t.card).replace(/\s+CARD$/i, "") + " card" : "Card") + " membership fee"
+        : t.displayName || window.FinanceGrouping.merchantDisplayName(t.description);
+      add("card:" + (t.merchantKey || t.description), label, t, t.amount, "card");
     });
     account.transactions.forEach(function (t) {
       if (t.direction !== "withdrawal" || !RECURRING_BANK_FLOWS[t.flow]) return;
@@ -2878,6 +2881,13 @@
     // initials badge with a hue derived from the name, so every row carries a
     // stable mark and no logo service is ever contacted.
     function recurringThumb(r) {
+      // The card's own annual fee is not a merchant: show the card icon.
+      if (/CARD MEMBERSHIP FEE/i.test(r.description || r.label)) {
+        var cardIcon = el("span", "recurring-thumb recurring-icon");
+        cardIcon.appendChild(icon("card"));
+        cardIcon.setAttribute("aria-hidden", "true");
+        return cardIcon;
+      }
       var logo = merchantLogo(r.description || r.label);
       if (logo) {
         var image = el("img", "recurring-thumb");
@@ -7228,8 +7238,36 @@
     document.getElementById("next-month").disabled = idx >= data.months.length - 1;
   }
 
-  function setTab(name) {
+  // Sections that live inside another tab as a sub-tab. Old names still work
+  // everywhere setTab is called, so drill-downs land on the right sub-tab.
+  var SUBTAB_HOME = { income: ["wealth", "income"], networth: ["wealth", "networth"], games: ["transactions", "games"] };
+  function setSubtab(pane, name) {
+    if (!pane || !name) return;
+    state.subtab = state.subtab || {};
+    state.subtab[pane.id.slice(5)] = name;
+    Array.prototype.forEach.call(pane.querySelectorAll(".subtab"), function (b) {
+      var active = b.getAttribute("data-subtab") === name;
+      b.classList.toggle("active", active);
+      b.setAttribute("aria-selected", active ? "true" : "false");
+    });
+    Array.prototype.forEach.call(pane.querySelectorAll(".subpane"), function (s) {
+      s.classList.toggle("hidden", s.getAttribute("data-subpane") !== name);
+    });
+  }
+  function setTab(name, subtab) {
+    var home = SUBTAB_HOME[name];
+    if (home) { subtab = subtab || home[1]; name = home[0]; }
     state.tab = name;
+    var brand = document.getElementById("brand-home");
+    if (brand) {
+      if (name === "overview") brand.setAttribute("aria-current", "page");
+      else brand.removeAttribute("aria-current");
+    }
+    var pane = document.getElementById("pane-" + name);
+    if (pane && pane.querySelector(".subtabs")) {
+      var first = pane.querySelector(".subtab");
+      setSubtab(pane, subtab || (state.subtab && state.subtab[name]) || (first && first.getAttribute("data-subtab")));
+    }
     Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (t) {
       var active = t.getAttribute("data-tab") === name;
       t.classList.toggle("active", active);
@@ -7278,6 +7316,12 @@
 
   function buildControls() {
     buildThemeToggle();
+    // The logo is the way back to the Overview; there is no Overview tab.
+    var brandHome = document.getElementById("brand-home");
+    if (brandHome) brandHome.addEventListener("click", function () { setTab("overview"); window.scrollTo(0, 0); });
+    Array.prototype.forEach.call(document.querySelectorAll(".subtab"), function (b) {
+      b.addEventListener("click", function () { setSubtab(b.closest(".pane"), b.getAttribute("data-subtab")); });
+    });
     var tabButtons = Array.prototype.slice.call(document.querySelectorAll(".tab"));
     tabButtons.forEach(function (t, index) {
       t.addEventListener("click", function () { setTab(t.getAttribute("data-tab")); });
@@ -7581,7 +7625,7 @@
       var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "") || (e.target && e.target.isContentEditable);
       if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
         e.preventDefault();
-        if (state.tab !== "transactions") setTab("transactions");
+        setTab("transactions", "ledger");
         var box = document.getElementById("search");
         if (box) { box.focus(); box.select(); }
       }
@@ -7630,7 +7674,6 @@
     if (Array.isArray(branding.tabs) && branding.tabs.length) {
       var nav = document.getElementById("tabs");
       var keep = branding.tabs.filter(function (name) { return document.getElementById("tab-" + name); });
-      if (keep.indexOf("overview") === -1) keep.unshift("overview");
       // Panes stay in the document (renderers still address them); only the
       // buttons go, so a hidden tab is simply unreachable.
       Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (button) {
