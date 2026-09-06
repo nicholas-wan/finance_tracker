@@ -103,6 +103,29 @@ BACKUP_DIR_NAME = "backups"
 BACKUP_GENERATIONS = 30
 
 
+def _code_snapshot():
+    """Modification times of the files a running server was started from."""
+    files = list((REPO_ROOT / "scripts").glob("*.py")) + list((APP_DIR / "js").glob("*.js")) \
+        + list((APP_DIR / "css").glob("*.css")) + [APP_DIR / "index.html"]
+    snapshot = {}
+    for path in files:
+        try:
+            snapshot[str(path)] = path.stat().st_mtime_ns
+        except OSError:
+            pass
+    return snapshot
+
+
+CODE_AT_START = _code_snapshot()
+
+
+def code_changed():
+    """True once any code file differs from what this process started with,
+    so the page can say the server needs a restart instead of failing on a
+    route it does not have."""
+    return _code_snapshot() != CODE_AT_START
+
+
 def load_json(path):
     with path.open(encoding="utf-8") as handle:
         return json.load(handle)
@@ -1146,7 +1169,67 @@ def save_account_review(tx_ids, reviewed, checks_by_id=None):
         }
 
 
-class FinanceHandler(SimpleHTTPRequestHandler):
+COMPRESSIBLE = {".json", ".js", ".css", ".html", ".svg"}
+GZIP_MIN_BYTES = 2048
+# (path, mtime, size) -> gzipped bytes. The data files are a few megabytes
+# and change only on import or save, so compressing once per version is cheap.
+_GZIP_CACHE = {}
+_GZIP_LOCK = threading.Lock()
+
+
+def gzipped_static(path):
+    """Return (gzipped bytes, mtime) for a compressible file, or None."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    key = (str(path), stat.st_mtime_ns, stat.st_size)
+    with _GZIP_LOCK:
+        hit = _GZIP_CACHE.get(key)
+    if hit is None:
+        import gzip
+        hit = gzip.compress(path.read_bytes(), compresslevel=6)
+        with _GZIP_LOCK:
+            # Drop older versions of the same file so the cache cannot grow with
+            # every save; the dashboard only ever asks for the current one.
+            for stale in [k for k in _GZIP_CACHE if k[0] == key[0]]:
+                del _GZIP_CACHE[stale]
+            _GZIP_CACHE[key] = hit
+    return hit, stat.st_mtime
+
+
+class StaticMixin:
+    """Shared by the editable and the read-only share handlers."""
+
+    def serve_static(self):
+        """Static files, gzipped when the browser accepts it.
+
+        transactions.json alone is over 3 MB uncompressed and every page load
+        reads it; gzip brings the data files to roughly a tenth of that,
+        which matters most on the Wi-Fi share. Anything not compressible, or
+        too small to be worth it, falls through to the stock handler.
+        """
+        path = Path(self.translate_path(self.path.split("?", 1)[0]))
+        accepts = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+        if (accepts and path.is_file() and path.suffix.lower() in COMPRESSIBLE
+                and path.stat().st_size >= GZIP_MIN_BYTES):
+            packed = gzipped_static(path)
+            if packed:
+                body, mtime = packed
+                self.send_response(200)
+                self.send_header("Content-Type", self.guess_type(str(path)))
+                self.send_header("Content-Encoding", "gzip")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Vary", "Accept-Encoding")
+                self.send_header("Last-Modified", self.date_time_string(int(mtime)))
+                self.end_headers()
+                if self.command != "HEAD":
+                    self.wfile.write(body)
+                return
+        super().do_GET()
+
+
+class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(APP_DIR), **kwargs)
 
@@ -1292,6 +1375,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "transactionDetails": True,
                 "homeRecords": True,
                 "netWorth": True,
+                "codeChanged": code_changed(),
                 "auditHistory": True,
                 "accountReviews": True,
                 # How many bank rows one /api/account-review may carry.
@@ -1348,7 +1432,7 @@ class FinanceHandler(SimpleHTTPRequestHandler):
                 "entries": list(reversed(entries[-250:])),
             })
             return
-        super().do_GET()
+        self.serve_static()
 
     def do_POST(self):
         # The origin gate comes first, as in do_GET/do_HEAD: answering 404 vs
@@ -1620,7 +1704,7 @@ def lan_address():
     return address
 
 
-class ShareHandler(SimpleHTTPRequestHandler):
+class ShareHandler(StaticMixin, SimpleHTTPRequestHandler):
     """Read-only, code-gated copy of app/ for other devices on the network."""
 
     _set_cookie = False
@@ -1698,7 +1782,7 @@ class ShareHandler(SimpleHTTPRequestHandler):
         if path.startswith("/api/"):
             self.send_json(404, {"ok": False, "error": "Not available on the shared copy."})
             return
-        super().do_GET()
+        self.serve_static()
 
     def do_HEAD(self):
         if not self.authorised():

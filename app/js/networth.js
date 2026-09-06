@@ -21,17 +21,18 @@
   function money(v, dp) { return v == null ? '—' : (v < 0 ? '-' : '') + 'S$' + Math.abs(v).toLocaleString('en-SG', { minimumFractionDigits: dp == null ? 2 : dp, maximumFractionDigits: dp == null ? 2 : dp }); }
   function money0(v) { return money(v == null ? null : Math.round(v), 0); }
   function signed(v) { return (v > 0 ? '+' : v < 0 ? '−' : '') + 'S$' + Math.abs(Math.round(v)).toLocaleString('en-SG'); }
-  function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-SG', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'; }
+  // en-GB gives "Sep" like the rest of the dashboard; en-SG renders "Sept".
+  function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'; }
   function today() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
   function monthOf(d) { return d.slice(0, 7); }
   function monthEnd(m) { var y = +m.slice(0, 4), mo = +m.slice(5, 7); return m + '-' + String(new Date(Date.UTC(y, mo, 0)).getUTCDate()).padStart(2, '0'); }
   function addMonths(m, n) { var y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1 + n; return (y + Math.floor(mo / 12)) + '-' + String((mo % 12 + 12) % 12 + 1).padStart(2, '0'); }
-  function monthLabel(m) { return new Date(m + '-01T00:00:00').toLocaleDateString('en-SG', { month: 'short', year: 'numeric' }); }
+  function monthLabel(m) { return new Date(m + '-01T00:00:00').toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }); }
   function monthsBetween(a, b) { return (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7)); }
   function monthsOld(d) { return monthsBetween(monthOf(d), monthOf(today())); }
   var ICONS = { close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>', down: '<path d="m6 10 6 6 6-6"/>', up: '<path d="m6 14 6-6 6 6"/>', trend: '<path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/>', scale: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0L7 7Zm10 0-3 7a3 3 0 0 0 6 0l-3-7Z"/>' };
   function icon(name) { return '<svg class="nw-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>'; }
-  async function json(url) { var r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
+  async function json(url) { if (window.FinanceData && url.indexOf('api/') !== 0) return window.FinanceData.load(url); var r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
 
   // ---------- Series ----------
   // Every account becomes {account, points:[{date,value,source}]}; a value
@@ -92,7 +93,8 @@
     root.innerHTML =
       '<header class="nw-heading"><div><h2>Net worth</h2><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Values carry forward until you record a newer one, so the as-at dates matter.</p></div>' +
       '<div class="nw-total"><span>Net worth</span><strong>' + money0(history.length ? now.net : null) + '</strong><small>' + (newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' · oldest ' + date(oldest) : '') : 'No balances recorded yet') + '</small>' +
-      (showExcl ? '<small>Excluding property and home loan: ' + money0(now.net - homeOnly) + (now.byGroup.liabilities && !now.byGroup.property ? ' · no property value recorded against the loan' : '') + '</small>' : '') + '</div></header>' +
+      (showExcl ? '<small>Excluding property and home loan: ' + money0(now.net - homeOnly) + (now.byGroup.liabilities && !now.byGroup.property ? ' · no property value recorded against the loan' : '') + '</small>' : '') +
+      (staleAccounts(all).length ? '<small class="nw-stale">Over 90 days old: ' + esc(staleAccounts(all).join(', ')) + '</small>' : '') + '</div></header>' +
       '<div class="nw-kpis">' +
         kpi('Assets', money0(now.assets), Object.keys(now.byGroup).filter(function (g) { return g !== 'liabilities' && now.byGroup[g]; }).map(function (g) { return GROUP_NAME[g] + ' ' + money0(now.byGroup[g]); }).join(' · ') || 'nothing recorded', null, 'up') +
         kpi('Liabilities', money0(now.liabilities), now.liabilities ? 'subtracted from assets' : 'none recorded', null, 'down') +
@@ -106,6 +108,11 @@
     bind(all);
   }
   function kpi(label, value, note, tone, ic) { return '<div class="nw-kpi"><p class="label">' + icon(ic) + esc(label) + '</p><p class="value' + (tone ? ' ' + tone : '') + '">' + esc(value) + '</p><p class="delta">' + esc(note) + '</p></div>'; }
+  // Manual accounts whose newest balance is more than a quarter old; derived
+  // series refresh with the statements and are not the owner's job.
+  function staleAccounts(all) {
+    return all.filter(function (s) { var p = latest(s); return s.manual && p && monthsOld(p.date) > 3; }).map(function (s) { return s.account.name; });
+  }
   function cpfNote(all) {
     var cpf = all.filter(function (s) { return s.account.group === 'cpf'; }), dates = cpf.map(latest).filter(Boolean).map(function (p) { return p.date; }).sort();
     if (!dates.length) return 'no CPF balance recorded';

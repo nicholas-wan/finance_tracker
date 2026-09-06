@@ -2125,3 +2125,36 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .insurance-charge-item { grid-template-columns: 58px minmax(0, 1fr) 86px; gap: 7px; }
   .insurance-charge-detail { padding-left: 12px; padding-right: 12px; }
 }
+
+/* ---------- Server code newer than the running process ---------- */
+.server-stale { display: flex; gap: 10px; align-items: center; padding: 10px 14px; border-radius: 10px; background: var(--red-soft); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); font-size: var(--fs-body); }
+.server-stale strong { font-weight: 600; }
+.server-stale code { font-family: ui-monospace, Consolas, monospace; font-size: var(--fs-small); background: color-mix(in srgb, var(--red) 10%, transparent); padding: 1px 5px; border-radius: 4px; }
+
+/* ---------- Phone: the tab bar and chip rows scroll sideways ---------- */
+@media (max-width: 760px) {
+  /* The bar already scrolls; without an affordance the last tabs looked cut off. */
+  .tabs { scroll-snap-type: x proximity; padding-right: 24px; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .tab { scroll-snap-align: start; }
+  /* The merchant strip (Foodpanda / Shopee / Grab) scrolls too; fade its edge the same way. */
+  .source-filter-strip { padding-right: 24px; -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); mask-image: linear-gradient(to right, #000 calc(100% - 28px), transparent); }
+  .pills { flex-wrap: wrap; }
+  .filters { flex-wrap: wrap; }
+  .filters > .pills, .filters > .period { max-width: 100%; }
+}
+
+/* ---------- Print: the active tab only, as a plain document ---------- */
+@media print {
+  :root { --bg: #fff; --surface: #fff; --surface-2: #fff; --text: #111; --text-2: #333; --text-3: #555; --border: #bbb; --shadow-soft: none; }
+  body { background: #fff; color: #111; }
+  .topbar, .tabs, #month-nav, .filters, .panel-head-actions, .home-filters, .home-sections, .nw-actions, .theme-toggle, #theme-toggle, button, dialog, .server-stale, .freshness-strip, .card-fee-alert-panel { display: none !important; }
+  .pane.hidden { display: none !important; }
+  .pane { gap: 10px; }
+  .panel, .kpi, .nw-panel, .nw-kpi, .home-panel, .nw-group { break-inside: avoid; box-shadow: none; border-color: #bbb; }
+  details { open: true; }
+  details > summary { list-style: none; }
+  details:not([open]) > *:not(summary) { display: block !important; }
+  a[href]::after { content: ""; }
+  table { font-size: 11px; }
+  .nw-heading, .home-heading { background: none; border: 0; padding: 0 0 8px; }
+}

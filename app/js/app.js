@@ -5576,6 +5576,10 @@
       var active = t.getAttribute("data-tab") === name;
       t.classList.toggle("active", active);
       t.setAttribute("aria-selected", active ? "true" : "false");
+      // On a phone the bar scrolls sideways; keep the chosen tab in view.
+      if (active && t.scrollIntoView && t.parentNode.scrollWidth > t.parentNode.clientWidth) {
+        t.scrollIntoView({ block: "nearest", inline: "center" });
+      }
     });
     Array.prototype.forEach.call(document.querySelectorAll(".pane"), function (p) {
       var active = p.id === "pane-" + name;
@@ -5904,6 +5908,16 @@
         closePeriod();
         closeTransactionDrawer();
         closeAuditHistory();
+        return;
+      }
+      // "/" jumps to the transaction search from anywhere that is not already
+      // a text field, the way search boxes on most sites behave.
+      var typing = /^(INPUT|TEXTAREA|SELECT)$/.test((e.target && e.target.tagName) || "") || (e.target && e.target.isContentEditable);
+      if (e.key === "/" && !typing && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault();
+        if (state.tab !== "transactions") setTab("transactions");
+        var box = document.getElementById("search");
+        if (box) { box.focus(); box.select(); }
       }
     });
     setTab(state.tab);
@@ -5911,7 +5925,12 @@
   }
 
   function loadJson(url) {
-    return fetch(url).then(function (r) {
+    // data-cache.js shares one copy of each data file across every module on
+    // the page; API calls carry fresh state and bypass it.
+    if (window.FinanceData && url.indexOf("api/") !== 0) {
+      return url.indexOf("?") >= 0 ? window.FinanceData.refresh(url) : window.FinanceData.load(url);
+    }
+    return fetch(url, { cache: "no-store" }).then(function (r) {
       if (!r.ok) throw new Error(url + " -> HTTP " + r.status);
       return r.json();
     });
@@ -5941,6 +5960,11 @@
     })
     .then(function (loaded) {
       editor.available = loaded[0].editable === true;
+      // The server compares the code files it started from with what is on
+      // disk now; a mismatch means the page may be calling routes the running
+      // process does not have.
+      var stale = document.getElementById("server-stale");
+      if (stale) stale.classList.toggle("hidden", loaded[0].codeChanged !== true);
       // A server that advertises its own batch cap decides how many ids one
       // bank-review request may carry; an older one keeps the documented default.
       var batchLimit = Math.floor(Number(loaded[0].accountReviewBatch));

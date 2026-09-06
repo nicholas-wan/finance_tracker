@@ -125,6 +125,15 @@ Manual edits use stable content-based transaction IDs, so PDF renames or
 extraction shifts do not detach decisions. Saves and rebuilds are atomic and
 roll back on validation failure.
 
+Across the page: data files are fetched once and shared by every tab
+(`app/js/data-cache.js`), and the server gzips JSON, script and stylesheet
+responses, so the multi-megabyte ledgers travel as a few hundred kilobytes.
+Press `/` anywhere to jump to the transaction search. On a phone the tab bar
+and the merchant strip scroll sideways with a faded edge. Printing shows the
+active tab as a plain document. If the code on disk changes after the server
+started, a banner asks for a restart instead of letting saves fail on a route
+the running process does not have.
+
 ## Accounting rules
 
 - Interactive Brokers, SRS, fixed deposits, transfers and card-bill payments

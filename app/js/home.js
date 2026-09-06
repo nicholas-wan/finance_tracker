@@ -66,7 +66,8 @@
   };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function money(v) { return v == null || v === '' ? 'Not recorded' : 'S$' + Number(v).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
-  function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-SG', { day:'numeric', month:'short', year:'numeric' }) : 'Not recorded'; }
+  // en-GB gives "Sep" like the rest of the dashboard; en-SG renders "Sept".
+  function date(v) { return v ? new Date(v + 'T00:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : 'Not recorded'; }
   // Short, specific reasons a record still needs attention; the first one labels the card.
   function attention(r) {
     var out=[];
@@ -105,7 +106,7 @@
     }).join('')+'</nav>';
   }
   function txLabel(t) { return t.date + ' · ' + (t.displayName || t.description || 'Transaction') + ' · ' + money(Math.abs(t.amount)) + ' · ' + t.source; }
-  async function json(url) { var r = await fetch(url, {cache:'no-store'}); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
+  async function json(url) { if (window.FinanceData && url.indexOf('api/') !== 0) return window.FinanceData.load(url); var r = await fetch(url, {cache:'no-store'}); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
   var ICONS={grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',external:'<path d="M14 4h6v6M20 4l-9 9M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"/>',chevronRight:'<path d="m9 5 7 7-7 7"/>',close:'<path d="M6 6l12 12M18 6 6 18"/>',check:'<path d="m5 12 4 4L19 7"/>',up:'<path d="m6 14 6-6 6 6"/>',down:'<path d="m6 10 6 6 6-6"/>',room:'<path d="M3 21V8l9-5 9 5v13M9 21v-6h6v6"/>'};
   function icon(name, cls) { return '<svg class="home-icon '+(cls||'')+'" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">'+ICONS[name]+'</svg>'; }
   function homeIcon(category) {
@@ -534,7 +535,15 @@
     dialog.showModal();
     dialog.scrollTop=0;
   }
-  function openRecord(record) {
+  // The statement rows are only needed to link a payment inside the form, so
+  // they load the first time a form opens rather than with the tab.
+  var txsLoaded = null;
+  function loadTxs() {
+    if (!txsLoaded) txsLoaded = Promise.all([json('data/transactions.json'), json('data/account_transactions.json')]).then(function (all) { all.forEach(function (data, i) { (data.transactions || []).forEach(function (t) { txs.push(Object.assign({}, t, { source: i ? 'bank' : 'card' })); }); }); txs.sort(function (a, b) { return b.date.localeCompare(a.date); }); }).catch(function () { /* Register remains usable without statement links. */ });
+    return txsLoaded;
+  }
+  function openRecord(record) { loadTxs().then(function () { openRecordNow(record); }); }
+  function openRecordNow(record) {
     lastFocus=document.activeElement;
     if(record.kind==='appliance'){openItem(record);return;}
     var revision=store.revision;
@@ -575,6 +584,5 @@
       render();
     }catch(error){root.innerHTML='<section class="home-panel"><h2>Home records unavailable</h2><p>'+esc(error.message)+'</p><button class="home-button" id="home-retry">Retry</button></section>';root.querySelector('#home-retry').onclick=load;}
   }
-  Promise.all([json('data/transactions.json'),json('data/account_transactions.json')]).then(function(all){all.forEach(function(data,i){(data.transactions||[]).forEach(function(t){txs.push(Object.assign({},t,{source:i?'bank':'card'}));});});txs.sort(function(a,b){return b.date.localeCompare(a.date);});}).catch(function(){/* Register remains usable without statement links. */});
   load();
 }());
