@@ -8,6 +8,12 @@
       "port": 3402
     },
     {
+      "name": "yx-3406",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["C:/Users/nicho/Documents/yx_finances/scripts/serve.py", "--port", "3406"],
+      "port": 3406
+    },
+    {
       "name": "dashboard-3405",
       "runtimeExecutable": "python",
       "runtimeArgs": ["scripts/serve.py", "--port", "3405"],

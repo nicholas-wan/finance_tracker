@@ -1,5 +1,24 @@
 # Owner decisions — do not ask again
 
+## Two clones, one codebase (merged 6 Sep 2026)
+
+- This repository is the upstream. Yx's clone at
+  `C:\Users\nicho\Documents\yx_finances` has `origin` pointing here and
+  `master` tracking `origin/master`; update her with `git pull --ff-only`
+  there, never by copying files. Do not commit in her clone unless the
+  change is meant for both; push it here instead.
+- Clone identity is private: `manual/branding.json` (port, monogram, title,
+  colours) and `manual/branding/favicon.*`. Yx's is port 3403, purple "Yx";
+  this clone has none and uses the tracked defaults (3402, green "N").
+- Every tab exists in both clones and shows whatever its data holds. Travel
+  is fed by Travel-category charges plus Yx's Trip.com/Klook/WeChat imports;
+  Home and Net worth are empty in her clone until she records something.
+- Yx's in-page "mark verified" insurance control was dropped in the merge;
+  verification lives on the policy record (`verification` object).
+- The pre-commit privacy hook stops on 10-digit numbers; Yx's test fixtures
+  contain three synthetic ones, so a commit touching those lines needs
+  `--no-verify` after reading the finding.
+
 ## Home register (`manual/home.json`)
 
 - Expired or not-tracked warranties are settled; never ask for their terms,
