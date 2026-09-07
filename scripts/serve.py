@@ -265,6 +265,8 @@ def save_home(payload):
                    "updatedAt": datetime.now().isoformat(timespec="seconds"), "records": records}
         if "costReference" in current:
             updated["costReference"] = current["costReference"]
+        if "property" in current:
+            updated["property"] = current["property"]
         paths = [HOME_PATH, HOME_PUBLIC_PATH]
         originals = {path: path.read_bytes() if path.exists() else None for path in paths}
         snapshot_backups([HOME_PATH] if HOME_PATH.exists() else [])
@@ -597,6 +599,78 @@ def validate_transaction_detail_request(payload, transactions):
     if len(destination) > 40:
         raise ValueError("Destination must be 40 characters or fewer.")
     return tx_id, owner, category, display_name, remark, destination
+
+
+GAME_PROFILES_PATH = REPO_ROOT / "manual" / "game_profiles.json"
+
+
+def validate_game_profile(payload):
+    if not isinstance(payload, dict):
+        raise ValueError("A game profile is required.")
+    title = payload.get("title")
+    if not isinstance(title, str) or not title.strip() or len(title) > 100:
+        raise ValueError("A game title of up to 100 characters is required.")
+    profile = payload.get("profile")
+    if not isinstance(profile, dict) or set(profile) - {"note"}:
+        raise ValueError("Unsupported game profile fields.")
+    note = profile.get("note", "")
+    if not isinstance(note, str) or len(note) > 500:
+        raise ValueError("Keep the game note within 500 characters.")
+    revision = payload.get("revision")
+    if isinstance(revision, bool) or not isinstance(revision, int) or revision < 0:
+        raise ValueError("Reload Games before saving this profile.")
+    return title.strip(), {"note": note.strip()}, revision
+
+
+def save_game_profile(payload):
+    title, profile, revision = validate_game_profile(payload)
+    with WRITE_LOCK:
+        existed = GAME_PROFILES_PATH.exists()
+        original = GAME_PROFILES_PATH.read_bytes() if existed else None
+        current = json.loads(original) if existed else {"revision": 0, "records": {}}
+        if revision != current.get("revision", 0):
+            raise ValueError("Games changed in another window. Reload before saving.")
+        current.setdefault("records", {})[title] = profile
+        current["revision"] = revision + 1
+        current["updatedAt"] = datetime.now().isoformat(timespec="seconds")
+        if existed:
+            snapshot_backups([GAME_PROFILES_PATH])
+        try:
+            atomic_write_json(GAME_PROFILES_PATH, current)
+            run_script(BUILD_SCRIPT)
+            run_script(VALIDATE_SCRIPT)
+            if load_json(TRANSACTIONS_PATH).get("gameProfiles") != current:
+                raise RuntimeError("The rebuilt dashboard did not apply the game profile.")
+        except Exception:
+            if existed:
+                GAME_PROFILES_PATH.write_bytes(original)
+            elif GAME_PROFILES_PATH.exists():
+                GAME_PROFILES_PATH.unlink()
+            run_script(BUILD_SCRIPT)
+            raise
+        return {"ok": True, "gameProfiles": current}
+
+
+def validate_game_details(value):
+    if value is None:
+        return None
+    if not isinstance(value, dict) or set(value) - {"title", "platform", "purchaseType", "hidden"}:
+        raise ValueError("Unsupported game detail fields.")
+    result = {}
+    if not isinstance(value.get("hidden", False), bool):
+        raise ValueError("Game visibility must be true or false.")
+    if value.get("hidden"):
+        result["hidden"] = True
+    for key, limit in (("title", 100), ("platform", 60), ("purchaseType", 30)):
+        text = value.get(key, "")
+        if not isinstance(text, str) or len(text) > limit:
+            raise ValueError("Invalid game %s." % key)
+        text = " ".join(text.split())
+        if text:
+            result[key] = text
+    if result.get("purchaseType", "") not in ("", "Base game", "DLC", "Monthly pass", "Top-up", "Account purchase", "Subscription", "Other"):
+        raise ValueError("Choose a supported game purchase type.")
+    return result
 
 
 def run_script(script):
@@ -934,7 +1008,7 @@ def save_remark(tx_id, remark):
         }
 
 
-def save_transaction_detail(tx_id, owner, category, display_name, remark, destination=""):
+def save_transaction_detail(tx_id, owner, category, display_name, remark, destination="", game_details=None):
     with WRITE_LOCK:
         transaction_data = load_json(TRANSACTIONS_PATH)
         transactions = {
@@ -953,6 +1027,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark, destin
                 transactions,
             )
         )
+        game_details = validate_game_details(game_details)
         current = transactions[tx_id]
         # A Trip.com booking name is derived on every build, not a saved edit.
         # The drawer shows it as the placeholder, so an untouched field posts
@@ -996,6 +1071,10 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark, destin
         override_data = json.loads(originals[OVERRIDE_PATH].decode("utf-8"))
         overrides = override_data.setdefault("overridesById", {})
         override = {}
+        saved_game_details = overrides.get(tx_id, {}).get("gameDetails", {})
+        effective_game_details = saved_game_details if game_details is None else game_details
+        if effective_game_details:
+            override["gameDetails"] = effective_game_details
         category_overlap = len(current.get("ruleCategories") or []) > 1
         # Saving an overlapping row is an explicit choice even when the user
         # keeps the first rule's category. Retaining that same-value override
@@ -1015,6 +1094,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark, destin
 
         changes = []
         comparisons = (
+            ("Game details", current.get("gameDetails", {}), effective_game_details),
             ("Display name", saved_display_name, display_name),
             ("Category", current.get("category", ""), category),
             ("Owner", current.get("owner", "Unassigned"), owner),
@@ -1081,6 +1161,7 @@ def save_transaction_detail(tx_id, owner, category, display_name, remark, destin
                 or not display_applied
                 or updated.get("remark", "") != remark
                 or updated.get("destination", "") != destination
+                or updated.get("gameDetails", {}) != effective_game_details
             ):
                 raise RuntimeError(
                     "The rebuilt dashboard did not apply all transaction details."
@@ -1285,37 +1366,38 @@ class StaticMixin:
         """
         request_path = self.path.split("?", 1)[0]
         path = Path(self.translate_path(request_path))
-        # A clone's own favicon lives in the private folder; the tracked one
-        # is the default for a fresh clone.
         if request_path in ("/favicon.svg", "/favicon.ico"):
             private = BRANDING_DIR / request_path.lstrip("/")
             if private.is_file():
                 path = private
-                body = private.read_bytes()
-                self.send_response(200)
-                self.send_header("Content-Type", "image/svg+xml" if private.suffix == ".svg" else "image/x-icon")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                if self.command != "HEAD":
-                    self.wfile.write(body)
-                return
-        accepts = "gzip" in (self.headers.get("Accept-Encoding") or "").lower()
-        if (accepts and path.is_file() and path.suffix.lower() in COMPRESSIBLE
-                and path.stat().st_size >= GZIP_MIN_BYTES):
-            packed = gzipped_static(path)
-            if packed:
-                body, mtime = packed
-                self.send_response(200)
-                self.send_header("Content-Type", self.guess_type(str(path)))
-                self.send_header("Content-Encoding", "gzip")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header("Vary", "Accept-Encoding")
-                self.send_header("Last-Modified", self.date_time_string(int(mtime)))
-                self.end_headers()
-                if self.command != "HEAD":
-                    self.wfile.write(body)
-                return
-        super().do_GET()
+        if not path.is_file():
+            return super().do_GET()
+        stat = path.stat()
+        compressed = ("gzip" in (self.headers.get("Accept-Encoding") or "").lower()
+                      and path.suffix.lower() in COMPRESSIBLE and stat.st_size >= GZIP_MIN_BYTES)
+        etag = f'"{stat.st_mtime_ns:x}-{stat.st_size:x}-{"gz" if compressed else "raw"}"'
+        # Private browser cache, always revalidated. APIs and Wi-Fi sharing
+        # retain no-store; changed bytes cannot be reused after a save.
+        self._static_response = True
+        if etag in [part.strip() for part in (self.headers.get("If-None-Match") or "").split(",")]:
+            self.send_response(304)
+            self.send_header("ETag", etag)
+            self.send_header("Vary", "Accept-Encoding")
+            self.end_headers()
+            return
+        packed = gzipped_static(path) if compressed else None
+        body = packed[0] if packed else path.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", self.guess_type(str(path)))
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("ETag", etag)
+        self.send_header("Vary", "Accept-Encoding")
+        self.send_header("Last-Modified", self.date_time_string(stat.st_mtime))
+        if packed:
+            self.send_header("Content-Encoding", "gzip")
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
 
 class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
@@ -1549,6 +1631,7 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
             "/api/risk-review",
             "/api/remark",
             "/api/transaction-detail",
+            "/api/game-profile",
             "/api/account-review",
             "/api/card-fee-review",
             "/api/share",
@@ -1564,7 +1647,9 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
             return
         try:
             payload = json.loads(self.rfile.read(length).decode("utf-8"))
-            if endpoint == "/api/home":
+            if endpoint == "/api/game-profile":
+                result = save_game_profile(payload)
+            elif endpoint == "/api/home":
                 result = save_home(payload)
             elif endpoint == "/api/net-worth":
                 result = save_net_worth(payload)
@@ -1630,7 +1715,7 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
                     result = save_remark(tx_id, remark)
                 else:
                     details = validate_transaction_detail_request(payload, transactions)
-                    result = save_transaction_detail(*details)
+                    result = save_transaction_detail(*details, game_details=payload.get("gameDetails"))
         except ValueError as error:
             self.send_json(400, {"ok": False, "error": str(error)})
             return
@@ -1654,10 +1739,8 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
         super().log_request(code, size)
 
     def end_headers(self):
-        # This is a local development dashboard whose HTML, CSS, JavaScript and
-        # generated data change together. Caching any one of them can leave the
-        # page running an incompatible mixture after a refresh.
-        self.send_header("Cache-Control", "no-store, max-age=0")
+        self.send_header("Cache-Control", "private, no-cache" if getattr(self, "_static_response", False) else "no-store, max-age=0")
+        self._static_response = False
         self.send_header("X-Content-Type-Options", "nosniff")
         # "same-origin" rather than "no-referrer": both keep the dashboard URL
         # out of third-party requests, but under "no-referrer" the Fetch spec

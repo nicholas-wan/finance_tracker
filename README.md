@@ -8,7 +8,7 @@ reviews. Plain HTML, CSS and JavaScript; no build step, no CDN.
 ## Run
 
 ```powershell
-./scripts/launch_dashboard.ps1 -Port 3403
+./scripts/launch_dashboard.ps1 -Port 3402
 ```
 
 Open http://localhost:3402. The editable server binds to `127.0.0.1` only and
@@ -108,6 +108,11 @@ away.
   appliances, fixtures, furniture and pet items with costs, key dates,
   warranty cover and documents; home and fire policies; the mortgage; and
   maintenance, including prepaid multi-visit plans as one dated schedule.
+  Collection is the default sub-tab. Property combines the property summary and
+  current home loan, with purchase fees and previous loans disclosed on demand.
+  Renovation and gift funding can be recorded alongside household items; additional
+  costs appear in item details. Explicitly linked service-charge payments appear
+  as monthly amounts, with earlier years expandable.
   Items have List, Grid and Coverage (warranty timeline) views, a category and
   zone rail, and warranty and information filters. Items are read-only in the
   browser and maintained by the assistant from documents in the Drive
@@ -133,7 +138,10 @@ away.
   request with the same guarantees as Home; `app/data/net_worth.json` is the
   read-only snapshot. A final panel totals money moved from the bank account
   to brokers, SRS and fixed deposits as a reference, never a valuation.
-  Insurance counts at net surrender value, not premiums paid.
+  Insurance counts at net surrender value, not premiums paid. Personal accounts
+  and whole-property values are labelled separately; changes to the Home mortgage
+  update its derived liability without reloading. Excluding property removes only
+  the home loan, retaining other debts.
 - **Travel** — the whole travel history: this year against earlier years,
   spending by country and by year, and the trips. A trip is the cluster of
   Travel-category charges belonging to one journey; a charge matched to a
@@ -149,12 +157,25 @@ away.
   clone's published data into `manual/partner_travel.json`, shown beside the
   statements and never inside them, with a **Paid by** filter. Every panel
   opens the Transactions tab already filtered to that trip, country or year.
-- **Games** — game-account sales from `manual/game_sales.json`, kept off the
-  statements.
+- **Games**: year-filtered purchases and refunds grouped by assigned title,
+  with thumbnails, spending comparisons, monthly totals and expandable daily
+  charges. Select a game or month again to clear its filter. Transaction details
+  store title, platform and purchase type on the exact charge; hidden entries
+  remain in the main ledger. **Release timing** shows the game's age at purchase
+  with sourced launch dates and early-access labels, collapsed by default.
+  **Games over time** is a collapsed monthly heatmap with game counts, thumbnails,
+  column highlighting and click-to-filter tiles. All years uses annual blocks.
+  Activity reflects purchases, not measured playtime; months beyond statement
+  coverage are distinct from months without purchases. Account sales from
+  `manual/game_sales.json` remain separate from statements.
 - **Split** — the Yx settlement shared with the Overview: opening balances
   carry forward, `Yx share` is half of `Shared` plus rows assigned to `Yx`.
-- **Transactions** — period, search, category/flow, owner, direction and
-  review filters. Owner chips tag a row (or a merchant group, or the filtered
+- **Transactions**: compact source, period and search controls, with additional
+  filters in an expandable panel grouped by ownership, category, merchant, review
+  and inclusion settings. Bank mode shows relevant bank controls. Active filters
+  remain visible as removable chips, with a count on the Filters button. Clear
+  filters retains source and period. **View** contains purchase or counterparty
+  grouping, while **History** stays separate. Owner chips tag a row (or a merchant group, or the filtered
   list up to 100 rows) in one click; clicking the active chip clears the tag
   and hands the row back to `manual/owner_rules.json`. A charge refunded in
   full by the same merchant within 180 days folds away with its refund.
@@ -169,11 +190,15 @@ Manual edits use stable content-based transaction IDs, so PDF renames or
 extraction shifts do not detach decisions. Saves and rebuilds are atomic and
 roll back on validation failure.
 
-Across the page: data files are fetched once and shared by every tab
-(`app/js/data-cache.js`), and the server gzips JSON, script and stylesheet
-responses, so the multi-megabyte ledgers travel as a few hundred kilobytes.
+Across the page: startup requests run together, tabs render when opened, and
+Home and Net worth load on demand. Data requests are shared within the page
+(`app/js/data-cache.js`). The local server gzips JSON, scripts and stylesheets,
+then uses private revalidation with ETags so unchanged static files return 304
+responses after refresh. API responses remain uncached. Optimized local WebP
+assets reduce image transfer size; asset provenance is kept in `sources.json`.
+The selected main tab and sub-tab are remembered locally.
 Press `/` anywhere to jump to the transaction search. On a phone the tab bar
-and the merchant strip scroll sideways with a faded edge. Printing shows the
+scrolls sideways; expanded transaction filters use a full-width stacked layout. Printing shows the
 active tab as a plain document. If the code on disk changes after the server
 started, a banner asks for a restart instead of letting saves fail on a route
 the running process does not have.

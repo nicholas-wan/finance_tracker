@@ -31,3 +31,17 @@ assert.equal(result.length,1);
 assert.equal(result[0].label,'Compressor ends');
 assert.equal(result[0].date,'2029-10-02');
 console.log('Home date and reminder tests passed.');
+const { paymentSummary } = require('../app/js/home.js');
+const paymentRecord = {paymentLinks:[{source:'card',id:'a'},{source:'card',id:'b'},{source:'card',id:'refund'},{source:'bank',id:'missing'}]};
+const paymentResult = paymentSummary(paymentRecord, [
+  {source:'card',id:'a',date:'2026-05-01',amount:74.6,type:'debit'},
+  {source:'card',id:'b',date:'2026-05-16',amount:70.6,type:'debit'},
+  {source:'card',id:'refund',date:'2026-06-01',amount:10,type:'refund'},
+  {source:'card',id:'unconfirmed',date:'2026-05-20',amount:70.6,description:'AXS'},
+  {source:'bank',id:'a',date:'2026-05-01',amount:999,type:'debit'}
+]);
+assert.deepEqual(paymentResult.years['2026'][4],{cents:14520,count:2});
+assert.deepEqual(paymentResult.years['2026'][5],{cents:-1000,count:1});
+assert.deepEqual(paymentResult.years['2026'][0],{cents:0,count:0});
+assert.equal(paymentResult.missing,1);
+console.log('Explicit payment links and monthly totals passed.');

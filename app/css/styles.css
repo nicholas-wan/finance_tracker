@@ -2421,3 +2421,27 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 .game-logo-glyph .icon { width: 12px; height: 12px; }
 .cat-row .game-name { display: inline-flex; align-items: center; }
 .pill .game-logo { margin-right: 6px; width: 16px; height: 16px; }
+.transaction-filter-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:12px 0 18px; padding:10px 12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
+#active-transaction-filters { display:flex; flex-wrap:wrap; gap:6px; min-width:0; }
+.filter-summary-chip { color:var(--text-2); background:var(--bg); border:1px solid var(--border); padding:4px 8px; border-radius:6px; font-size:var(--fs-small); overflow-wrap:anywhere; }
+.transaction-filter-summary > button { flex-shrink:0; }
+@media(max-width:600px) { .transaction-filter-summary { align-items:flex-start; flex-direction:column; } }
+
+/* Transaction toolbar and progressive filter disclosure. */
+.transaction-filter-panel { border:1px solid var(--border); border-radius:10px; padding:16px; margin:0 0 12px; background:var(--surface); }
+.transaction-filter-panel-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; font-size:13px; }
+.transaction-filter-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
+.transaction-filter-group h3 { margin:0 0 8px; font-size:12px; color:var(--muted); font-weight:500; }
+.transaction-filter-group .pills, .transaction-filter-group .source-filter-strip { display:flex; flex-wrap:wrap; gap:6px; margin:0; }
+.transaction-filter-group select { width:100%; }
+.transaction-filter-group .bank-review-controls { flex-direction:column; align-items:stretch; gap:10px; }
+.transaction-filter-group .history-help-button { font-size:11px; flex-basis:100%; }
+.transaction-filter-group .toggle { font-size:12px; }
+.transaction-view { position:relative; }
+.transaction-view > summary { cursor:pointer; }
+.transaction-view-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:20; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; white-space:nowrap; box-shadow:0 8px 24px #0002; }
+button.filter-summary-chip { font:inherit; font-size:12px; cursor:pointer; }
+button.filter-summary-chip:hover { border-color:var(--brand); }
+#transaction-filters-toggle[aria-expanded="true"] { border-color:var(--brand); }
+@media(max-width:800px) { .transaction-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
+@media(max-width:600px) { .transaction-filter-grid { grid-template-columns:1fr; gap:16px; } .transaction-filter-panel { width:100%; box-sizing:border-box; padding:14px; } .transaction-filter-panel-head { position:sticky; top:0; background:var(--surface); z-index:2; padding-bottom:8px; } }

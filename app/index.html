@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260906-40">
+<link rel="stylesheet" href="css/styles.css?v=20260908-filters-1">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -17,8 +17,9 @@
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   })();
 </script>
+<link rel="stylesheet" href="css/games.css?v=6">
 <link rel="stylesheet" href="css/home.css?v=21">
-<link rel="stylesheet" href="css/networth.css?v=1">
+<link rel="stylesheet" href="css/networth.css?v=2">
 </head>
 <body>
 <svg class="sprite" aria-hidden="true" focusable="false"><defs>
@@ -399,11 +400,7 @@
         <h2><svg class="icon"><use href="#i-list"/></svg>Transactions</h2>
         <div class="panel-head-actions">
           <span class="hint" id="ledger-hint"></span>
-          <button class="history-button" id="group-purchases-button" type="button"
-            aria-pressed="false">
-            <svg class="icon"><use href="#i-bars"/></svg>
-            <span id="group-purchases-label">Group purchases</span>
-          </button>
+
           <button class="history-button" id="audit-history-button" type="button">
             <svg class="icon"><use href="#i-repeat"/></svg>
             History
@@ -428,7 +425,19 @@
           </div>
         </div>
         <input type="search" id="search" placeholder="Search transactions" aria-label="Search transactions">
-        <div class="source-filter-strip" id="source-filter-strip" aria-label="Merchant and review filters">
+        <button type="button" class="history-button" id="transaction-filters-toggle" aria-expanded="false" aria-controls="transaction-filter-panel">Filters <span id="transaction-filter-count"></span></button>
+        <details class="transaction-view"><summary class="history-button">View</summary><div class="transaction-view-menu">          <button class="history-button" id="group-purchases-button" type="button"
+            aria-pressed="false">
+            <svg class="icon"><use href="#i-bars"/></svg>
+            <span id="group-purchases-label">Group purchases</span>
+          </button></div></details>
+      </div>
+      <div id="transaction-filter-panel" class="transaction-filter-panel hidden">
+        <div class="transaction-filter-panel-head"><strong>Filter transactions</strong><button type="button" class="history-button" id="transaction-filters-close">Done</button></div>
+        <div class="transaction-filter-grid">
+          <section class="transaction-filter-group" id="transaction-owner-group"><h3>Ownership</h3>        <div class="pills" id="owner-pills"></div></section>
+          <section class="transaction-filter-group"><h3>Category</h3>        <select id="category-filter" aria-label="Filter by category"></select>        <div class="pills travel-country-pills hidden" id="travel-country-pills" aria-label="Filter travel by country / region"></div></section>
+          <section class="transaction-filter-group" id="transaction-merchant-group"><h3>Merchant</h3>        <div class="source-filter-strip" id="source-filter-strip" aria-label="Merchant and review filters">
         <button class="pill" id="foodpanda-filter" type="button" aria-pressed="false"
           title="Show statement transactions matched to a Foodpanda order">
           <svg class="icon"><use href="#i-bike"/></svg>Foodpanda only
@@ -446,18 +455,15 @@
           <svg class="icon"><use href="#i-bus"/></svg>Grab only
         </button>
         <a class="history-help-button" href="https://help.grab.com/passenger/en-my/360038782911-How-to-find-my-Grab-transaction-history" target="_blank" rel="noopener noreferrer" title="Instructions for finding Grab transaction history">Get Grab history</a>
-        <button class="pill suspicious-pill" id="suspicious-filter" type="button" aria-pressed="false"
+
+
+        </div>
+</section>
+          <section class="transaction-filter-group"><h3>Review</h3>        <button class="pill suspicious-pill" id="suspicious-filter" type="button" aria-pressed="false"
           title="Show only transactions the checks flagged and you have not reviewed">
           <svg class="icon"><use href="#i-target"/></svg>Suspicious only
-        </button>
-        <button class="pill view-all-pill hidden" id="view-all-filter" type="button"
-          title="Keep this review filter and widen the period to the whole history">All time</button>
-        </div>
-        <div class="pills" id="owner-pills"></div>
-        <select id="category-filter" aria-label="Filter by category"></select>
-        <div class="pills travel-country-pills hidden" id="travel-country-pills" aria-label="Filter travel by country / region"></div>
-        <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label>
-        <div class="bank-review-controls hidden" id="bank-review-controls">
+        </button>        <button class="pill view-all-pill hidden" id="view-all-filter" type="button"
+          title="Keep this review filter and widen the period to the whole history">All time</button>        <div class="bank-review-controls hidden" id="bank-review-controls">
           <div class="pills bank-direction-pills" id="bank-direction-pills"
             aria-label="Bank transaction direction"></div>
           <select id="bank-review-filter" aria-label="Filter bank review status">
@@ -474,6 +480,13 @@
             exclude transfers &amp; internal movements
           </label>
         </div>
+</section>
+          <section class="transaction-filter-group" id="transaction-include-group"><h3>Include</h3>        <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label></section>
+        </div>
+      </div>
+      <div class="transaction-filter-summary" aria-label="Current transaction filters">
+        <div id="active-transaction-filters" aria-live="polite"></div>
+        <button type="button" class="history-button" id="clear-transaction-filters" title="Clear additional filters; keep the current source and period">Clear filters</button>
       </div>
       <!-- Threshold values mirror the documented constants in
            scripts/risk_checks.py and app/js/transaction-grouping.js;
@@ -515,11 +528,11 @@
     </div>
     </div>
   <section class="subpane hidden" data-subpane="games" id="pane-games" role="tabpanel" aria-labelledby="subtab-games">
+    <div class="panel-head games-scope-header"><h2 id="games-scope">Gaming</h2><div class="year-pills" id="games-years"></div></div>
     <div class="kpis" id="games-kpis"></div>
     <section class="panel">
       <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-gamepad"/></svg>Spending by game</h2>
-        <div class="year-pills" id="games-years"></div>
+        <h2><svg class="icon"><use href="#i-gamepad"/></svg>Your games & purchases</h2>
       </div>
       <div class="filters">
         <div class="pills" id="game-pills"></div>
@@ -533,25 +546,28 @@
       </div>
       <div id="games-trend" class="cat-bars"></div>
     </section>
+    <details class="panel games-activity" id="games-activity">
+      <summary>Games over time <span class="hint">Activity based on purchases</span></summary>
+      <p class="hint">Shared months show overlapping spending. Filled tiles mark purchases; striped tiles have no data yet. Play without spending is not captured. Only assigned games are shown.</p>
+      <div class="games-activity-scroll" id="games-activity-scroll" tabindex="0" role="region" aria-label="Game purchase activity by month"></div>
+      <p class="hint games-activity-selection" id="games-activity-selection" role="status"></p>
+    </details>
     <section class="panel">
       <div class="panel-head">
         <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
         <span class="hint" id="games-count"></span>
       </div>
-      <table class="ledger" id="bank-transactions">
+      <div class="games-charges-scroll"><table class="ledger" id="games-transactions">
         <thead>
-          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game</th><th class="col-amt">Amount</th></tr>
+          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game / store</th><th class="col-amt">Amount</th></tr>
         </thead>
         <tbody id="games-body"></tbody>
-      </table>
+      </table></div>
     </section>
-    <section class="panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-coins"/></svg>Account sales</h2>
-        <span class="hint" id="sales-hint"></span>
-      </div>
+    <details class="panel games-sales">
+      <summary>Account sales <span class="hint" id="sales-hint"></span></summary>
       <div id="sales-list" class="cat-bars"></div>
-    </section>
+    </details>
   </section>
   </section>
 
@@ -614,14 +630,15 @@
   </aside>
 </div>
 
-<script src="js/data-cache.js?v=1"></script>
+<script src="js/data-cache.js?v=2"></script>
 <script src="js/server-lifecycle.js?v=20260812-1"></script>
 <script src="js/flags.js?v=20260905-1"></script>
 <script src="js/charts.js?v=20260905-2"></script>
 <script src="js/insights.js?v=20260905-4"></script>
 <script src="js/transaction-grouping.js?v=20260904-1"></script>
-<script src="js/app.js?v=20260906-60"></script>
-<script src="js/home.js?v=25"></script>
-<script src="js/networth.js?v=5"></script>
+<script src="js/games.js?v=3"></script>
+<script src="js/app.js?v=20260908-filters-1"></script>
+<script src="js/home.js?v=29"></script>
+<script src="js/networth.js?v=8"></script>
 </body>
 </html>

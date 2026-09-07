@@ -2249,6 +2249,8 @@ def main():
         if display_name:
             record["displayName"] = display_name
             record["displayNameSource"] = "override"
+        if override.get("gameDetails"):
+            record["gameDetails"] = override["gameDetails"]
         if category == "Games":
             record["game"] = game_of(r["description"])
         remark = remarks_by_id.get(r["id"])
@@ -2507,6 +2509,7 @@ def main():
                 "salarySteps": salary.get("steps", []),
                 "salaryYears": salary.get("years", []),
                 "gameSales": sales,
+                "gameProfiles": manual("game_profiles.json", {"revision": 0, "records": {}}),
                 "settlements": settlements,
                 "identity": identity,
                 "freshness": freshness,

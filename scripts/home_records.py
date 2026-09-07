@@ -6,10 +6,10 @@ from urllib.parse import urlparse
 
 KINDS = {"appliance", "insurance", "mortgage", "maintenance"}
 STATUSES = {"Needs checking", "Verified", "Document missing", "Archived"}
-DATES = {"purchased", "installed", "warrantyStart", "expires", "starts", "balanceDate",
+DATES = {"repaymentStarts", "purchased", "installed", "warrantyStart", "expires", "starts", "balanceDate",
          "lockInEnd", "reviewDate", "lastService", "nextService", "secondaryExpiry"}
-NUMBERS = {"cost", "premium", "balance", "instalment", "rate", "noticeDays", "frequencyMonths"}
-TEXT = {"id", "kind", "name", "status", "room", "brand", "model", "serial", "provider",
+NUMBERS = {"termYears", "additionalCost", "cost", "premium", "balance", "instalment", "rate", "noticeDays", "frequencyMonths"}
+TEXT = {"additionalCostNote", "id", "kind", "name", "status", "room", "brand", "model", "serial", "provider",
         "coverage", "cadence", "rateSchedule", "action", "sourceUrl", "sourceName",
         "notes", "transactionId", "transactionSource", "category", "funding", "costBasis",
         "warrantyTerms", "secondaryWarranty", "installationType", "installationSource",
@@ -43,11 +43,26 @@ def validate_schedule(value):
 
 
 def validate_record(record, transactions):
-    if not isinstance(record, dict) or set(record) - (DATES | NUMBERS | TEXT | {"schedule"}):
+    if not isinstance(record, dict) or set(record) - (DATES | NUMBERS | TEXT | {"schedule", "paymentLinks"}):
         raise ValueError("Invalid Home record fields.")
     result = {}
     for key, value in record.items():
-        if key == "schedule":
+        if key == "paymentLinks":
+            if not isinstance(value, list) or len(value) > 1000:
+                raise ValueError("Payment links must be a list of up to 1000 transactions.")
+            links, seen = [], set()
+            for link in value:
+                if (not isinstance(link, dict) or set(link) != {"source", "id"}
+                        or not isinstance(link.get("id"), str)
+                        or link.get("source") not in ("card", "bank")):
+                    raise ValueError("Each payment link needs a source and transaction ID.")
+                pair = (link["source"], link["id"])
+                if pair not in transactions or pair in seen:
+                    raise ValueError("Payment links must refer to distinct existing transactions.")
+                seen.add(pair)
+                links.append(dict(link))
+            result[key] = links
+        elif key == "schedule":
             result[key] = validate_schedule(value)
         elif key in NUMBERS:
             if value is None or value == "":
@@ -76,8 +91,8 @@ def validate_record(record, transactions):
         raise ValueError("Choose a valid record type and status.")
     if not result.get("name"):
         raise ValueError("A name is required.")
-    if result.get("category", "") not in {"", "Appliances", "Fixtures", "Furniture", "Pet"}:
-        raise ValueError("Choose Appliances, Fixtures, Furniture or Pet.")
+    if result.get("category", "") not in {"", "Appliances", "Fixtures", "Furniture", "Pet", "Renovation"}:
+        raise ValueError("Choose Appliances, Fixtures, Furniture, Pet or Renovation.")
     if result.get("sourceUrl"):
         url = urlparse(result["sourceUrl"])
         if url.scheme != "https" or not url.netloc or url.username or url.password:

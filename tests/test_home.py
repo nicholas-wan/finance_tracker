@@ -56,6 +56,14 @@ class HomeTests(unittest.TestCase):
         self.assertEqual(serve.HOME_PATH.read_bytes(), before)
         self.assertEqual(serve.HOME_PUBLIC_PATH.read_bytes(), before)
 
+    def test_record_edit_preserves_property_summary(self):
+        property_data = {'name': 'Test flat', 'purchasePrice': 100, 'fees': [{'label': 'Fee', 'amount': 2}]}
+        serve.HOME_PATH.parent.mkdir(parents=True, exist_ok=True)
+        serve.HOME_PATH.write_text(json.dumps({'revision': 0, 'records': [], 'property': property_data}))
+        result = serve.save_home(dict(revision=0, record=self.record))
+        self.assertEqual(result['property'], property_data)
+        self.assertEqual(json.loads(serve.HOME_PUBLIC_PATH.read_text())['property'], property_data)
+
     def test_validation_rejects_bad_values_and_unknown_payment(self):
         for changes in [dict(cost=-1), dict(cost=True), dict(cost=float('nan')),
                         dict(expires='2026-02-30'), dict(sourceUrl='javascript:alert(1)'),
@@ -64,6 +72,16 @@ class HomeTests(unittest.TestCase):
                         dict(starts='2026-09-01', expires='2025-09-01')]:
             with self.subTest(changes=changes), self.assertRaises(ValueError):
                 validate_record(dict(self.record, **changes), set())
+
+    def test_payment_links_validate_and_survive_save(self):
+        serve.TRANSACTIONS_PATH.write_text(json.dumps({'transactions': [{'id': 'payment_a'}]}))
+        link = {'source': 'card', 'id': 'payment_a'}
+        record = dict(self.record, paymentLinks=[link])
+        saved = serve.save_home(dict(revision=0, record=record))
+        self.assertEqual(saved['records'][0]['paymentLinks'], [link])
+        for links in [[link, link], [{'source': 'card', 'id': 'missing'}], [{'source': 'bank', 'id': 'payment_a'}]]:
+            with self.assertRaises(ValueError):
+                validate_record(dict(self.record, paymentLinks=links), {('card', 'payment_a')})
 
     def test_maintenance_schedule_is_validated(self):
         base = {'id': 'home_water_dispenser_filter_package', 'kind': 'maintenance', 'name': 'Filters',

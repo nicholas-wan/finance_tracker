@@ -49,20 +49,36 @@
     });
     return out.sort(function (a, b) { return (a.date || '9999').localeCompare(b.date || '9999'); });
   }
-  if (typeof module !== 'undefined' && module.exports) { module.exports = { days: days, actions: actions, nextService: nextService, warrantyState: warrantyState, needsInformation: needsInformation }; return; }
+  function paymentSummary(record, transactions) {
+    var wanted = new Set((record.paymentLinks || []).map(function(p){return p.source+':'+p.id;}));
+    var seen = new Set(), years = {}, missing = wanted.size;
+    transactions.forEach(function(t){
+      var key=t.source+':'+t.id;
+      if(!wanted.has(key)||seen.has(key)||!/^\d{4}-\d{2}-\d{2}$/.test(t.date||'')||!Number.isFinite(t.amount))return;
+      var month=Number(t.date.slice(5,7))-1;if(month<0||month>11)return;
+      seen.add(key);missing--;
+      var year=t.date.slice(0,4);
+      if(!years[year])years[year]=Array.from({length:12},function(){return {cents:0,count:0};});
+      years[year][month].cents+=Math.round(t.amount*100)*(t.type==='refund'?-1:1);
+      years[year][month].count++;
+    });
+    return {years:years,missing:missing};
+  }
+  if (typeof module !== 'undefined' && module.exports) { module.exports = { paymentSummary: paymentSummary, days: days, actions: actions, nextService: nextService, warrantyState: warrantyState, needsInformation: needsInformation }; return; }
 
   var root = document.getElementById('pane-home'), store = { revision: 0, records: [] }, editable = false;
   var category = 'All';
   var view = 'list', sortDir = 'asc', spyHandler = null, room = 'All';
   try { view = ['list','grid','coverage'].includes(localStorage.getItem('home-view')) ? localStorage.getItem('home-view') : 'list'; } catch (e) { /* storage unavailable */ }
   var section = 'appliance', query = '', infoFilter = 'all', warrantyFilter = 'all', sortBy = 'attention', showArchived = false, txs = [], lastFocus, busy = false;
-  var titles = { appliance: 'Items & fixtures', insurance: 'Home & fire insurance', mortgage: 'Mortgage', maintenance: 'Maintenance' };
+  try { var rememberedSection = localStorage.getItem('home-section'); if (['appliance','property','insurance','maintenance'].includes(rememberedSection)) section = rememberedSection; } catch (e) {}
+  var titles = { appliance: 'Items & fixtures', property: 'Property', insurance: 'Home & fire insurance', mortgage: 'Mortgage', maintenance: 'Maintenance' };
   var labels = { appliance: 'appliance or furnishing', insurance: 'home policy', mortgage: 'mortgage', maintenance: 'maintenance task' };
   var fields = {
-    appliance: [['category','Category','select','Appliances,Fixtures,Furniture,Pet'],['provider','Retailer / supplier'],['room','Room'],['roomDetail','Location detail'],['brand','Brand'],['model','Model'],['serial','Serial number'],['cost','Recorded cost (S$)','number'],['itemCost','Original item cost (S$)','number'],['warrantyCost','Extended warranty cost (S$)','number'],['deliveryCost','Delivery cost (S$)','number'],['costBasis','Cost source','select','Receipt / sales order,House sheet,Sheet allocation,Gift,Mixed sources'],['funding','Paid / gifted by'],['delivered','Delivery date','date'],['deliveryDetails','Delivery details'],['deliverySource','Delivery date source'],['installed','Installation date','date'],['installationType','Installation event'],['installationSource','Installation date source'],['warrantyStart','Warranty start','date'],['warrantyStartBasis','Warranty start basis'],['expires','Warranty end','date'],['warrantyTerms','Warranty terms'],['warrantyCertificate','Warranty certificate'],['warrantySourceUrl','Warranty terms URL'],['coverage','Coverage & exclusions'],['secondaryWarranty','Additional cover (e.g. compressor)'],['secondaryExpiry','Additional cover ends','date']],
+    appliance: [['category','Category','select','Appliances,Fixtures,Furniture,Pet,Renovation'],['provider','Retailer / supplier'],['room','Room'],['roomDetail','Location detail'],['brand','Brand'],['model','Model'],['serial','Serial number'],['cost','Recorded cost (S$)','number'],['itemCost','Original item cost (S$)','number'],['warrantyCost','Extended warranty cost (S$)','number'],['deliveryCost','Delivery cost (S$)','number'],['costBasis','Cost source','select','Receipt / sales order,House sheet,Sheet allocation,Gift,Mixed sources,Quotation / variation order,Included in renovation'],['funding','Paid / gifted by'],['delivered','Delivery date','date'],['deliveryDetails','Delivery details'],['deliverySource','Delivery date source'],['installed','Installation date','date'],['installationType','Installation event'],['installationSource','Installation date source'],['warrantyStart','Warranty start','date'],['warrantyStartBasis','Warranty start basis'],['expires','Warranty end','date'],['warrantyTerms','Warranty terms'],['warrantyCertificate','Warranty certificate'],['warrantySourceUrl','Warranty terms URL'],['coverage','Coverage & exclusions'],['secondaryWarranty','Additional cover (e.g. compressor)'],['secondaryExpiry','Additional cover ends','date']],
     insurance: [['provider','Insurer'],['coverage','Coverage summary'],['premium','Premium per payment (S$)','number'],['cadence','Payment frequency','select','Yearly,Monthly,One-off'],['starts','Policy start','date'],['expires','Policy end','date']],
-    mortgage: [['provider','Bank'],['balance','Outstanding balance (S$)','number'],['balanceDate','Balance as of','date'],['instalment','Monthly instalment (S$)','number'],['rate','Current annual rate (%)','number'],['rateSchedule','Rate schedule'],['lockInEnd','Lock-in ends','date'],['noticeDays','Notice period (days)','integer'],['reviewDate','Review date','date']],
-    maintenance: [['room','Room / area'],['provider','Service provider'],['cost','Cost per service (S$)','number'],['installed','Setup / installation date','date'],['installationType','Event type'],['installationSource','Date source'],['lastService','Last serviced','date'],['frequencyMonths','Repeat every (months)','integer'],['nextService','Next service (optional override)','date']]
+    mortgage: [['termYears','Loan tenure (years)','number'],['starts','Loan start','date'],['repaymentStarts','Instalments begin','date'],['funding','Payment funding'],['provider','Bank'],['balance','Outstanding balance (S$)','number'],['balanceDate','Balance as of','date'],['instalment','Monthly instalment (S$)','number'],['rate','Current annual rate (%)','number'],['rateSchedule','Rate schedule'],['lockInEnd','Lock-in ends','date'],['noticeDays','Notice period (days)','integer'],['reviewDate','Review date','date']],
+    maintenance: [['cadence','Billing frequency','select','Monthly,Yearly,One-off'],['costBasis','Rate source'],['funding','Payment method'],['room','Room / area'],['provider','Service provider'],['cost','Cost per service (S$)','number'],['installed','Setup / installation date','date'],['installationType','Event type'],['installationSource','Date source'],['lastService','Last serviced','date'],['frequencyMonths','Repeat every (months)','integer'],['nextService','Next service (optional override)','date']]
   };
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function(c) { return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]; }); }
   function money(v) { return v == null || v === '' ? 'Not recorded' : 'S$' + Number(v).toLocaleString('en-SG', { minimumFractionDigits: 2, maximumFractionDigits: 2 }); }
@@ -128,7 +144,7 @@
     return names.sort(function(a,b){if(a==='Unassigned')return 1;if(b==='Unassigned')return -1;return counts[b]-counts[a]||a.localeCompare(b);}).map(function(n){return {name:n,count:counts[n]};});
   }
   function categoryNav(assets) {
-    return '<nav class="home-category-nav" aria-label="Item categories">'+['All','Appliances','Fixtures','Furniture','Pet'].map(function(c) {
+    return '<nav class="home-category-nav" aria-label="Item categories">'+['All','Appliances','Fixtures','Furniture','Pet','Renovation'].map(function(c) {
       var items=assets.filter(function(r){return c==='All'||r.category===c;});
       var zones=c==='All'?[]:zonesFor(items);
       var open=c===category;
@@ -143,12 +159,50 @@
     root.querySelectorAll('.home-rail-rooms').forEach(function(list){list.hidden=list.dataset.for!==category;});
     root.querySelectorAll('[data-room]').forEach(function(n){n.setAttribute('aria-pressed',String(n.dataset.roomCategory===category&&n.dataset.room===room));});
   }
+  function sectionNav() {
+    return '<div class="home-sections" role="group" aria-label="Home sections">'+Object.keys(titles).filter(function(k){return k!=='mortgage';}).map(function(k){return '<button data-section="'+k+'" aria-pressed="'+(k===section)+'">'+({property:'Property',appliance:'Collection',insurance:'Insurance',mortgage:'Home loan',maintenance:'Care & maintenance'}[k])+'</button>';}).join('')+'</div>';
+  }
+  function bindSections() {
+    root.querySelectorAll('[data-section]').forEach(function(b){b.onclick=function(){section=b.dataset.section;try{localStorage.setItem('home-section',section);}catch(e){}query='';render();};});
+  }
+  function propertyHTML() {
+    var p=store.property;
+    if(!p)return '<section class="home-panel home-empty"><h3>No property recorded</h3><p>Add purchase details to see the property summary.</p></section>';
+    var fees=p.fees||[], feeCents=fees.reduce(function(n,f){return n+Math.round(f.amount*100);},0);
+    var total=(Math.round(p.purchasePrice*100)+feeCents)/100;
+    var loan=store.records.find(function(r){return r.id===p.mortgageId&&r.kind==='mortgage'&&r.status!=='Archived';});
+    var prior=store.records.filter(function(r){return (p.previousMortgageIds||[]).includes(r.id)&&r.status==='Archived';});
+    function facts(rows){return '<dl class="home-property-facts">'+rows.map(function(f){return '<div><dt>'+esc(f[0])+'</dt><dd>'+esc(f[1])+'</dd></div>';}).join('')+'</dl>';}
+    var loanHTML='<h3>Current home loan</h3><p class="home-muted">No active linked loan recorded.</p>';
+    if(loan){
+      var milestones=[['Loan started',loan.starts],['Review loan',loan.reviewDate],['Lock-in ends',loan.lockInEnd]];
+      var next=milestones.findIndex(function(m){return m[1]&&m[1]>=today();});
+      loanHTML='<div class="home-property-card-heading"><h3>'+esc(loan.name)+'</h3><span class="home-badge verified">Active loan</span></div>'+
+        '<div class="home-loan-headline"><span class="home-muted">Outstanding balance</span><strong class="home-property-balance">'+money(loan.balance)+'</strong><p class="home-muted">Recorded '+date(loan.balanceDate)+'</p></div>'+
+        '<dl class="home-loan-metrics"><div><dt>Monthly instalment</dt><dd>'+money(loan.instalment)+'</dd></div><div><dt>Annual interest rate</dt><dd>'+(loan.rate==null?'Not recorded':esc(loan.rate)+'%')+'</dd></div><div><dt>Payment funding</dt><dd class="home-loan-funding">'+esc(loan.funding||'Not recorded')+'</dd></div></dl>'+
+        '<ol class="home-loan-timeline" aria-label="Loan milestones">'+milestones.map(function(m,i){return '<li class="'+(i===next?'is-next':m[1]&&m[1]<today()?'is-past':'')+'"><span>'+esc(m[0])+(i===next?' <small>Next</small>':'')+'</span><strong>'+date(m[1])+'</strong></li>';}).join('')+'</ol>'+
+        '<details class="home-property-disclosure"><summary>Loan terms &amp; rate schedule</summary>'+facts([['Original tenure',loan.termYears==null?'Not recorded':loan.termYears+' years'],['Notice period',loan.noticeDays==null?'Not recorded':loan.noticeDays+' days']])+(loan.rateSchedule?'<p class="home-muted">'+esc(loan.rateSchedule)+'</p>':'')+'<footer>'+source(loan)+'</footer></details>'+
+        '<footer><button class="home-button" data-open="'+esc(loan.id)+'">View loan record</button></footer>';
+    }
+    return '<div class="home-property-intro"><div><h3>'+esc(p.name||'Your property')+'</h3><p class="home-muted">Purchased '+date(p.purchased)+(p.holdingType?' · '+esc(p.holdingType):'')+'</p></div><span class="home-property-basis">Historical acquisition cost</span></div>'+
+      '<section class="home-property-card home-loan-hero">'+loanHTML+'</section>'+
+      '<section class="home-property-card home-property-purchase"><div class="home-property-total"><span>Total acquisition cost</span><strong>'+money(total)+'</strong></div><p class="home-muted home-property-context">Amounts on this page cover the whole flat and full loan; no personal ownership share is applied. Renovation, furnishings and recurring bills are tracked separately.</p>'+
+      '<details class="home-property-disclosure"><summary>Purchase details &amp; fees</summary>'+facts([['Flat purchase price',money(p.purchasePrice)]].concat(fees.map(function(f){return [f.label,money(f.amount)];})))+'<footer>'+source(p)+'</footer></details></section>'+
+      (prior.length?'<details class="home-property-card home-property-history home-property-disclosure"><summary>Previous loan <span>Refinanced</span></summary><p class="home-muted">Only the active loan counts toward current debt.</p>'+prior.map(function(r){return '<div class="home-property-history-row"><div><h4>'+esc(r.name)+'</h4><p class="home-muted">Started '+date(r.starts)+'</p></div>'+facts([['Original loan granted',money(r.balance)],['Tenure',r.termYears==null?'Not recorded':r.termYears+' years'],['Annual interest rate',r.rate==null?'Not recorded':r.rate+'%'],['Monthly instalment',money(r.instalment)],['Instalments began',date(r.repaymentStarts)],['Payment funding',r.funding||'Not recorded']])+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View original loan</button></footer></div>';}).join('')+'</details>':'');
+  }
+
   function render() {
+    if(section==='property') {
+      if(spyHandler){window.removeEventListener('scroll',spyHandler);spyHandler=null;}
+      root.innerHTML='<header class="home-heading"><div><h2>Your home</h2><p>Property, purchase costs & financing</p></div></header>'+sectionNav()+propertyHTML()+'<footer class="home-footer"><span>Saved on this computer · Documents in Drive</span><button class="home-button" id="home-refresh">Refresh</button></footer>';
+      bindSections();root.querySelectorAll('[data-open]').forEach(bindOpen);root.querySelector('#home-refresh').onclick=load;return;
+    }
+
     var active=store.records.filter(function(r){return r.status!=='Archived';}), assets=active.filter(function(r){return r.kind==='appliance';});
     var known=assets.filter(function(r){return r.cost!=null;}), todo=actions(active,today()), due=todo.filter(function(a){return a.date&&a.record.kind===section&&!(section==='appliance'&&a.label==='Warranty ends');}), checks=active.filter(needsInformation);
     var infoRows=active.filter(function(r){return r.kind===section;}), needsInfo=infoRows.filter(needsInformation).length, completeInfo=infoRows.length-needsInfo;
-    root.innerHTML='<header class="home-heading"><div><h2>Your home</h2><p>'+assets.length+' items · Purchases, warranties & care</p></div><div class="home-total"><span>Recorded home purchases</span><strong>'+money(known.reduce(function(n,r){return n+r.cost;},0))+'</strong><small>'+known.length+' priced · '+(assets.length-known.length)+' unpriced</small></div></header>'+
-      '<div class="home-sections" role="group" aria-label="Home sections">'+Object.keys(titles).map(function(k){return '<button data-section="'+k+'" aria-pressed="'+(k===section)+'">'+({appliance:'Collection',insurance:'Insurance',mortgage:'Home loan',maintenance:'Care & maintenance'}[k])+'</button>';}).join('')+'</div>'+
+    root.innerHTML='<header class="home-heading"><div><h2>Your home</h2><p>'+assets.length+' items · Purchases, warranties & care</p></div><div class="home-total"><span>Recorded home costs</span><strong>'+money(known.reduce(function(n,r){return n+r.cost;},0))+'</strong><small>'+known.length+' priced · '+(assets.length-known.length)+' unpriced</small></div></header>'+
+      sectionNav()+
       (due.length?'<div class="home-due-strip">'+due.map(actionHTML).join('')+'</div>':'')+(section==='appliance'?overviewHTML(assets):'')+
       '<div class="home-workspace '+(section!=='appliance'?'home-workspace-wide':'')+'">'+(section==='appliance'?categoryNav(assets):'')+'<section class="home-collection"><div class="home-panel-head"><div><h3>'+(section==='appliance'?'Your collection':titles[section])+'</h3><p class="home-muted">'+(section==='appliance'?'Purchases grouped by category.':section==='insurance'?'Policies, cover and renewal dates.':section==='mortgage'?'Your loan and next refinancing review.':'Services and upkeep, in one place.')+'</p></div>'+(section==='appliance'?viewToggle():'<button class="home-button primary" id="home-add" '+(!editable?'disabled':'')+'>+ Add '+labels[section]+'</button>')+'</div><div class="home-filters"><input id="home-search" type="search" aria-label="Search Home records" placeholder="'+({appliance:'Search items, brands or models…',insurance:'Search policies…',mortgage:'Search loan records…',maintenance:'Search services…'}[section])+'" value="'+esc(query)+'"><label class="home-info-filter"><span>Information</span><select id="home-info-filter" aria-label="Information status"><option value="all" '+(infoFilter==='all'?'selected':'')+'>All ('+infoRows.length+')</option><option value="needs" '+(infoFilter==='needs'?'selected':'')+'>Needs info ('+needsInfo+')</option><option value="complete" '+(infoFilter==='complete'?'selected':'')+'>Complete ('+completeInfo+')</option></select></label>'+(section==='appliance'?'<label><span>Warranty</span><select id="home-warranty-filter" aria-label="Warranty status"><option value="all" '+(warrantyFilter==='all'?'selected':'')+'>All</option><option value="covered" '+(warrantyFilter==='covered'?'selected':'')+'>Covered</option><option value="expired" '+(warrantyFilter==='expired'?'selected':'')+'>Expired</option><option value="unconfirmed" '+(warrantyFilter==='unconfirmed'?'selected':'')+'>Unconfirmed</option><option value="missing" '+(warrantyFilter==='missing'?'selected':'')+'>No details</option><option value="not_applicable" '+(warrantyFilter==='not_applicable'?'selected':'')+'>Not tracked</option></select></label><label><span>Sort</span><select id="home-sort" aria-label="Sort collection"><option value="attention" '+(sortBy==='attention'?'selected':'')+'>Needs attention</option><option value="name" '+(sortBy==='name'?'selected':'')+'>Name</option><option value="newest" '+(sortBy==='newest'?'selected':'')+'>Newest</option><option value="cost" '+(sortBy==='cost'?'selected':'')+'>Highest cost</option><option value="expiry" '+(sortBy==='expiry'?'selected':'')+'>Warranty end</option><option value="warranty" '+(sortBy==='warranty'?'selected':'')+'>Warranty attention</option></select></label>':'')+'<label class="home-archived-filter"><input id="home-archived" type="checkbox" '+(showArchived?'checked':'')+'> Archived</label></div><div id="home-register"></div></section></div>'+
       (checks.length?'<details class="home-checks home-panel"><summary><strong>Complete your records</strong><span>'+checks.length+' to review</span></summary><div class="home-check-list">'+todo.filter(function(a){return !a.date;}).map(actionHTML).join('')+'</div></details>':'')+referenceHTML()+
@@ -156,7 +210,7 @@
     renderRegister();
     root.querySelectorAll('[data-category]').forEach(function(b){b.onclick=function(){category=b.dataset.category;room='All';syncRail();renderRegister();};});
     root.querySelectorAll('[data-room]').forEach(function(b){b.onclick=function(){category=b.dataset.roomCategory;room=room===b.dataset.room&&category===b.dataset.roomCategory?'All':b.dataset.room;syncRail();renderRegister();};});
-    root.querySelectorAll('[data-section]').forEach(function(b){b.onclick=function(){section=b.dataset.section;query='';render();};});
+    bindSections();
     root.querySelector('#home-search').oninput=function(e){query=e.target.value;renderRegister();};
     root.querySelector('#home-info-filter').onchange=function(e){infoFilter=e.target.value;renderRegister();};
     if(root.querySelector('#home-warranty-filter'))root.querySelector('#home-warranty-filter').onchange=function(e){warrantyFilter=e.target.value;renderRegister();};
@@ -169,6 +223,10 @@
     root.querySelectorAll('[data-open]').forEach(bindOpen);
   }
   var homePhotos={
+    home_renovation_electrical:{files:['design4space-logo-full.webp'],kind:'logo',dark:true,label:'Design 4 Space',url:'https://www.design4space.com.sg/'},
+    home_renovation_quotation:{files:['design4space-logo-full.webp'],kind:'logo',dark:true,label:'Design 4 Space',url:'https://www.design4space.com.sg/'},
+    home_renovation_vo1:{files:['design4space-logo-full.webp'],kind:'logo',dark:true,label:'Design 4 Space',url:'https://www.design4space.com.sg/'},
+    home_renovation_vo2:{files:['design4space-logo-full.webp'],kind:'logo',dark:true,label:'Design 4 Space',url:'https://www.design4space.com.sg/'},
     home_fwd_fire:{files:['fwd-logo-full.svg'],label:'FWD Singapore',url:'https://www.fwd.com.sg/',kind:'logo'},
     home_fwd_home:{files:['fwd-logo-full.svg'],label:'FWD Singapore',url:'https://www.fwd.com.sg/',kind:'logo'},
     home_water_dispenser_filter_package:{files:['happie-logo-full.avif'],label:'Happie Singapore',url:'https://happie.sg/',kind:'logo'},
@@ -189,14 +247,14 @@
     "home_bedding":{"files":["hooga-logo.webp"],"label":"HOOGA","url":"https://findinghooga.com.sg/","kind":"logo","dark":false},
     "home_fortytwo":{"files":["fortytwo-logo.webp"],"label":"FortyTwo","url":"https://www.fortytwo.sg/","kind":"logo","dark":false},
     "home_main_door_mesh":{"files":["miss-mosquito-logo.webp"],"label":"Miss Mosquito Net","url":"https://www.missmosquitonet.com/","kind":"logo","dark":false},
-    "home_cat_mesh":{"files":["magic-cat-mesh-logo.webp"],"label":"Magic Cat Mesh","url":"https://magiccatmesh.com/","kind":"logo","dark":false},
+    "home_cat_mesh":{"files":["magic-cat-mesh-logo-optimized.webp"],"label":"Magic Cat Mesh","url":"https://magiccatmesh.com/","kind":"logo","dark":false},
     "home_pawswing":{"files":["pawswing-logo-full.png"],"label":"PawSwing","url":"https://paw-swing.com/","kind":"logo","dark":false},
     "home_singlife":{"files":["singlife-logo.webp"],"label":"Singlife","url":"https://singlife.com/en","kind":"logo","dark":false},
     "home_aircon_service":{"files":["luce-logo.svg"],"label":"Luce","url":"https://www.luce.sg/","kind":"logo","dark":true},
     "home_broadband_mesh":{"files":["myrepublic-logo.webp"],"label":"MyRepublic","url":"https://myrepublic.net/sg/","kind":"logo","dark":false},
     home_washerdryer:{files:['bosch-washer','bosch-dryer'],label:'Bosch WGG254A0SG washer and WQG24200SG dryer',url:'https://www.bosch-home.com.sg/en/product/washersanddryers/tumbledryers/heatpumpdryers/WQG24200SG'},
     home_dishwasher:{files:['fotile.svg'],label:'Fotile BD2B-G1',url:'https://fotile.com.bd/product/fotile-bd2b-g1-built-in-dishwasher/'},
-    home_water_dispenser:{files:['happie-joy-silver-full.jpg'],label:'Happie Joy in silver (Jarrons & Co.)',url:'https://jarrons.com.sg/products/happie-joy-water-purifier-white-silver'},
+    home_water_dispenser:{files:['happie-joy-silver-full-optimized.webp'],label:'Happie Joy in silver (Jarrons & Co.)',url:'https://jarrons.com.sg/products/happie-joy-water-purifier-white-silver'},
     home_aircon:{files:['daikin.svg'],label:'Daikin CTKM25VVMG indoor unit',url:'https://www.daikin-bim-library.daikin.com/DKG-BIMDOWNLOAD/en/item/detail?categoryID=1400000&id=20430000&parentCategoryId=1400000&type=category'},
     home_hobhood:{files:['rinnai.svg'],label:'Rinnai RB-7032H CFB hob',url:'https://www.rinnai.sg/product-page/rb-7032h-cfb'},
     home_doorlock:{files:['yale'],label:'Yale YDR50GA gate lock',url:'https://www.yalehome.com/sg/en/products/smart-door-locks/metal-gate-smart-locks/ydr50ga'},
@@ -210,10 +268,10 @@
     home_airfryer:{files:['russell-taylors-logo-full.svg'],kind:'logo',label:'Russell Taylors',url:'https://shopee.sg/Russell-Taylors-3D-Visible-Window-Digital-Air-Fryer-Extra-Large-(6.5L)-Z7-i.234952174.24430709673'},
     home_microwave:{files:['cornell-microwave'],label:'Cornell 25L microwave',url:'https://www.harveynorman.com.sg/home-appliances/kitchen-appliances-en/microwave-ovens-en/cornell-25l-microwave-oven-black-cmos25bk.html'},
     home_switches:{files:['legrand-galion'],label:'Legrand Galion dark silver switch',url:'https://www.legrand.com/ecatalogue/en/catalog/products/galion-2-gangs-1-way-switch-16ax-dark-silver-282402-c3?category_id=43406'},
-    home_omnidesk:{files:['omnidesk-classic-full.jpg'],label:'Omnidesk Classic Wildwood desk',url:'https://theomnidesk.com/products/classic-wildwood'},
-    home_levoit_core200s:{files:['levoit-core200s-full.png'],label:'Levoit Core 200S',url:'https://levoit.com/products/core-200s-smart-true-hepa-air-purifier'},
-    home_levoit_vital100s_1:{files:['levoit-vital100s-full.jpg'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
-    home_levoit_vital100s_2:{files:['levoit-vital100s-full.jpg'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
+    home_omnidesk:{files:['omnidesk-classic-full-optimized.webp'],label:'Omnidesk Classic Wildwood desk',url:'https://theomnidesk.com/products/classic-wildwood'},
+    home_levoit_core200s:{files:['levoit-core200s-full-optimized.webp'],label:'Levoit Core 200S',url:'https://levoit.com/products/core-200s-smart-true-hepa-air-purifier'},
+    home_levoit_vital100s_1:{files:['levoit-vital100s-full-optimized.webp'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
+    home_levoit_vital100s_2:{files:['levoit-vital100s-full-optimized.webp'],label:'Levoit Vital 100S',url:'https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier'},
     home_neakasa_m1:{files:['neakasa-logo-full.png'],kind:'logo',label:'Neakasa M1',url:'https://neakasa.com/products/neakasa-m1-cat-litter-box'},
     home_ventilation:{files:['kdk-logo-full.png'],kind:'logo',dark:false,label:'KDK',url:'https://www.kdk.sg/products/ventilating-fan-15wud'},
     'home_door-stopper':{files:['smartdoor-slidearm'],label:'Slide arm door stopper',url:'https://www.smart-home.com.sg/slidearm'},
@@ -271,7 +329,7 @@
   }
   function thumbnail(r, large) {
     var photo=homePhotos[r.id]||(r.linkedRecord&&homePhotos[r.linkedRecord]);
-    return '<span class="home-thumb '+(photo&&photo.files.length>1?'home-thumb-pair':'')+(photo&&photo.files.some(function(f){return f.includes('-full.');})?' home-thumb-intact':'')+(photo&&photo.kind==='logo'?' home-thumb-logo'+(photo.dark?' home-thumb-logo-dark':''):'')+(large?' home-thumb-lg':'')+'" aria-hidden="true">'+(photo?photo.files.map(function(f){return '<img src="assets/home/'+f+(f.includes('.')?'':'.webp')+'" alt="" width="48" height="48" loading="lazy" decoding="async">';}).join(''):itemIcon(r))+'</span>';
+    return '<span class="home-thumb '+(photo&&photo.files.length>1?'home-thumb-pair':'')+(photo&&photo.files.some(function(f){return /-full(?:-optimized)?\./.test(f);})?' home-thumb-intact':'')+(photo&&photo.kind==='logo'?' home-thumb-logo'+(photo.dark?' home-thumb-logo-dark':''):'')+(large?' home-thumb-lg':'')+'" aria-hidden="true">'+(photo?photo.files.map(function(f){return '<img src="assets/home/'+f+(f.includes('.')?'':'.webp')+'" alt="" width="48" height="48" loading="lazy" decoding="async">';}).join(''):itemIcon(r))+'</span>';
   }
   var viewIcons={list:'<path d="M4 6h16M4 12h16M4 18h16"/>',grid:'<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>',coverage:'<path d="M3 6h9M3 12h14M3 18h6"/><circle cx="18" cy="6" r="1"/><circle cx="20" cy="12" r="1"/><circle cx="12" cy="18" r="1"/>'};
   function viewToggle() {
@@ -280,7 +338,7 @@
     }).join('')+'</div>';
   }
   var toneRank={expired:0,unconfirmed:1,missing:2,covered:3,not_applicable:4};
-  var CATEGORIES=['Appliances','Fixtures','Furniture','Pet'];
+  var CATEGORIES=['Appliances','Fixtures','Furniture','Pet','Renovation'];
   function coverEnd(r) { return r.expires||r.secondaryExpiry||''; }
   var defaultDir={newest:'desc',cost:'desc'};
   function setSort(key, toggle) {
@@ -354,7 +412,7 @@
     var head=cols.map(function(c){var active=sortBy===c[0];return '<th class="'+(c[2]||'')+'" aria-sort="'+(active?(sortDir==='asc'?'ascending':'descending'):'none')+'"><button type="button" data-sort="'+c[0]+'">'+c[1]+(active?icon(sortDir==='asc'?'up':'down','home-sort-icon'):'')+'</button></th>';}).join('');
     function row(r){
       var reasons=attention(r), complete=!needsInformation(r);
-      return '<tr data-open="'+esc(r.id)+'"><td>'+itemButton(r)+'</td><td class="num">'+(r.cost==null?'<span class="home-muted">'+(r.costBasis==='Gift'?'Gift':'—')+'</span>':money(r.cost))+'</td><td>'+listWarranty(r)+'</td><td>'+(complete?'':'<span class="home-todo" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+(reasons.length>1?' +'+(reasons.length-1):'')+'</span>')+'</td></tr>';
+      return '<tr data-open="'+esc(r.id)+'"><td>'+itemButton(r)+'</td><td class="num">'+(r.cost==null?'<span class="home-muted">'+(r.costBasis==='Gift'?'Gift':r.costBasis==='Included in renovation'?'Included in renovation':'—')+'</span>':money(r.cost))+'</td><td>'+listWarranty(r)+'</td><td>'+(complete?'':'<span class="home-todo" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+(reasons.length>1?' +'+(reasons.length-1):'')+'</span>')+'</td></tr>';
     }
     var body=groups(rows).map(function(g){
       var total=g.items.reduce(function(n,r){return n+(r.cost||0);},0);
@@ -415,7 +473,7 @@
         var complete=!needsInformation(r), reasons=attention(r);
         var eventDate=r.installed?esc(r.installationType||'Installed')+' · '+date(r.installed):r.delivered?'Delivered · '+date(r.delivered):r.purchased?'Purchased · '+date(r.purchased):'No dates recorded';
         var model=r.model?'<span class="home-card-model" title="'+esc(r.model)+'">'+esc(r.model)+'</span>':'';
-        return '<button class="home-asset-card" data-open="'+esc(r.id)+'"><span class="home-card-top">'+thumbnail(r)+'<span class="home-card-title"><span class="home-card-brand">'+esc(info)+'</span><strong class="home-card-name">'+esc(r.name)+'</strong>'+model+'</span></span><span class="home-card-price'+(r.cost==null?' unpriced':'')+'">'+(r.cost==null?(r.costBasis==='Gift'?'Housewarming gift':'Cost to add'):money(r.cost))+'</span><span class="home-card-meta"><span class="home-card-date">'+eventDate+'</span>'+(complete?'<span class="home-card-state recorded">Complete</span>':'<span class="home-card-state needs-info" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+'</span>')+'</span><span class="home-cover-row">'+primaryChip(r)+'<span>'+esc(coverText(r))+'</span></span></button>';
+        return '<button class="home-asset-card" data-open="'+esc(r.id)+'"><span class="home-card-top">'+thumbnail(r)+'<span class="home-card-title"><span class="home-card-brand">'+esc(info)+'</span><strong class="home-card-name">'+esc(r.name)+'</strong>'+model+'</span></span><span class="home-card-price'+(r.cost==null?' unpriced':'')+'">'+(r.cost==null?(r.costBasis==='Gift'?'Housewarming gift':r.costBasis==='Included in renovation'?'Included in renovation':'Cost to add'):money(r.cost))+'</span><span class="home-card-meta"><span class="home-card-date">'+eventDate+'</span>'+(complete?'<span class="home-card-state recorded">Complete</span>':'<span class="home-card-state needs-info" title="'+esc(reasons.join(' · '))+'">'+esc(reasons[0])+'</span>')+'</span><span class="home-cover-row">'+primaryChip(r)+'<span>'+esc(coverText(r))+'</span></span></button>';
         }).join('')+'</div></div>';
       }).join('')+'</section>';
     }).join('');
@@ -459,6 +517,19 @@
     var items=scheduleItems(r), done=items.filter(function(i){return i.done;}).length, next=nextService(r);
     return [['Per replacement',money(r.cost)+(r.cost!=null&&items.length>1?'<small>'+items.length+'-visit package '+money(r.cost*items.length)+'</small>':'')],['Next replacement',date(next)+(next&&days(next,today())<0?'<small>Overdue</small>':'')],['Completed',done+' of '+items.length]];
   }
+  function paymentHistoryHTML(r) {
+    if(!Array.isArray(r.paymentLinks)||!r.paymentLinks.length)return '';
+    var summary=paymentSummary(r,txs), months=['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    var years=Object.keys(summary.years).sort().reverse();
+    function yearHTML(year){
+      var values=summary.years[year], total=values.reduce(function(n,v){return n+v.cents;},0);
+      return '<div class="home-payment-year"><div class="home-payment-year-label"><strong>'+year+'</strong><span>'+money(total/100)+'</span></div><div class="home-payment-months">'+values.map(function(v,i){
+        var detail=months[i]+' '+year+': '+(v.count?money(v.cents/100)+' across '+v.count+' payment'+(v.count===1?'':'s'):'No recorded payment');
+        return '<div class="home-payment-month'+(v.count?' has-payment':'')+'" title="'+esc(detail)+'" aria-label="'+esc(detail)+'"><span>'+months[i]+'</span><strong>'+(v.count?money(v.cents/100).replace('S$','$'):'—')+'</strong></div>';
+      }).join('')+'</div></div>';
+    }
+    return '<section class="home-payment-history" aria-label="Payment history"><h5>Payments</h5>'+(years.length?yearHTML(years[0]):'')+(years.length>1?'<details class="home-payment-older"><summary>Earlier years ('+years.slice(1).join(', ')+')</summary>'+years.slice(1).map(yearHTML).join('')+'</details>':'')+'<p class="home-muted">By payment date · — no recorded payment</p>'+(summary.missing?'<p class="home-muted">'+summary.missing+' linked payment(s) unavailable.</p>':'')+'</section>';
+  }
   function renderRegister() {
     var rows = store.records.filter(function(r){var incomplete=needsInformation(r),infoMatches=infoFilter==='all'||(infoFilter==='needs'&&incomplete)||(infoFilter==='complete'&&!incomplete);var tone=warrantyTone(r),warrantyMatches=section!=='appliance'||warrantyFilter==='all'||tone===warrantyFilter||(warrantyFilter==='inactive'&&['expired','unconfirmed','missing','not_applicable'].includes(tone));return r.kind===section&&(section!=='appliance'||category==='All'||r.category===category)&&(section!=='appliance'||room==='All'||zoneOf(r)===room)&&infoMatches&&warrantyMatches&&(showArchived||r.status!=='Archived')&&JSON.stringify(r).toLowerCase().includes(query.toLowerCase());});
     var el=root.querySelector('#home-register');
@@ -467,8 +538,8 @@
     bindScrollSpy();
     rows.sort(function(a,b){var ka=section==='maintenance'?(nextService(a)||'9999'):(a.expires||'9999'), kb=section==='maintenance'?(nextService(b)||'9999'):(b.expires||'9999');return ka.localeCompare(kb)||a.name.localeCompare(b.name);});
     el.innerHTML='<div class="home-service-grid'+(section==='insurance'||section==='maintenance'?' home-service-compact':'')+'">'+rows.map(function(r){
-      var facts=section==='insurance'?[['Premium',money(r.premium)+(r.cadence?' · '+esc(r.cadence):'')],['Policy end',warranty(r)],['Coverage',esc(r.coverage||'To add')]]:section==='mortgage'?[['Balance',money(r.balance)],['Balance as of',date(r.balanceDate)],['Monthly instalment',money(r.instalment)],['Annual rate',r.rate==null?'To add':esc(r.rate)+'%'],['Lock-in ends',date(r.lockInEnd)],['Review date',date(r.reviewDate)]]:r.installed?[['Setup date',date(r.installed)],['Event',esc(r.installationType||'Installation')],['Provider',esc(r.provider||'To add')]]:scheduleItems(r).length?scheduleFacts(r):[['Service cost',money(r.cost)],['Last service',date(r.lastService)],['Next service',nextService(r)?date(nextService(r)):'Not scheduled']];
-      return '<article class="home-service-card"><header><div class="home-service-head">'+(section==='maintenance'||section==='insurance'?thumbnail(r):'')+'<div><span class="home-card-brand">'+esc(r.provider||r.room||titles[section])+'</span><h4>'+esc(r.name)+'</h4></div></div>'+badge(r)+'</header><dl>'+facts.map(function(f){return '<div><dt>'+f[0]+'</dt><dd>'+f[1]+'</dd></div>';}).join('')+'</dl>'+(scheduleItems(r).length?'<details class="home-schedule-disclosure"><summary>Replacement schedule</summary>'+scheduleHTML(r)+'</details>':'')+(r.action?'<p class="home-service-note">'+esc(r.action)+'</p>':'')+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View details '+icon('chevronRight')+'</button></footer></article>';
+      var facts=section==='insurance'?[['Premium',money(r.premium)+(r.cadence?' · '+esc(r.cadence):'')],['Policy end',warranty(r)],['Coverage',esc(r.coverage||'To add')]]:section==='mortgage'?[['Balance',money(r.balance)],['Balance as of',date(r.balanceDate)],['Monthly instalment',money(r.instalment)],['Annual rate',r.rate==null?'To add':esc(r.rate)+'%'],['Lock-in ends',date(r.lockInEnd)],['Review date',date(r.reviewDate)]]:r.cadence?[['Recorded rate',money(r.cost)+' · '+esc(r.cadence)],['Rate source',esc(r.costBasis||'Not recorded')],['Payment method',esc(r.funding||'Not recorded')]]:r.installed?[['Setup date',date(r.installed)],['Event',esc(r.installationType||'Installation')],['Provider',esc(r.provider||'To add')]]:scheduleItems(r).length?scheduleFacts(r):[['Service cost',money(r.cost)],['Last service',date(r.lastService)],['Next service',nextService(r)?date(nextService(r)):'Not scheduled']];
+      return '<article class="home-service-card'+(r.paymentLinks&&r.paymentLinks.length?' home-service-payments':'')+'"><header><div class="home-service-head">'+(section==='maintenance'||section==='insurance'?thumbnail(r):'')+'<div><span class="home-card-brand">'+esc(r.provider||r.room||titles[section])+'</span><h4>'+esc(r.name)+'</h4></div></div>'+badge(r)+'</header><dl>'+facts.map(function(f){return '<div><dt>'+f[0]+'</dt><dd>'+f[1]+'</dd></div>';}).join('')+'</dl>'+paymentHistoryHTML(r)+(scheduleItems(r).length?'<details class="home-schedule-disclosure"><summary>Replacement schedule</summary>'+scheduleHTML(r)+'</details>':'')+(r.action?'<p class="home-service-note">'+esc(r.action)+'</p>':'')+'<footer>'+source(r)+'<button class="home-button" data-open="'+esc(r.id)+'">View details '+icon('chevronRight')+'</button></footer></article>';
     }).join('')+'</div>';
     el.querySelectorAll('[data-open]').forEach(bindOpen);
   }
@@ -500,7 +571,7 @@
       ['Item details','category,room,brand,model,serial'],
       ['Ownership, delivery & installation','provider,cost,costBasis,funding,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource'],
       ['Warranty & cover','warrantyStart,warrantyStartBasis,expires,warrantyTerms,secondaryWarranty,secondaryExpiry']
-    ] : r.kind==='insurance' ? [['Policy details','provider,coverage'],['Premium & dates','premium,cadence,starts,expires']] : r.kind==='mortgage' ? [['Loan details','provider,balance,balanceDate,instalment,rate,rateSchedule'],['Refinancing & notice','lockInEnd,noticeDays,reviewDate']] : [['Service details','room,provider,cost'],['Schedule','lastService,frequencyMonths,nextService']];
+    ] : r.kind==='insurance' ? [['Policy details','provider,coverage'],['Premium & dates','premium,cadence,starts,expires']] : r.kind==='mortgage' ? [['Loan details','provider,balance,balanceDate,starts,termYears,repaymentStarts,instalment,funding,rate,rateSchedule'],['Refinancing & notice','lockInEnd,noticeDays,reviewDate']] : [['Service details','room,provider,cost,cadence,costBasis,funding'],['Schedule','lastService,frequencyMonths,nextService']];
     return '<section class="home-record-basics"><div class="home-form-grid">'+field(['name','Name'],r)+field(['status','Record status','select','Needs checking,Verified,Document missing,Archived'],r)+'</div></section>'+groups.map(function(g,i){
       return '<details class="home-field-group" '+(i===0?'open':'')+'><summary>'+g[0]+'</summary><div class="home-form-grid">'+g[1].split(',').map(function(key){return field(fields[r.kind].find(function(f){return f[0]===key;}),r);}).join('')+'</div></details>';
     }).join('')+'<details class="home-field-group"><summary>Documents & notes</summary><div class="home-form-grid">'+field(['action','Next action / what needs checking'],r)+field(['sourceName','Document label'],r)+field(['sourceUrl','Document or folder link (HTTPS)','url'],r)+field(['notes','Notes, source filenames & dated repair / service history','textarea'],r)+'</div></details>';
@@ -527,11 +598,11 @@
     var warrantyBasis=record.warrantyStatus==='not_applicable'?'Warranty is not tracked for this item.':record.warrantyStartBasis==='Shopee delivery'?'Warranty begins from the Shopee delivery date: '+date(record.warrantyStart)+'.':record.warrantyStartBasis==='Delivery'?'Warranty begins from the recorded delivery date: '+date(record.warrantyStart)+'.':record.warrantyStart?'Warranty begins from the recorded installation date: '+date(record.warrantyStart)+'.':record.installed?'Warranty begins from the recorded installation date: '+date(record.installed)+'.':record.delivered?'Delivered '+date(record.delivered)+'. Warranty start is not yet recorded.':'Installation or delivery date needed to establish the warranty start and calculate expiry.';
     var components=Array.isArray(record.components)?record.components:[];
     var componentHTML=components.length?'<section class="home-component-section"><h3>Included items <span>'+components.length+'</span></h3><p class="home-muted">Line amounts are document prices before any shared bundle discount. The parent record is the amount counted in your home total.</p><div class="home-component-table"><table><thead><tr><th>Fixture</th><th>Model</th><th>Area</th><th>Qty</th><th>Line amount</th></tr></thead><tbody>'+components.map(function(c){return '<tr><td><strong>'+esc(c.name)+'</strong></td><td>'+esc(c.model||'—')+'</td><td>'+esc(c.area||'—')+'</td><td>'+esc(c.quantity==null?'—':c.quantity)+'</td><td>'+(c.amount==null?'Included':money(c.amount))+'</td></tr>';}).join('')+'</tbody></table></div></section>':'';
-    var costRows=[['Original item',record.itemCost],['Extended warranty',record.warrantyCost],['Delivery',record.deliveryCost]].filter(function(row){return row[1]!=null&&row[1]!=='';});
-    var costBreakdown=costRows.length?'<section class="home-cost-breakdown"><h3>Purchase breakdown</h3><dl>'+costRows.map(function(row){return '<div><dt>'+row[0]+'</dt><dd>'+money(row[1])+'</dd></div>';}).join('')+'<div class="home-cost-total"><dt>Order total</dt><dd>'+money(record.cost)+'</dd></div></dl></section>':'';
+    var costRows=[['Original item',record.itemCost],['Extended warranty',record.warrantyCost],['Delivery',record.deliveryCost],[record.additionalCostNote||'Additional cost',record.additionalCost]].filter(function(row){return row[1]!=null&&row[1]!=='';});
+    var costBreakdown=costRows.length?'<section class="home-cost-breakdown"><h3>'+(record.additionalCost!=null?'Cost breakdown':'Purchase breakdown')+'</h3><dl>'+costRows.map(function(row){return '<div><dt>'+esc(row[0])+'</dt><dd>'+money(row[1])+'</dd></div>';}).join('')+'<div class="home-cost-total"><dt>'+(record.additionalCost!=null?'Recorded total':'Order total')+'</dt><dd>'+money(record.cost)+'</dd></div></dl></section>':'';
     var services=store.records.filter(function(r){return r.kind==='maintenance'&&r.status!=='Archived'&&(r.linkedRecord===record.id||r.id.indexOf(record.id+'_filter_')===0);});
     var serviceHTML=services.map(function(r){var items=scheduleItems(r);return '<section class="home-linked-service"><h3>'+esc(r.name)+'</h3>'+(items.length?'<p class="home-muted">'+items.length+' replacements'+(r.cost!=null?' · '+money(r.cost*items.length)+' paid once':'')+'. Next: '+date(nextService(r))+'.</p>'+scheduleHTML(r):'<dl><div><dt>Next service</dt><dd>'+(nextService(r)?date(nextService(r)):'Not scheduled')+'</dd></div></dl>')+'<p>'+source(r)+'</p></section>';}).join('');
-    dialog.innerHTML='<header class="home-dialog-head"><div><h2 id="home-dialog-title">'+esc(record.name)+'</h2><p class="home-dialog-sub">'+esc([record.category||'Home collection',record.room].filter(Boolean).join(' · '))+'</p></div><button type="button" class="home-button home-close" id="home-close" aria-label="Close Home record">'+icon('close')+'</button></header><div class="home-dialog-body home-item-detail"><div class="home-detail-hero">'+thumbnail(record,true)+'<div><div class="home-detail-price"><strong>'+(record.cost==null?(record.costBasis==='Gift'?'Housewarming gift':'Cost not recorded'):money(record.cost))+'</strong>'+badge(record)+'</div>'+(subtitle?'<p class="home-detail-sub">'+esc(subtitle)+'</p>':'')+'</div></div>'+timeline()+'<p class="home-source">'+source(record)+'</p>'+(photo?'<p class="home-photo-credit"><a href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer">'+(photo.kind==='logo'?'Brand / supplier logo: ':'Product image: ')+esc(photo.label)+icon('external')+'</a></p>':'')+costBreakdown+'<section><h3>About this item</h3><dl>'+facts('brand,model,room,roomDetail,serial')+'</dl></section>'+componentHTML+'<section><h3>Ownership, delivery & installation</h3><dl>'+facts('provider,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource,costBasis,funding')+'</dl></section><section><h3>Warranty & cover</h3><p class="home-warranty-basis tone-'+esc(warrantyTone(record)).replace('not_applicable','none')+'">'+esc(warrantyBasis)+'</p>'+(warrantyFacts?'<dl>'+warrantyFacts+'</dl>':record.warrantyStatus==='not_applicable'?'':'<p class="home-muted">Warranty details not yet recorded.</p>')+warrantySource+'</section>'+serviceHTML+(record.action?'<section><h3>To keep in mind</h3><p class="home-detail-note">'+esc(record.action)+'</p></section>':'')+(record.notes?'<details class="home-field-group"><summary>Documents & notes</summary><p class="home-detail-note">'+esc(record.notes)+'</p></details>':'')+'</div>';
+    dialog.innerHTML='<header class="home-dialog-head"><div><h2 id="home-dialog-title">'+esc(record.name)+'</h2><p class="home-dialog-sub">'+esc([record.category||'Home collection',record.room].filter(Boolean).join(' · '))+'</p></div><button type="button" class="home-button home-close" id="home-close" aria-label="Close Home record">'+icon('close')+'</button></header><div class="home-dialog-body home-item-detail"><div class="home-detail-hero">'+thumbnail(record,true)+'<div><div class="home-detail-price"><strong>'+(record.cost==null?(record.costBasis==='Gift'?'Housewarming gift':record.costBasis==='Included in renovation'?'Included in renovation':'Cost not recorded'):money(record.cost))+'</strong>'+badge(record)+'</div>'+(subtitle?'<p class="home-detail-sub">'+esc(subtitle)+'</p>':'')+'</div></div>'+timeline()+'<p class="home-source">'+source(record)+'</p>'+(photo?'<p class="home-photo-credit"><a href="'+esc(photo.url)+'" target="_blank" rel="noopener noreferrer">'+(photo.kind==='logo'?'Brand / supplier logo: ':'Product image: ')+esc(photo.label)+icon('external')+'</a></p>':'')+costBreakdown+'<section><h3>About this item</h3><dl>'+facts('brand,model,room,roomDetail,serial')+'</dl></section>'+componentHTML+'<section><h3>Ownership, delivery & installation</h3><dl>'+facts('provider,delivered,deliveryDetails,deliverySource,installed,installationType,installationSource,costBasis,funding')+'</dl></section><section><h3>Warranty & cover</h3><p class="home-warranty-basis tone-'+esc(warrantyTone(record)).replace('not_applicable','none')+'">'+esc(warrantyBasis)+'</p>'+(warrantyFacts?'<dl>'+warrantyFacts+'</dl>':record.warrantyStatus==='not_applicable'?'':'<p class="home-muted">Warranty details not yet recorded.</p>')+warrantySource+'</section>'+serviceHTML+(record.action?'<section><h3>To keep in mind</h3><p class="home-detail-note">'+esc(record.action)+'</p></section>':'')+(record.notes?'<details class="home-field-group"><summary>Documents & notes</summary><p class="home-detail-note">'+esc(record.notes)+'</p></details>':'')+'</div>';
     dialog.querySelector('#home-close').onclick=function(){dialog.close();};
     dialog.querySelectorAll('[data-copy]').forEach(function(b){b.onclick=function(){if(!navigator.clipboard)return;navigator.clipboard.writeText(b.dataset.copy).then(function(){b.textContent='Copied';setTimeout(function(){b.textContent='Copy';},1500);});};});
     dialog.showModal();
@@ -563,14 +634,14 @@
       e.preventDefault();if(!editable||busy)return;
       var r={id:record.id,kind:record.kind}, values=new FormData(e.target);
       values.forEach(function(v,k){r[k]=v;});
-      ['schedule','linkedRecord'].forEach(function(k){if(record[k]!=null&&record[k]!=='')r[k]=record[k];});
+      ['schedule','linkedRecord','paymentLinks'].forEach(function(k){if(record[k]!=null&&record[k]!=='')r[k]=record[k];});
       fields[record.kind].forEach(function(f){if(f[2]==='number'||f[2]==='integer'){if(r[f[0]]==='')delete r[f[0]];else r[f[0]]=Number(r[f[0]]);}});
       if(select.value){var split=select.value.indexOf(':');r.transactionSource=select.value.slice(0,split);r.transactionId=select.value.slice(split+1);}
       busy=true;dialog.querySelector('#home-save').disabled=true;dialog.querySelector('#home-save').textContent='Saving…';
       try {
         var response=await fetch('api/home',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({revision:revision,record:r})});
         var saved=await response.json();if(!response.ok||!saved.ok)throw new Error(saved.error||'Save failed.');
-        store=saved;render();dialog.close();
+        store=saved;render();window.dispatchEvent(new CustomEvent('finance:home-updated',{detail:store}));dialog.close();
       } catch(error){dialog.querySelector('#home-error').textContent=error.message;}
       finally{busy=false;dialog.querySelector('#home-save').disabled=!editable;dialog.querySelector('#home-save').textContent='Save record';}
     };
@@ -583,8 +654,18 @@
       editable=!!(status.editable&&status.homeRecords);
       store=await json('api/home').catch(function(){return json('data/home.json');});
       if(!Array.isArray(store.records))throw new Error('Invalid Home records.');
+      window.dispatchEvent(new CustomEvent('finance:home-updated',{detail:store}));
+      if(store.records.some(function(r){return r.paymentLinks&&r.paymentLinks.length;})){txs=[];txsLoaded=null;await loadTxs();}
       render();
     }catch(error){root.innerHTML='<section class="home-panel"><h2>Home records unavailable</h2><p>'+esc(error.message)+'</p><button class="home-button" id="home-retry">Retry</button></section>';root.querySelector('#home-retry').onclick=load;}
   }
-  load();
+  var started = false;
+  function startVisible() {
+    if (started || root.closest('.hidden')) return;
+    started = true;
+    root.innerHTML = '<p class="hint" role="status">Loading…</p>';
+    load();
+  }
+  window.addEventListener('finance:navigation', startVisible);
+  startVisible();
 }());

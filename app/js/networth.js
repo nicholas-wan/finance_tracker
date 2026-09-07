@@ -4,8 +4,8 @@
   // combined with series derived from data already on the dashboard - the
   // UOB ONE closing balance per statement month and, when the Home register
   // records a loan balance, the mortgage. Nothing here is a transaction.
-  var root = document.getElementById('pane-networth');
-  if (!root) return;
+  var root = typeof document !== 'undefined' ? document.getElementById('pane-networth') : null;
+  if (!root && typeof module === 'undefined') return;
   var GROUPS = [
     ['cash', 'Cash', 'Bank balances from statements and any other cash accounts.'],
     ['cpf', 'CPF', 'Ordinary, Special and MediSave balances read from the CPF portal.'],
@@ -31,7 +31,18 @@
   function addMonths(m, n) { var y = +m.slice(0, 4), mo = +m.slice(5, 7) - 1 + n; return (y + Math.floor(mo / 12)) + '-' + String((mo % 12 + 12) % 12 + 1).padStart(2, '0'); }
   function monthLabel(m) { return MONTHS[parseInt(m.slice(5, 7), 10) - 1] + ' ' + m.slice(0, 4); }
   function monthsBetween(a, b) { return (+b.slice(0, 4) - +a.slice(0, 4)) * 12 + (+b.slice(5, 7) - +a.slice(5, 7)); }
-  function monthsOld(d) { return monthsBetween(monthOf(d), monthOf(today())); }
+  function ageDays(d, now) { return Math.floor((Date.parse((now || today()) + 'T00:00:00Z') - Date.parse(d + 'T00:00:00Z')) / 86400000); }
+  function snapshotDefaults(accounts, snapshots, id) {
+    var account = accounts.find(function (a) { return a.id === id; }) || {};
+    var last = snapshots.filter(function (s) { return s.accountId === id; }).sort(function (a, b) { return b.date.localeCompare(a.date); })[0];
+    return { source: last && last.source || account.source || '', placeholder: last ? String(last.value) : '0.00' };
+  }
+  function homeEquity(all, values) {
+    return all.reduce(function (sum, s) {
+      return sum + (s.account.group === 'property' || s.sourceType === 'home' ? values[s.account.id] || 0 : 0);
+    }, 0);
+  }
+  function replaceHomeSeries(series, home) { return series.filter(function (s) { return s.sourceType !== 'home'; }).concat(deriveMortgage(home)); }
   var ICONS = { close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>', down: '<path d="m6 10 6 6 6-6"/>', up: '<path d="m6 14 6-6 6 6"/>', trend: '<path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/>', scale: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0L7 7Zm10 0-3 7a3 3 0 0 0 6 0l-3-7Z"/>' };
   function icon(name) { return '<svg class="nw-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>'; }
   async function json(url) { if (window.FinanceData && url.indexOf('api/') !== 0) return window.FinanceData.load(url); var r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
@@ -91,17 +102,17 @@
     var back = history.length > 12 ? history[history.length - 13] : history[0];
     var change = back && history.length > 1 ? changeBetween(all, back, now) : null;
     var span = back ? monthsBetween(back.month, now.month) : 0;
-    var homeOnly = (now.byGroup.property || 0) - (now.byGroup.liabilities || 0), showExcl = now.byGroup.property || now.byGroup.liabilities;
+    var homeOnly = homeEquity(all, now.values || {}), showExcl = all.some(function (s) { return s.account.group === 'property' || s.sourceType === 'home'; });
     root.innerHTML =
       '<header class="nw-heading"><div><h2>Net worth</h2><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Values carry forward until you record a newer one, so the as-at dates matter.</p></div>' +
-      '<div class="nw-total"><span>Net worth</span><strong>' + money0(history.length ? now.net : null) + '</strong><small>' + (newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' · oldest ' + date(oldest) : '') : 'No balances recorded yet') + '</small>' +
-      (showExcl ? '<small>Excluding property and home loan: ' + money0(now.net - homeOnly) + (now.byGroup.liabilities && !now.byGroup.property ? ' · no property value recorded against the loan' : '') + '</small>' : '') +
+      '<div class="nw-total"><span>' + (showExcl ? 'Including whole property' : 'Net worth') + '</span><strong>' + money0(history.length ? now.net : null) + '</strong><small>' + (newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' · oldest ' + date(oldest) : '') : 'No balances recorded yet') + '</small>' +
       (staleAccounts(all).length ? '<small class="nw-stale">Over 90 days old: ' + esc(staleAccounts(all).join(', ')) + '</small>' : '') + '</div></header>' +
+      (showExcl ? '<section class="nw-scope" aria-label="Personal and property scope"><div><span>Personal accounts</span><strong>' + money0(now.net - homeOnly) + '</strong><small>Excludes property and the home loan. Other debts remain included.</small></div><div><span>Whole-property equity</span><strong>' + money0(homeOnly) + '</strong><small>Recorded property value less the full home loan. No personal ownership share applied.</small></div><p>The total combines personal accounts with whole-property equity. Acquisition cost is historical, not a current market valuation.</p></section>' : '') +
       '<div class="nw-kpis">' +
         kpi('Assets', money0(now.assets), Object.keys(now.byGroup).filter(function (g) { return g !== 'liabilities' && now.byGroup[g]; }).map(function (g) { return GROUP_NAME[g] + ' ' + money0(now.byGroup[g]); }).join(' · ') || 'nothing recorded', null, 'up') +
         kpi('Liabilities', money0(now.liabilities), now.liabilities ? 'subtracted from assets' : 'none recorded', null, 'down') +
         kpi(span ? 'Change over ' + span + ' month' + (span === 1 ? '' : 's') : 'Change', change == null ? '—' : signed(change.delta), back && span ? 'since ' + monthLabel(back.month) + (change && change.excluded.length ? ' · excludes ' + change.excluded.join(', ') + ' (not recorded at both dates)' : '') : 'needs two dated balances', change == null ? null : change.delta >= 0 ? 'good' : 'bad', 'trend') +
-        kpi('CPF', money0(now.byGroup.cpf || null), cpfNote(all), null, 'scale') +
+        kpi('CPF', money0(now.byGroup.cpf == null ? null : now.byGroup.cpf), cpfNote(all), null, 'scale') +
       '</div>' +
       '<section class="nw-panel"><div class="nw-panel-head"><div><h3>History</h3><p class="nw-muted">Month-end view. Each account holds its last recorded balance until the next one.</p></div></div><div class="nw-chart" id="nw-chart"></div></section>' +
       '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, all.filter(function (s) { return s.account.group === g[0]; }), now.byGroup[g[0]]); }).join('') + '</div></section>' +
@@ -113,24 +124,33 @@
   // Manual accounts whose newest balance is more than a quarter old; derived
   // series refresh with the statements and are not the owner's job.
   function staleAccounts(all) {
-    return all.filter(function (s) { var p = latest(s); return s.manual && p && monthsOld(p.date) > 3; }).map(function (s) { return s.account.name; });
+    return all.filter(function (s) { var p = latest(s); return s.manual && p && ageDays(p.date) > 90; }).map(function (s) { return s.account.name; });
   }
   function cpfNote(all) {
     var cpf = all.filter(function (s) { return s.account.group === 'cpf'; }), dates = cpf.map(latest).filter(Boolean).map(function (p) { return p.date; }).sort();
     if (!dates.length) return 'no CPF balance recorded';
     return 'as at ' + date(dates[dates.length - 1]) + (dates[0] !== dates[dates.length - 1] ? ' (oldest ' + date(dates[0]) + ')' : '');
   }
+  function accountNote(account) {
+    if (!account.note) return '';
+    if (account.group === 'property' || account.note.length > 160) return '<details class="nw-account-notes"><summary>Details &amp; notes</summary><p>' + esc(account.note) + '</p></details>';
+    return '<span class="nw-note">' + esc(account.note) + '</span>';
+  }
+  function sourceHTML(source) {
+    if (!source) return '';
+    return /^https?:\/\//i.test(source) ? '<a class="nw-note" href="' + esc(source) + '" target="_blank" rel="noopener noreferrer">Open source ↗</a>' : '<span class="nw-note">' + esc(source) + '</span>';
+  }
   function groupHTML(g, series, subtotal) {
     var rows = series.map(function (s) {
-      var p = latest(s), age = p ? monthsOld(p.date) : null, stale = age != null && age > 3;
+      var p = latest(s), age = p ? ageDays(p.date) : null, stale = age != null && age > 90;
       var id = s.account.id, open = !!openHistory[id];
-      return '<tr data-account="' + esc(id) + '"><td><span class="nw-name">' + esc(s.account.name) + '</span>' + (s.account.note ? '<span class="nw-note">' + esc(s.account.note) + '</span>' : '') + '</td>' +
+      return '<tr data-account="' + esc(id) + '"><td><span class="nw-name">' + esc(s.account.name) + '</span>' + accountNote(s.account) + '</td>' +
         '<td class="num">' + (p ? money(p.value) : '<span class="nw-none">No balance recorded</span>') + '</td>' +
-        '<td>' + (p ? '<span class="' + (stale ? 'nw-stale' : 'nw-fresh') + '">' + date(p.date) + (age > 0 ? ' · ' + age + ' month' + (age === 1 ? '' : 's') + ' old' : '') + '</span>' + (p.source ? '<span class="nw-note">' + esc(p.source) + '</span>' : '') : '<span class="nw-note">' + esc(s.account.source || '') + '</span>') + '</td>' +
-        '<td class="act">' + (s.manual ? (editable ? '<button class="nw-button link" data-record="' + esc(id) + '">Record</button>' : '') + (s.points.length ? '<button class="nw-button link" data-history="' + esc(id) + '" aria-expanded="' + open + '">' + s.points.length + ' dated' + icon(open ? 'up' : 'down') + '</button>' : '') : '<span class="nw-muted">from statements</span>') + '</td></tr>' +
+        '<td>' + (p ? '<span class="' + (stale ? 'nw-stale' : 'nw-fresh') + '">' + date(p.date) + (age > 0 ? ' · ' + age + ' day' + (age === 1 ? '' : 's') + ' old' : '') + '</span>' + sourceHTML(p.source) : '<span class="nw-note">' + esc(s.account.source || '') + '</span>') + '</td>' +
+        '<td class="act">' + (s.manual ? (editable ? '<button class="nw-button link" data-record="' + esc(id) + '">Record</button>' : '') + (s.points.length ? '<button class="nw-button link" data-history="' + esc(id) + '" aria-expanded="' + open + '">' + s.points.length + ' dated' + icon(open ? 'up' : 'down') + '</button>' : '') : '<span class="nw-muted">' + (s.sourceType === 'home' ? 'from Home register' : 'from statements') + '</span>') + '</td></tr>' +
         (open ? '<tr class="nw-history"><td colspan="4"><table>' + s.points.slice().reverse().map(function (q) { return '<tr><td>' + date(q.date) + '</td><td class="num">' + money(q.value) + '</td><td>' + esc(q.source || '') + (q.note ? ' · ' + esc(q.note) : '') + '</td><td class="act">' + (editable ? '<button class="nw-button link danger" data-delete="' + esc(id) + '" data-date="' + esc(q.date) + '">Remove</button>' : '') + '</td></tr>'; }).join('') + '</table></td></tr>' : '');
     }).join('');
-    return '<section class="nw-group"><div class="nw-group-head"><h4><i class="nw-dot-' + g[0] + '"></i>' + esc(g[1]) + '</h4><strong>' + (subtotal ? money0(subtotal) : '—') + '</strong></div>' +
+    return '<section class="nw-group"><div class="nw-group-head"><h4><i class="nw-dot-' + g[0] + '"></i>' + esc(g[1]) + '</h4><strong>' + (subtotal == null ? '—' : money0(subtotal)) + '</strong></div>' +
       (rows ? '<table class="nw-table"><thead><tr><th>Account</th><th class="num">Balance</th><th>As at</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p class="nw-empty">' + esc(g[2]) + '</p>') + '</section>';
   }
   function flowsHTML() {
@@ -198,6 +218,7 @@
     document.body.appendChild(d);
     d.querySelector('#nw-close').onclick = function () { if (!busy) d.close(); };
     d.addEventListener('close', function () { d.remove(); });
+    d.addEventListener('cancel', function (e) { if (busy) e.preventDefault(); });
     d.querySelector('#nw-form').onsubmit = async function (e) {
       e.preventDefault(); if (busy) return;
       var values = {}; new FormData(e.target).forEach(function (v, k) { values[k] = v; });
@@ -213,13 +234,18 @@
     var manual = store.accounts.filter(function (a) { return !a.archived; });
     if (!manual.length) { accountDialog(); return; }
     var chosen = manual.some(function (a) { return a.id === accountId; }) ? accountId : manual[0].id;
-    var last = store.snapshots.filter(function (s) { return s.accountId === chosen; }).sort(function (a, b) { return b.date.localeCompare(a.date); })[0];
-    dialog('Record a balance',
+    var defaults = snapshotDefaults(manual, store.snapshots, chosen);
+    var d = dialog('Record a balance',
       '<label class="nw-field">Account<select name="accountId">' + manual.map(function (a) { return '<option value="' + esc(a.id) + '" ' + (a.id === chosen ? 'selected' : '') + '>' + esc(GROUP_NAME[a.group] + ' · ' + a.name) + '</option>'; }).join('') + '</select></label>' +
-      '<div class="nw-grid-2"><label class="nw-field">As at<input name="date" type="date" required value="' + today() + '" max="' + today() + '"></label><label class="nw-field">Balance (S$)<input name="value" type="number" step="0.01" min="0" required placeholder="' + (last ? last.value : '0.00') + '"></label></div>' +
-      '<label class="nw-field">Where you read it<input name="source" maxlength="300" placeholder="e.g. CPF portal, IBKR statement" value="' + esc(last ? last.source || '' : '') + '"></label>' +
+      '<div class="nw-grid-2"><label class="nw-field">As at<input name="date" type="date" required value="' + today() + '" max="' + today() + '"></label><label class="nw-field">Balance (S$)<input name="value" type="number" step="0.01" min="0" required placeholder="' + esc(defaults.placeholder) + '"></label></div>' +
+      '<label class="nw-field">Where you read it<input name="source" maxlength="300" placeholder="e.g. CPF portal, IBKR statement" value="' + esc(defaults.source) + '"></label>' +
       '<label class="nw-field">Note<textarea name="note" maxlength="1000"></textarea></label>',
       'Save balance', function (v) { return { snapshot: { accountId: v.accountId, date: v.date, value: Number(v.value), source: v.source || '', note: v.note || '' } }; });
+    d.querySelector('[name=accountId]').onchange = function (e) {
+      var next = snapshotDefaults(manual, store.snapshots, e.target.value);
+      d.querySelector('[name=source]').value = next.source;
+      d.querySelector('[name=value]').placeholder = next.placeholder;
+    };
   }
   function accountDialog() {
     dialog('Add an account',
@@ -249,7 +275,7 @@
   }
   function deriveMortgage(home) {
     var loans = (home.records || []).filter(function (r) { return r.kind === 'mortgage' && r.status !== 'Archived' && typeof r.balance === 'number' && r.balanceDate; });
-    return loans.map(function (r) { return { account: { id: 'home_' + r.id, name: r.name, group: 'liabilities', note: 'Balance from the Home register.' }, points: [{ date: r.balanceDate, value: r.balance, source: r.provider || 'Home register' }], manual: false }; });
+    return loans.map(function (r) { return { account: { id: 'home_' + r.id, name: r.name, group: 'liabilities', note: 'Balance from the Home register.' }, points: [{ date: r.balanceDate, value: r.balance, source: r.provider || 'Home register' }], sourceType: 'home', manual: false }; });
   }
   function deriveFlows(bank) {
     var buckets = {};
@@ -273,10 +299,29 @@
         json('data/home.json').catch(function () { return {}; })
       ]);
       store = results[0]; if (!Array.isArray(store.accounts) || !Array.isArray(store.snapshots)) throw new Error('Invalid net-worth records.');
-      derived = [deriveBank(results[1])].filter(Boolean).concat(deriveMortgage(results[2]));
+      derived = [deriveBank(results[1])].filter(Boolean).concat(deriveMortgage(latestHome || results[2]));
       flows = deriveFlows(results[1]);
       render();
     } catch (error) { root.innerHTML = '<section class="nw-panel"><h2>Net worth unavailable</h2><p>' + esc(error.message) + '</p><button class="nw-button" id="nw-retry">Retry</button></section>'; root.querySelector('#nw-retry').onclick = load; }
   }
-  load();
+  if (typeof module !== 'undefined' && module.exports) {
+    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries };
+    return;
+  }
+  var latestHome = null;
+  window.addEventListener('finance:home-updated', function (e) {
+    if (!e.detail || !Array.isArray(e.detail.records)) return;
+    latestHome = e.detail;
+    derived = replaceHomeSeries(derived, latestHome);
+    if (started) render();
+  });
+  var started = false;
+  function startVisible() {
+    if (started || root.closest('.hidden')) return;
+    started = true;
+    root.innerHTML = '<p class="hint" role="status">Loading…</p>';
+    load();
+  }
+  window.addEventListener('finance:navigation', startVisible);
+  startVisible();
 }());

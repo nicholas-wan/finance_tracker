@@ -45,7 +45,7 @@
     "imageSource": "https://jarrons.com.sg/cdn/shop/files/HappieJoyWaterPurifierSilver_Main.jpg?v=1692695052&width=1080",
     "model": "Happie Joy, silver",
     "processing": "Unmodified retailer product image: complete front view of silver Joy on white, blended into the grey tile in CSS.",
-    "file": "happie-joy-silver-full.jpg"
+    "file": "happie-joy-silver-full-optimized.webp"
   },
   "champs-sylphy": {
     "source": "https://champs.com.sg/product/instant-water-heater-sylphy/",
@@ -96,7 +96,7 @@
     "imageSource": "https://theomnidesk.com/cdn/shop/files/Classic-Acacia__850x850_d7482308-7d5f-4e6d-a553-31f12cf17835.jpg?v=1754545675",
     "model": "Omnidesk Classic Wildwood",
     "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
-    "file": "omnidesk-classic-full.jpg"
+    "file": "omnidesk-classic-full-optimized.webp"
   },
   "switchbot-hub-mini": {
     "source": "https://www.switch-bot.com/products/switchbot-hub-mini",
@@ -129,14 +129,14 @@
     "imageSource": "https://levoit.com/cdn/shop/files/levoit-core-200s-p-smart-air-purifier-8992236.png?v=1765316587",
     "model": "Levoit Core 200S",
     "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
-    "file": "levoit-core200s-full.png"
+    "file": "levoit-core200s-full-optimized.webp"
   },
   "levoit-vital100s": {
     "source": "https://levoit.com/products/vital-100s-smart-true-hepa-air-purifier",
     "imageSource": "https://levoit.com/cdn/shop/products/vital-100s-smart-true-hepa-air-purifier-295620.jpg?v=1762284249",
     "model": "Levoit Vital 100S",
     "processing": "Intact official image; original background and full framing preserved. No pixel removal or cropping.",
-    "file": "levoit-vital100s-full.jpg"
+    "file": "levoit-vital100s-full-optimized.webp"
   },
   "neakasa-m1": {
     "source": "https://neakasa.com/products/neakasa-m1-cat-litter-box",
@@ -218,7 +218,7 @@
     "imageSource": "https://magiccatmesh.com/wp-content/uploads/2026/04/fevicon-catmesh-300x300.png",
     "kind": "logo",
     "processing": "Official brand or supplier logo; proportions and colours preserved.",
-    "file": "magic-cat-mesh-logo.webp"
+    "file": "magic-cat-mesh-logo-optimized.webp"
   },
   "hooga-logo": {
     "source": "https://findinghooga.com.sg/",
@@ -314,5 +314,11 @@
   "happie-logo-full.avif": {
     "source": "https://happie.sg/wp-content/uploads/2026/01/Happie_Logo_Blue.avif",
     "model": "Official brand logo"
+  },
+  "design4space-logo-full": {
+    "source": "https://www.design4space.com.sg/",
+    "imageSource": "https://www.design4space.com.sg/wp-content/uploads/2026/01/Desing4space-logo.webp",
+    "model": "Design 4 Space supplier logo",
+    "processing": "Original official website logo; existing dark-logo CSS makes white artwork readable on the light thumbnail."
   }
 }

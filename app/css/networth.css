@@ -130,3 +130,13 @@
   .nw-table th:nth-child(3), .nw-table td:nth-child(3) { display: none; }
   .nw-grid-2 { grid-template-columns: 1fr; }
 }
+.nw-scope { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:14px 24px; border:1px solid var(--nw-line); border-radius:12px; padding:16px 20px; margin-bottom:18px; background:var(--surface); }
+.nw-scope span, .nw-scope strong, .nw-scope small { display:block; }
+.nw-scope span { font-size:var(--fs-small); color:var(--text-2); }
+.nw-scope strong { font-size:24px; font-variant-numeric:tabular-nums; margin:4px 0; }
+.nw-scope small, .nw-scope p { color:var(--text-2); font-size:var(--fs-small); line-height:1.5; }
+.nw-scope p { grid-column:1/-1; margin:0; border-top:1px solid var(--nw-line); padding-top:10px; }
+.nw-account-notes { margin-top:5px; font-size:var(--fs-small); color:var(--text-2); }
+.nw-account-notes summary { cursor:pointer; }
+.nw-account-notes p { max-width:58ch; white-space:normal; margin:8px 0; line-height:1.5; }
+@media(max-width:600px) { .nw-scope { grid-template-columns:1fr; padding:14px; } }

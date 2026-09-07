@@ -798,6 +798,25 @@ class SaveWritePathTests(unittest.TestCase):
             serve.save_owner([self.TX_ID, self.SECOND_ID], "Shared")
         self.assert_untouched("OWNER_PATH", "AUDIT_PATH")
 
+    def test_game_details_save_preserve_and_clear(self):
+        details = {"title": "Example game", "platform": "Steam", "purchaseType": "DLC"}
+        self.write_transactions([self.row(category="Games")])
+        self.stage_rebuild(category="Games", gameDetails=details)
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Games", "", "", game_details=details)
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"][self.TX_ID]["gameDetails"], details)
+        self.stage_rebuild(category="Games", gameDetails=details, remark="Enjoyed it")
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Games", "", "Enjoyed it")
+        self.assertEqual(self.read("OVERRIDE_PATH")["overridesById"][self.TX_ID]["gameDetails"], details)
+        self.stage_rebuild(category="Games", gameDetails={})
+        serve.save_transaction_detail(self.TX_ID, "Nic", "Games", "", "", game_details={})
+        self.assertNotIn("gameDetails", self.read("OVERRIDE_PATH")["overridesById"].get(self.TX_ID, {}))
+
+    def test_game_details_reject_invalid_before_writing(self):
+        for value in ({"title": []}, {"purchaseType": "invalid"}, {"unexpected": "x"}, {"title": "x" * 101}):
+            with self.assertRaises(ValueError):
+                serve.save_transaction_detail(self.TX_ID, "Nic", "Games", "", "", game_details=value)
+        self.assert_untouched("OVERRIDE_PATH", "REMARK_PATH", "OWNER_PATH", "AUDIT_PATH")
+
     def test_category_only_detail_save_does_not_pin_an_owner_tag(self):
         # An explicit "Untagged" tag outranks manual/owner_rules.json forever,
         # so a save that never touched the owner select must not write one.

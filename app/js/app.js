@@ -82,6 +82,23 @@
     period: { mode: "month", year: null, month: null }
   };
 
+  function saveNavigation() {
+    try { localStorage.setItem('finance-navigation', JSON.stringify({ tab: state.tab, subtab: state.subtab || {}, insurancePerson: state.insurancePerson })); } catch (e) { /* storage unavailable */ }
+  }
+  function restoreNavigation() {
+    try {
+      var saved = JSON.parse(localStorage.getItem('finance-navigation') || '{}');
+      if (saved.tab === 'overview' || (typeof saved.tab === 'string' && document.getElementById('tab-' + saved.tab))) state.tab = saved.tab;
+      state.subtab = {};
+      ['wealth', 'transactions'].forEach(function (name) {
+        var value = saved.subtab && saved.subtab[name];
+        var pane = document.getElementById('pane-' + name);
+        if (pane && Array.from(pane.querySelectorAll('.subtab')).some(function (b) { return b.getAttribute('data-subtab') === value; })) state.subtab[name] = value;
+      });
+      if (typeof saved.insurancePerson === 'string') state.insurancePerson = saved.insurancePerson;
+    } catch (e) { /* invalid or unavailable storage */ }
+  }
+
   function fmt(n, digits) {
     var d = digits === undefined ? 2 : digits;
     return (n < 0 ? "-" : "") + "S$" + Math.abs(n).toLocaleString("en-SG",
@@ -251,6 +268,14 @@
   ];
   // Game publishers and marketplaces as the Games sub-tab names them; the
   // catch-all "Other games" gets the gamepad glyph instead of a brand.
+  var GAME_THUMBNAILS = {
+    "Etheria Restart": "assets/games/etheria-restart-thumb.webp",
+    "Wuthering Waves": "assets/games/wuthering-waves-thumb.webp",
+    "Zenless Zone Zero": "assets/games/zenless-zone-zero-thumb.webp",
+    "Neverness to Everness": "assets/games/neverness-to-everness-thumb.webp",
+    "Chaos Zero Nightmare": "assets/games/chaos-zero-nightmare-thumb.webp",
+    "Slay the Spire 2": "assets/games/slay-the-spire-2-thumb.webp"
+  };
   var GAME_LOGOS = {
     "HoYoverse": "assets/merchant-logos/hoyoverse.ico",
     "Kuro Games": "assets/merchant-logos/kuro-games.ico",
@@ -598,23 +623,7 @@
   // Owner, category, display name, remark and review decisions reach the quality
   // panel, the ledger and its summary, the settlement, the insights and the two
   // overview totals - and nothing else on the page.
-  function renderSavedRowEffects(rebuilt) {
-    if (rebuilt) {
-      // Only a whole-row save can change a category, which may retire one from
-      // the filter, and moving a row into or out of Payment/Rebates changes the
-      // headline card figures too.
-      populateTransactionCategoryFilter();
-      renderKpis();
-    }
-    renderDataQuality();
-    renderLedger();
-    renderSplit();
-    renderInsights();
-    renderSpendingSummary();
-    renderKeyMetrics();
-    renderCategories();
-    renderInsurance();
-  }
+  function renderSavedRowEffects(rebuilt) { renderAll(); }
   function reopenDrawerFor(id) {
     if (editor.drawerTransactionId !== id) return;
     var updated = data.transactions.find(function (row) { return row.id === id; });
@@ -1051,7 +1060,8 @@
         category: values.category,
         displayName: values.displayName,
         remark: values.remark,
-        destination: values.destination || ""
+        destination: values.destination || "",
+        gameDetails: values.gameDetails
       })
     }).then(function (response) {
       return response.json().catch(function () {
@@ -1425,6 +1435,32 @@
         : "Manual override. Select " + t.ruleCategory + " to restore the merchant rule."
     ));
 
+    var gameFields=el("div","game-editor"), gameInputs={};
+    gameFields.appendChild(el("h4","","Game details"));
+    [["title","Game title"],["platform","Store / platform"],["purchaseType","Purchase type"]].forEach(function(f){
+      var input=document.createElement(f[0]==='purchaseType'?'select':'input');
+      if(f[0]==='purchaseType') ['', 'Base game','DLC','Monthly pass','Top-up','Account purchase','Subscription','Other'].forEach(function(v){var o=el('option','',v||'Not assigned');o.value=v;input.appendChild(o);});
+      else {input.type='text';input.maxLength=f[0]==='title'?100:60;input.placeholder=f[0]==='title'?'Assign the actual game title':(t.game||'Store or platform');}
+      input.value=(t.gameDetails||{})[f[0]]||'';input.disabled=!editor.available;gameInputs[f[0]]=input;
+      gameFields.appendChild(drawerField(f[1],input,f[0]==='title'?'Saved for this purchase only. Merchant names do not identify every game.':''));
+    });
+    var releaseDetails=el('details','game-release-details');
+    function updateReleaseTiming(){
+      var title=gameInputs.title.value.trim()||window.Gaming.identity({game:t.game}).title;
+      var timing=window.Gaming.releaseTiming(title,t.date);
+      releaseDetails.replaceChildren();releaseDetails.hidden=!timing;releaseDetails.open=false;
+      if(!timing)return;
+      releaseDetails.appendChild(el('summary','','Release timing'));
+      releaseDetails.appendChild(el('p','',timing.age+' at this transaction.'));
+      var launch=el('p','',timing.label+' - '+new Date(timing.date+'T00:00:00Z').toLocaleDateString('en-SG',{day:'numeric',month:'short',year:'numeric',timeZone:'UTC'})+' - ');
+      var source=el('a','','Source');source.href=timing.source;source.target='_blank';source.rel='noopener noreferrer';launch.appendChild(source);
+      releaseDetails.appendChild(launch);
+    }
+    updateReleaseTiming();gameInputs.title.addEventListener('input',updateReleaseTiming);gameFields.appendChild(releaseDetails);
+    var gameHidden=document.createElement("input");gameHidden.type="checkbox";gameHidden.checked=!!(t.gameDetails||{}).hidden;gameHidden.disabled=!editor.available;gameFields.appendChild(drawerField("Hide from Games",gameHidden,"Keeps this purchase or refund in the main transaction history."));
+    function syncGameFields(){gameFields.classList.toggle('hidden',category.value!=='Games');}
+    syncGameFields();category.addEventListener('change',syncGameFields);form.appendChild(gameFields);
+
     var owner = document.createElement("select");
     [
       ["Nic", "Nic"],
@@ -1524,7 +1560,8 @@
         category: category.value,
         displayName: displayName.value.trim().replace(/\s+/g, " "),
         remark: remark.value.trim().replace(/\s+/g, " "),
-        destination: category.value === "Travel" ? destination.value : ""
+        destination: category.value === "Travel" ? destination.value : "",
+        gameDetails: category.value === "Games" ? {title:gameInputs.title.value.trim(),platform:gameInputs.platform.value.trim(),purchaseType:gameInputs.purchaseType.value,hidden:gameHidden.checked} : undefined
       }, save, status);
     });
     editSection.appendChild(form);
@@ -5048,6 +5085,7 @@
         button.setAttribute("aria-selected", active ? "true" : "false");
         button.addEventListener("click", function () {
           state.insurancePerson = person.id;
+          saveNavigation();
           renderInsurance();
         });
         personTabs.appendChild(button);
@@ -5091,203 +5129,133 @@
   // ---------- Games ----------
 
   function gameTx() {
-    return data.transactions.filter(function (t) { return t.category === "Games"; });
+    return data.transactions.filter(function (t) { return t.category === "Games" && !(t.gameDetails||{}).hidden; });
   }
 
+  var gamesMonth='';
   function renderGames() {
-    var all = gameTx();
-    var years = {};
-    all.forEach(function (t) { years[t.month.slice(0, 4)] = true; });
-    (data.gameSales || []).forEach(function (s) { years[s.month.slice(0, 4)] = true; });
-    var yearList = Object.keys(years).sort();
-    if (!yearList.length) return;
-    if (state.gameYear !== "All" && yearList.indexOf(state.gameYear) === -1) {
-      state.gameYear = yearList[yearList.length - 1];
+    var all=gameTx(), sales=data.gameSales||[], G=window.Gaming;
+    var through=((data.freshness||{}).sourceThrough||data.months[data.months.length-1]).slice(0,7);
+    var years=Array.from(new Set(all.map(function(t){return G.month(t).slice(0,4);}).concat(sales.map(function(t){return t.month.slice(0,4);}),[through.slice(0,4)]))).sort().reverse();
+    if(state.gameYear!=='All'&&years.indexOf(state.gameYear)<0)state.gameYear=years[0];
+    var model=G.summary(all,sales,state.gameYear,state.game,through);state.game=model.key;
+    document.getElementById('games-scope').textContent=state.gameYear==='All'?'Gaming · All years':'Gaming in '+state.gameYear;
+    var yearWrap=document.getElementById('games-years');clear(yearWrap);
+    years.concat(['All']).forEach(function(y){var b=el('button','pill'+(y===state.gameYear?' active':''),y==='All'?'All years':y);setPressed(b,y===state.gameYear);b.onclick=function(){state.gameYear=y;gamesMonth='';renderGames();};yearWrap.appendChild(b);});
+    var pills=document.getElementById('game-pills');clear(pills);
+    var reset=el('button','pill'+(state.game==='All'?' active':''),state.gameYear==='All'?'All games · All years':'All games in '+state.gameYear);setPressed(reset,state.game==='All');reset.onclick=function(){state.game='All';gamesMonth='';renderGames();};pills.appendChild(reset);
+    if(state.game!=='All'){var selected=model.groups.find(function(g){return g.key===state.game;});pills.appendChild(el('span','hint','Showing '+selected.info.label));}
+    var kpis=document.getElementById('games-kpis');clear(kpis);
+    kpis.appendChild(metric('Purchases',fmt0(model.purchases/100),model.purchaseCount+' purchases',null,'gamepad'));
+    kpis.appendChild(metric('Refunds',fmt0(model.refunds/100),model.refundCount+' refunds',null,'receipt'));
+    kpis.appendChild(metric('Net gaming spend',fmt0(model.net/100),model.proceeds?'After refunds and '+fmt0(model.proceeds/100)+' sales':'After refunds',null,'coins'));
+    kpis.appendChild(metric('Monthly average',fmt0(model.average/100),model.months.length+' calendar months · through '+monthLabel(model.months.length?model.months[model.months.length-1].month:through),null,'calendar'));
+    var list=document.getElementById('games-breakdown');clear(list);list.className='games-library';
+    var largestGameSpend=Math.max.apply(null,[1].concat(model.groups.map(function(g){return Math.abs(g.total);})));
+    model.groups.forEach(function(g){
+      var b=el('button','games-library-row'+(state.game===g.key?' selected':''));setPressed(b,state.game===g.key);
+      var art=el('span','games-art');if(GAME_THUMBNAILS[g.info.label]){art.classList.add('has-thumbnail');var thumb=el('img','games-thumbnail');thumb.src=GAME_THUMBNAILS[g.info.label];thumb.alt='';thumb.loading='lazy';thumb.onerror=function(){art.classList.remove('has-thumbnail');clear(art);art.appendChild(gameLogo(g.info.label));};art.appendChild(thumb);}else art.appendChild(gameLogo(g.info.store||g.info.label));b.appendChild(art);
+      var copy=el('span','games-game-copy');copy.appendChild(el('strong','',g.info.label));
+      var platforms=Array.from(new Set(g.rows.map(function(t){return (t.gameDetails||{}).platform||'';}).filter(Boolean)));
+      var last=g.rows.slice().sort(function(a,b){return (b.date||b.month).localeCompare(a.date||a.month);})[0];
+      copy.appendChild(el('small','',(!g.info.assigned?'Game not assigned · ':platforms.length?platforms.join(', ')+' · ':'')+(last?'Last activity '+dateLabel(last.date||last.month+'-01'):'Account sale recorded')));b.appendChild(copy);
+      var spendTrack=el('span','games-spend-track');spendTrack.setAttribute('aria-hidden','true');
+      var spendFill=el('span','games-spend-fill'+(g.total<0?' refund':''));spendFill.style.width=(Math.abs(g.total)/largestGameSpend*100)+'%';spendTrack.appendChild(spendFill);copy.appendChild(spendTrack);
+      var amount=el('span','games-game-amount');amount.appendChild(el('strong','',fmt(g.total/100)));amount.appendChild(el('small','',state.gameYear==='All'?'All-years spend':state.gameYear+' spend'));b.appendChild(amount);
+      b.onclick=function(){state.game=state.game===g.key?'All':g.key;gamesMonth='';renderGames();};list.appendChild(b);
+    });
+    if(!model.groups.length)list.appendChild(emptyState('No gaming activity in this period','Choose another year to see your purchases.','gamepad'));
+    list.appendChild(el('p','hint','Bars compare spending after refunds in this period; green bars show net refunds. Select a game to filter purchases; click it again to show all games.'));
+    var trend=document.getElementById('games-trend');clear(trend);trend.className='games-month-chart';
+    var max=Math.max.apply(null,[1].concat(model.months.map(function(m){return Math.abs(m.cents);})));
+    model.months.forEach(function(m){var b=el('button','games-month'+(m.month===gamesMonth?' selected':''));setPressed(b,m.month===gamesMonth);b.title=monthLabel(m.month)+': '+fmt(m.cents/100)+' net spending';b.setAttribute('aria-label',b.title);
+      b.appendChild(el('span','games-month-value',fmt0(m.cents/100)));var track=el('span','games-month-track'),bar=el('span','games-month-fill'+(m.cents<0?' refund':''));bar.style.height=(Math.abs(m.cents)/max*100)+'%';track.appendChild(bar);b.appendChild(track);b.appendChild(el('span','',state.gameYear==='All'?monthLabel(m.month):MONTH_NAMES[+m.month.slice(5)-1]));
+      b.onclick=function(){gamesMonth=gamesMonth===m.month?'':m.month;renderGames();};trend.appendChild(b);
+    });
+    document.getElementById('games-trend-hint').textContent='Transaction months · '+(gamesMonth?monthLabel(gamesMonth)+' selected — click again to clear':'click a month to filter purchases');
+    var timeline=document.getElementById('games-activity-scroll'),scrollPositions={};
+    timeline.querySelectorAll('.games-activity-year-scroll').forEach(function(n){scrollPositions[n.dataset.year]=n.scrollLeft;});
+    clear(timeline);
+    var selectionText='Select a tile to filter charges; select it again to clear.';
+    var activityYears=state.gameYear==='All'?years:[state.gameYear];
+    activityYears.forEach(function(year){
+      var months=Array.from({length:12},function(_,i){return {month:year+'-'+String(i+1).padStart(2,'0')};});
+      var activity=G.activity(model.groups,months);
+      if(!activity.length)return;
+      var block=el('section','games-activity-year'),heading=el('h3','',year);
+      block.appendChild(heading);
+      var scroller=el('div','games-activity-year-scroll');scroller.dataset.year=year;scroller.tabIndex=0;scroller.setAttribute('role','region');scroller.setAttribute('aria-label',year+' game purchases');
+      var table=el('table','games-activity-table');table.setAttribute('aria-label','Games purchased in each month of '+year);
+      var head=el('thead',''),header=el('tr',''),label=el('th','','Games purchased in');label.scope='col';header.appendChild(label);
+      months.forEach(function(m,i){
+        var count=activity.filter(function(g){return g.cells[i].count>0;}).length;
+        var th=el('th','',MONTH_NAMES[i]);th.scope='col';th.dataset.month=m.month;
+        th.appendChild(el('small','',m.month>through?'No data yet':count+' game'+(count===1?'':'s')));header.appendChild(th);
+      });head.appendChild(header);table.appendChild(head);
+      var tbody=el('tbody','');
+      activity.forEach(function(g){
+        var row=el('tr',''),name=el('th','');name.scope='row';
+        var gameLabel=el('span','games-activity-game');
+        if(GAME_THUMBNAILS[g.title]){var img=el('img','');img.src=GAME_THUMBNAILS[g.title];img.alt='';img.loading='lazy';img.onerror=function(){this.hidden=true;};gameLabel.appendChild(img);}
+        gameLabel.appendChild(el('span','',g.title));name.appendChild(gameLabel);row.appendChild(name);
+        g.cells.forEach(function(c){
+          var cell=el('td','');cell.dataset.month=c.month;
+          if(c.count){
+            var active=state.game===g.key&&gamesMonth===c.month;
+            var tile=el('button','games-activity-tile'+(active?' selected':''));tile.type='button';
+            var description=g.title+' - '+monthLabel(c.month)+': '+fmt(c.cents/100)+' across '+c.count+' purchase'+(c.count===1?'':'s');
+            tile.title=description;tile.setAttribute('aria-label',description);tile.setAttribute('aria-pressed',String(active));tile.dataset.game=g.key;tile.dataset.month=c.month;
+            if(active)selectionText=description+'. Select again to clear.';
+            tile.onclick=function(){state.game=active?'All':g.key;gamesMonth=active?'':c.month;renderGames();
+              var target=Array.from(timeline.querySelectorAll('button')).find(function(b){return b.dataset.game===g.key&&b.dataset.month===c.month;});if(target)target.focus({preventScroll:true});
+            };cell.appendChild(tile);
+          }else{var empty=el('span','games-activity-tile empty'+(c.month>through?' unavailable':''));empty.setAttribute('role','img');empty.setAttribute('aria-label',c.month>through?'No data yet':'No purchases');cell.appendChild(empty);}
+          row.appendChild(cell);
+        });tbody.appendChild(row);
+      });table.appendChild(tbody);
+      function highlight(month){table.querySelectorAll('[data-month]').forEach(function(n){if(n.tagName==='TD'||n.tagName==='TH')n.classList.toggle('month-highlight',n.dataset.month===month);});}
+      table.addEventListener('pointerover',function(e){var c=e.target.closest('[data-month]');highlight(c?c.dataset.month:'');});
+      table.addEventListener('pointerleave',function(){var c=table.contains(document.activeElement)?document.activeElement:null;highlight(c&&c.dataset.month||'');});
+      table.addEventListener('focusin',function(e){highlight(e.target.dataset.month||'');});
+      table.addEventListener('focusout',function(e){highlight(e.relatedTarget&&e.relatedTarget.dataset.month||'');});
+      scroller.appendChild(table);block.appendChild(scroller);timeline.appendChild(block);scroller.scrollLeft=scrollPositions[year]||0;
+    });
+    if(!timeline.children.length)timeline.appendChild(el('p','hint','No assigned game purchases in this period.'));
+    document.getElementById('games-activity-selection').textContent=selectionText;
+    var body=document.getElementById('games-body');clear(body);
+    var rows=model.rows.filter(function(t){return !gamesMonth||G.month(t)===gamesMonth;}).sort(function(a,b){return (b.date||b.month).localeCompare(a.date||a.month);});
+    var grouped={};rows.forEach(function(t){var key=(t.date||t.month)+':'+G.identity(t).key;if(!grouped[key])grouped[key]=[];grouped[key].push(t);});
+    function addTransaction(target,t){
+      var tr=el('tr','games-charge');
+      tr.appendChild(el('td','col-date',t.date?dateLabel(t.date):monthLabel(t.month)));
+      var desc=el('td','games-charge-description',t.displayName||t.description);
+      if((t.gameDetails||{}).purchaseType)desc.appendChild(el('small','games-purchase-type',t.gameDetails.purchaseType));
+      tr.appendChild(desc);tr.appendChild(el('td','col-cat',G.identity(t).label));
+      tr.appendChild(el('td','col-amt'+(t.type!=='debit'?' credit':''),(t.type==='debit'?'-':'+')+fmt(t.amount)));
+      appendExpandableRow(target,tr,t,4,[],'games');return tr;
     }
-
-    var yearWrap = document.getElementById("games-years");
-    clear(yearWrap);
-    ["All"].concat(yearList).forEach(function (y) {
-      var b = el("button", "pill" + (y === state.gameYear ? " active" : ""),
-        y === "All" ? "All years" : y);
-      setPressed(b, y === state.gameYear);
-      b.addEventListener("click", function () { state.gameYear = y; renderGames(); });
-      yearWrap.appendChild(b);
+    Object.values(grouped).forEach(function(group,index){
+      if(group.length===1){addTransaction(body,group[0]);return;}
+      var tr=el('tr','games-charge-summary'),dateCell=el('td','col-date');
+      var toggle=el('button','games-charge-toggle');toggle.type='button';toggle.setAttribute('aria-expanded','false');
+      var arrow=el('span','games-charge-arrow','›');arrow.setAttribute('aria-hidden','true');toggle.appendChild(arrow);
+      toggle.appendChild(el('span','',dateLabel(group[0].date||group[0].month+'-01')));
+      toggle.setAttribute('aria-label',dateLabel(group[0].date||group[0].month+'-01')+' · '+G.identity(group[0]).label+' · '+group.length+' transactions');
+      dateCell.appendChild(toggle);tr.appendChild(dateCell);
+      tr.appendChild(el('td','',group.length+' transactions'));
+      tr.appendChild(el('td','col-cat',G.identity(group[0]).label));
+      var total=group.reduce(function(n,t){return n+G.cents(t);},0);
+      tr.appendChild(el('td','col-amt'+(total<0?' credit':''),(total>0?'-':total<0?'+':'')+fmt(Math.abs(total)/100)));
+      body.appendChild(tr);
+      var children=group.map(function(t,i){var child=addTransaction(body,t);child.classList.add('games-charge-child','hidden');child.id='games-charge-'+index+'-'+i;return child;});
+      toggle.setAttribute('aria-controls',children.map(function(row){return row.id;}).join(' '));
+      toggle.onclick=function(){var open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));tr.classList.toggle('expanded',open);children.forEach(function(row){row.classList.toggle('hidden',!open);});};
     });
-
-    var inYear = all.filter(function (t) {
-      return state.gameYear === "All" || t.month.slice(0, 4) === state.gameYear;
-    });
-    var byGame = {};
-    inYear.forEach(function (t) {
-      var g = t.game || "Other games";
-      byGame[g] = (byGame[g] || 0) + signed(t);
-    });
-    // A game whose charges net to nothing in the period (refunded, or only
-    // sales) has no bar worth drawing and no pill worth pressing.
-    var gameNames = Object.keys(byGame).filter(function (g) { return Math.round(byGame[g] * 100) > 0; })
-      .sort(function (a, b) { return byGame[b] - byGame[a]; });
-    if (state.game !== "All" && gameNames.indexOf(state.game) === -1) state.game = "All";
-
-    var pills = document.getElementById("game-pills");
-    clear(pills);
-    ["All"].concat(gameNames).forEach(function (g) {
-      var b = el("button", "pill" + (g === state.game ? " active" : ""));
-      var logo = g === "All" ? null : gameLogo(g);
-      if (logo) b.appendChild(logo);
-      b.appendChild(document.createTextNode(g === "All" ? "All games" : g));
-      setPressed(b, g === state.game);
-      b.addEventListener("click", function () { state.game = g; renderGames(); });
-      pills.appendChild(b);
-    });
-
-    var rows = inYear.filter(function (t) {
-      return state.game === "All" || (t.game || "Other games") === state.game;
-    });
-    // Sales carry the same filters as spending, or Net would subtract one game's
-    // spending from every game's sales. Computed after state.game is validated.
-    var sales = (data.gameSales || []).filter(function (s) {
-      if (state.gameYear !== "All" && s.month.slice(0, 4) !== state.gameYear) return false;
-      if (state.game !== "All" && (s.publisher || s.game) !== state.game) return false;
-      return true;
-    });
-
-    var total = 0;
-    rows.forEach(function (t) { total += signed(t); });
-    var months = {};
-    rows.forEach(function (t) { months[t.month] = (months[t.month] || 0) + signed(t); });
-    var monthKeys = Object.keys(months).sort();
-    var spanMonths = monthKeys.length || 1;
-    var top = gameNames[0];
-
-    var earned = 0;
-    sales.forEach(function (s) { earned += s.amount; });
-    var net = earned - total;
-
-    var kpis = document.getElementById("games-kpis");
-    clear(kpis);
-    kpis.appendChild(metric(state.gameYear === "All" ? "Spent on games" : "Spent in " + state.gameYear,
-      fmt0(total), rows.length + " charges", null, "gamepad"));
-    kpis.appendChild(metric("Earned from sales", fmt0(earned),
-      sales.length + " account" + (sales.length === 1 ? "" : "s") + " sold", null, "coins"));
-    kpis.appendChild(metric("Net", (net >= 0 ? "+" : "") + fmt0(net),
-      net >= 0 ? "ahead overall" : "down overall", net >= 0 ? "good" : "bad", "up"));
-    kpis.appendChild(metric("Per month", fmt0(total / spanMonths),
-      "across " + spanMonths + " active month" + (spanMonths === 1 ? "" : "s"), null, "calendar"));
-
-    var salesWrap = document.getElementById("sales-list");
-    clear(salesWrap);
-    document.getElementById("sales-hint").textContent = earned > 0
-      ? fmt0(earned) + " across " + sales.length + " sale" + (sales.length === 1 ? "" : "s")
-      : "";
-    if (!sales.length) {
-      salesWrap.appendChild(emptyState(
-        "No account sales in this period",
-        "Select another year or All to see recorded game-account sales.",
-        "coins"
-      ));
-    } else {
-      var maxSale = Math.max.apply(null, sales.map(function (s) { return s.amount; }));
-      sales.slice().sort(function (a, b) { return b.month.localeCompare(a.month); })
-        .forEach(function (s) {
-          var row = el("div", "cat-row");
-          row.appendChild(el("span", "name", s.game));
-          var track = el("div", "track");
-          var fill = el("div", "fill");
-          fill.style.width = Math.max(3, Math.round((s.amount / maxSale) * 100)) + "%";
-          fill.style.background = "var(--green)";
-          track.appendChild(fill);
-          row.appendChild(track);
-          var amt = el("span", "amt", fmt0(s.amount));
-          amt.title = monthLabel(s.month);
-          row.appendChild(amt);
-          row.appendChild(el("span", "sale-when", monthLabel(s.month)));
-          salesWrap.appendChild(row);
-        });
-    }
-
-    var breakdown = document.getElementById("games-breakdown");
-    clear(breakdown);
-    var shades = ["var(--bar-1)", "var(--bar-2)", "var(--bar-3)", "var(--bar-4)"];
-    var max = gameNames.length ? Math.max(byGame[gameNames[0]], 1) : 1;
-    gameNames.forEach(function (name, i) {
-      var row = el("div", "cat-row");
-      var label = el("span", "name game-name");
-      var logo = gameLogo(name);
-      if (logo) label.appendChild(logo);
-      label.appendChild(document.createTextNode(name));
-      row.appendChild(label);
-      var track = el("div", "track");
-      var fill = el("div", "fill");
-      fill.style.width = Math.max(1, Math.round((Math.max(byGame[name], 0) / max) * 100)) + "%";
-      fill.style.background = name === state.game || state.game === "All"
-        ? shades[Math.min(i, shades.length - 1)] : "var(--border)";
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(el("span", "amt", fmt(byGame[name])));
-      breakdown.appendChild(row);
-    });
-    if (!gameNames.length) breakdown.appendChild(emptyState(
-      "No game spending recorded",
-      "There are no game charges in the selected period.",
-      "gamepad"
-    ));
-
-    var trend = document.getElementById("games-trend");
-    clear(trend);
-    document.getElementById("games-trend-hint").textContent =
-      state.game === "All" ? "all games" : state.game;
-    var maxMonth = 1;
-    monthKeys.forEach(function (m) { maxMonth = Math.max(maxMonth, months[m]); });
-    monthKeys.slice().reverse().forEach(function (m) {
-      var row = el("div", "cat-row");
-      row.appendChild(el("span", "name", monthLabel(m)));
-      var track = el("div", "track");
-      var fill = el("div", "fill");
-      fill.style.width = Math.max(1, Math.round((Math.max(months[m], 0) / maxMonth) * 100)) + "%";
-      fill.style.background = "var(--bar-2)";
-      track.appendChild(fill);
-      row.appendChild(track);
-      row.appendChild(el("span", "amt", fmt(months[m])));
-      trend.appendChild(row);
-    });
-    if (!monthKeys.length) trend.appendChild(emptyState(
-      "No monthly trend yet",
-      "A trend appears after the first matching game charge.",
-      "bars"
-    ));
-
-    var body = document.getElementById("games-body");
-    clear(body);
-    rows.slice().sort(function (a, b) {
-      return (b.date || b.month).localeCompare(a.date || a.month);
-    }).forEach(function (t) {
-      var tr = document.createElement("tr");
-      var d = t.date
-        ? t.date.slice(8, 10) + " " + MONTH_NAMES[parseInt(t.date.slice(5, 7), 10) - 1] + " " + t.date.slice(2, 4)
-        : t.month;
-      tr.appendChild(el("td", "col-date", d));
-      var tdDesc = el("td", "", t.description);
-      tdDesc.title = t.description;
-      tr.appendChild(tdDesc);
-      var tdGame = el("td", "col-cat");
-      tdGame.appendChild(el("span", "cat-pill cat-games", t.game || "Other games"));
-      tr.appendChild(tdGame);
-      var credit = t.type !== "debit";
-      tr.appendChild(el("td", "col-amt" + (credit ? " credit" : ""),
-        (credit ? "+" : "-") + t.amount.toFixed(2)));
-      appendExpandableRow(body, tr, t, 4, [
-        ["Date", t.date || statementLabel(t.month)],
-        ["Posted", t.postedDate || t.date || statementLabel(t.month)],
-        ["Statement", statementLabel(t.month)],
-        ["Game", t.game || "Other games"],
-        ["Card", t.card || "UOB ONE CARD"],
-        ["Amount", (credit ? "+" : "-") + fmt(t.amount)]
-      ], "games");
-    });
-    document.getElementById("games-count").textContent =
-      rows.length + " charge" + (rows.length === 1 ? "" : "s") +
-      (state.game === "All" ? "" : " · " + state.game);
+    if(!rows.length){var tr=el('tr',''),td=el('td','','No purchases or refunds in this selection.');td.colSpan=4;tr.appendChild(td);body.appendChild(tr);}
+    document.getElementById('games-count').textContent=rows.filter(function(t){return t.type==='debit';}).length+' purchases · '+rows.filter(function(t){return t.type!=='debit';}).length+' refunds';
+    var salesWrap=document.getElementById('sales-list');clear(salesWrap);document.getElementById('sales-hint').textContent=fmt(model.proceeds/100)+' · '+model.sales.length+' sales';
+    model.sales.slice().sort(function(a,b){return b.month.localeCompare(a.month);}).forEach(function(s){var row=el('div','games-sale-row');row.appendChild(el('span','',s.game+' · '+monthLabel(s.month)));row.appendChild(el('strong','',fmt(s.amount)));salesWrap.appendChild(row);});
+    if(!model.sales.length)salesWrap.appendChild(el('p','hint','No account sales in this selection.'));
   }
 
   // ---------- Split ----------
@@ -5304,69 +5272,6 @@
     return amount >= 0
       ? "Yx owes you " + fmt(amount)
       : "You owe Yx " + fmt(Math.abs(amount));
-  }
-
-  function renderCardFeeAlerts() {
-    var panel = document.getElementById("card-fee-alerts");
-    var wrap = document.getElementById("card-fee-alert-list");
-    if (!panel || !wrap) return;
-    clear(wrap);
-    var resolved = {};
-    (cardFeeReviews.resolvedIds || []).forEach(function (id) { resolved[id] = true; });
-    var feeAnchor = data.freshness && data.freshness.sourceThrough
-      ? localDate(data.freshness.sourceThrough) : new Date();
-    var feeCutoff = new Date(feeAnchor.getFullYear() - 1, feeAnchor.getMonth(), feeAnchor.getDate());
-    var allFees = data.transactions.filter(function (t) {
-      var chargeDate = t.date ? localDate(t.date) : null;
-      return t.type === "debit" && /CARD MEMBERSHIP FEE/i.test(t.description || "") &&
-        chargeDate && chargeDate >= feeCutoff && chargeDate <= feeAnchor;
-    });
-    panel.classList.toggle("hidden", !allFees.length);
-    if (!allFees.length) return;
-    allFees.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
-    var fees = allFees.filter(function (fee) { return !resolved[fee.id]; });
-    panel.querySelector(".hint").textContent = fees.length
-      ? fees.length + " active fee" + (fees.length === 1 ? "" : "s")
-      : "No active fee alerts";
-    wrap.appendChild(el("p", "card-fee-alert-summary", allFees.length +
-      " card membership fee" + (allFees.length === 1 ? "" : "s") + " recorded · Last charged " +
-      dateLabel(allFees[0].date) + " (" + statementLabel(allFees[0].month) + ")"));
-    if (!fees.length) {
-      wrap.appendChild(el("p", "card-fee-alert-clear", "All recorded card fees are resolved."));
-      return;
-    }
-    fees.forEach(function (fee) {
-      var item = el("div", "card-fee-alert");
-      var copy = el("div", "card-fee-alert-copy");
-      copy.appendChild(el("strong", "", fmt(fee.amount) + " card membership fee"));
-      copy.appendChild(el("span", "", dateLabel(fee.date) + " · " + statementLabel(fee.month) +
-        " · Apply for a waiver, then resolve this alert."));
-      item.appendChild(copy);
-      var button = el("button", "quality-action", "Resolve");
-      button.disabled = !editor.available;
-      button.title = editor.available ? "Mark this fee alert resolved" : "Start the local editor to resolve alerts";
-      button.addEventListener("click", function () {
-        button.disabled = true;
-        fetch("api/card-fee-review", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: fee.id, resolved: true })
-        }).then(function (response) {
-          return response.json().then(function (payload) {
-            if (!response.ok) throw new Error(payload.error || "Could not resolve fee alert.");
-            return payload;
-          });
-        }).then(function (payload) {
-          cardFeeReviews.resolvedIds = payload.resolvedIds || cardFeeReviews.resolvedIds.concat([fee.id]);
-          renderCardFeeAlerts();
-          showToast("Card fee alert resolved.", "success");
-        }).catch(function (error) {
-          button.disabled = false;
-          showToast(error.message, "error");
-        });
-      });
-      item.appendChild(button);
-      wrap.appendChild(item);
-    });
   }
 
   function auditRow(operator, label, detail, amount, tone, total) {
@@ -6960,7 +6865,50 @@
     viewAll.textContent = "All time (" + allTime + ")";
   }
 
+  function renderFilterSummary() {
+    var bank = state.transactionSource === 'bank';
+    var parts=[];
+    function add(label,key,value){parts.push({label:label,key:key,value:value});}
+    if(state.search)add('Search: '+state.search,'search','');
+    if(state.category!=='All')add(state.category,'category','All');
+    if(bank){
+      if(state.bankDirection!=='all')add(state.bankDirection==='deposit'?'Money in':'Money out','bankDirection','all');
+      if(state.bankReview!=='all'){var opt=document.getElementById('bank-review-filter').selectedOptions[0];add(opt?opt.textContent:state.bankReview,'bankReview','all');}
+      if(state.bankExcludeInternal)add('Excluding internal movements','bankExcludeInternal',false);
+    }else{
+      if(state.owner!=='All')add(state.owner,'owner','All');
+      if(state.travelCountry!=='All')add(state.travelCountry,'travelCountry','All');
+      [['foodpandaOnly','Foodpanda'],['shopeeOnly','Shopee'],['tripOnly','Trip.com'],['grabOnly','Grab']].forEach(function(p){if(state[p[0]])add(p[1],p[0],false);});
+      if(state.showExcluded)add('Including payments & rebates','showExcluded',false);
+      if(state.showReversed)add('Including fully refunded purchases','showReversed',false);
+      if(state.reviewMode)add({'suspicious':'Needs review','lady-unconfirmed':'Lady card unconfirmed','split-by-rule':'Shared by rule','category-overlap':'Category overlaps','delivery-rides':'Grab + Foodpanda'}[state.reviewMode]||state.reviewMode,'reviewMode',null);
+    }
+    if(state.idFilter)add(state.idFilterLabel||'Selected transactions','idFilter',null);
+    var host=document.getElementById('active-transaction-filters');clear(host);
+    parts.forEach(function(p){
+      var chip=el('button','filter-summary-chip',p.label+' \u00d7');chip.type='button';chip.setAttribute('aria-label','Remove filter: '+p.label);
+      chip.onclick=function(){
+        state[p.key]=p.value;if(p.key==='idFilter')setIdFilter(null);
+        if(p.key==='category')state.travelCountry='All';
+        state.ledgerLimit=LEDGER_CAP;
+        document.getElementById('search').value=state.search;
+        document.getElementById('show-excluded').checked=state.showExcluded;
+        document.getElementById('bank-review-filter').value=state.bankReview;
+        document.getElementById('bank-exclude-internal').checked=state.bankExcludeInternal;
+        Array.from(document.getElementById('bank-direction-pills').children).forEach(function(button){var on=button.textContent===(state.bankDirection==='all'?'All':state.bankDirection==='deposit'?'Money in':'Money out');button.classList.toggle('active',on);setPressed(button,on);});
+        syncOwnerPills();populateTransactionCategoryFilter();syncTransactionSourceControls();syncIdFilterChip();renderLedger();
+        document.getElementById('transaction-filters-toggle').focus({preventScroll:true});
+      };host.appendChild(chip);
+    });
+    document.getElementById('transaction-filter-count').textContent=parts.length?'('+parts.length+')':'';
+    document.getElementById('clear-transaction-filters').classList.toggle('hidden',!parts.length);
+    host.parentElement.classList.toggle('hidden',!parts.length);
+    ['transaction-owner-group','transaction-merchant-group','transaction-include-group'].forEach(function(id){document.getElementById(id).classList.toggle('hidden',bank);});
+
+  }
+
   function renderLedger() {
+    renderFilterSummary();
     syncSuspiciousFilterButton();
     renderTrips();
     var body = document.getElementById("ledger-body");
@@ -7228,30 +7176,30 @@
 
   // ---------- Shell ----------
 
+  var panelsReady = false, dirtyPanels = {};
+  function renderActivePanel() {
+    if (!panelsReady) return;
+    var key = state.tab;
+    if (key === 'wealth') key = (state.subtab || {}).wealth || 'income';
+    if (key === 'transactions') key = (state.subtab || {}).transactions || 'ledger';
+    if (!dirtyPanels[key]) return;
+    delete dirtyPanels[key];
+    if (key === 'overview') {
+      renderFreshness(); renderCardFeeAlerts(); renderKpis(); renderYearReview();
+      renderRecurring(); renderDataQuality(); renderStacked(); renderKeyMetrics();
+      renderInsights(); renderSpendingSummary(); renderCategories(); renderOutflows();
+    } else if (key === 'ledger') {
+      populateTransactionCategoryFilter(); populateTravelCountryFilter(); renderLedger();
+    } else if (key === 'income') renderIncome();
+    else if (key === 'insurance') renderInsurance();
+    else if (key === 'games') renderGames();
+    else if (key === 'split') renderSplit();
+    else if (key === 'travel') renderTravel();
+  }
   function renderAll() {
-    renderBankRules();
-    renderFreshness();
-    renderCardFeeAlerts();
-    renderKpis();
-    renderYearReview();
-    renderRecurring();
-    renderDataQuality();
-    renderStacked();
-    renderKeyMetrics();
-    renderInsights();
-    renderSpendingSummary();
-    renderCategories();
-    renderOutflows();
-    // An edit can retire a category or introduce a new one, so the filter
-    // options are rebuilt here rather than only on load.
-    populateTransactionCategoryFilter();
-    populateTravelCountryFilter();
-    renderLedger();
-    renderIncome();
-    renderInsurance();
-    renderGames();
-    renderSplit();
-    renderTravel();
+    panelsReady = true;
+    ['overview','ledger','income','insurance','games','split','travel'].forEach(function (key) { dirtyPanels[key] = true; });
+    renderActivePanel();
     var idx = data.months.indexOf(state.month);
     document.getElementById("prev-month").disabled = idx <= 0;
     document.getElementById("next-month").disabled = idx >= data.months.length - 1;
@@ -7262,18 +7210,7 @@
     var monthSelect = document.getElementById("month-select");
     monthSelect.value = m;
     monthSelect.title = statementRange(m);
-    renderKpis();
-    renderYearReview();
-    renderStacked();
-    renderKeyMetrics();
-    renderInsights();
-    renderSpendingSummary();
-    renderCategories();
-    renderOutflows();
-    renderLedger();
-    var idx = data.months.indexOf(m);
-    document.getElementById("prev-month").disabled = idx <= 0;
-    document.getElementById("next-month").disabled = idx >= data.months.length - 1;
+    renderAll();
   }
 
   // Sections that live inside another tab as a sub-tab. Old names still work
@@ -7283,6 +7220,7 @@
     if (!pane || !name) return;
     state.subtab = state.subtab || {};
     state.subtab[pane.id.slice(5)] = name;
+    saveNavigation();
     Array.prototype.forEach.call(pane.querySelectorAll(".subtab"), function (b) {
       var active = b.getAttribute("data-subtab") === name;
       b.classList.toggle("active", active);
@@ -7329,7 +7267,9 @@
     }
     // The trip year is shared with the Transactions pane, so the list here
     // is redrawn on arrival in case it was changed over there.
-    if (name === "travel") renderTravelTrips();
+    renderActivePanel();
+    window.dispatchEvent(new Event('finance:navigation'));
+    saveNavigation();
   }
 
   function applyTheme(theme) {
@@ -7368,7 +7308,7 @@
       }, { threshold: 0 }).observe(topbar);
     }
     Array.prototype.forEach.call(document.querySelectorAll(".subtab"), function (b) {
-      b.addEventListener("click", function () { setSubtab(b.closest(".pane"), b.getAttribute("data-subtab")); });
+      b.addEventListener("click", function () { setSubtab(b.closest(".pane"), b.getAttribute("data-subtab")); renderActivePanel(); window.dispatchEvent(new Event("finance:navigation")); });
     });
     var tabButtons = Array.prototype.slice.call(document.querySelectorAll(".tab"));
     tabButtons.forEach(function (t, index) {
@@ -7406,6 +7346,15 @@
       if (i < data.months.length - 1) setMonth(data.months[i + 1]);
     });
 
+    var filterToggle=document.getElementById('transaction-filters-toggle'),filterPanel=document.getElementById('transaction-filter-panel');
+    function closeFilterPanel(){filterPanel.classList.add('hidden');filterToggle.setAttribute('aria-expanded','false');filterToggle.focus({preventScroll:true});}
+    filterToggle.onclick=function(){var open=filterToggle.getAttribute('aria-expanded')!=='true';filterToggle.setAttribute('aria-expanded',String(open));filterPanel.classList.toggle('hidden',!open);};
+    document.getElementById('transaction-filters-close').onclick=closeFilterPanel;
+    filterPanel.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();closeFilterPanel();}});
+    document.getElementById('clear-transaction-filters').onclick = function () {
+      // Keep the selected ledger and period; clear its additional restrictions.
+      openTransactions({ source: state.transactionSource, period: Object.assign({}, state.period) });
+    };
     var sourcePills = document.getElementById("transaction-source-pills");
     [
       { key: "card", label: "Cards" },
@@ -7732,30 +7681,17 @@
     }
   }
 
-  loadJson("data/branding.json").catch(function () { return {}; })
-    .then(applyBranding)
-    .then(function () { return loadJson("data/transactions.json"); })
-    .then(function (json) {
-      data = json;
-      applyIdentity();
-      return loadJson("data/account_transactions.json");
-    })
-    .then(function (acct) {
-      account = acct;
-      if ((data.generationId || account.generationId) &&
-          data.generationId !== account.generationId) {
-        throw new Error("card and account data belong to different import generations");
-      }
-      return Promise.all([
-        loadJson("api/status").catch(function () { return { editable: false }; }),
-        loadJson("api/account-reviews").catch(function () {
-          return { recognizedSignals: [] };
-        }),
-        loadJson("api/card-fee-reviews").catch(function () {
-          return { resolvedIds: [] };
-        })
-      ]);
-    })
+  Promise.all([
+    loadJson("data/branding.json").catch(function () { return {}; }),
+    loadJson("data/transactions.json"), loadJson("data/account_transactions.json"),
+    loadJson("api/status").catch(function () { return { editable: false }; }),
+    loadJson("api/account-reviews").catch(function () { return { recognizedSignals: [] }; }),
+    loadJson("api/card-fee-reviews").catch(function () { return { resolvedIds: [] }; })
+  ]).then(function (results) {
+    applyBranding(results[0]); data = results[1]; applyIdentity(); account = results[2];
+    if ((data.generationId || account.generationId) && data.generationId !== account.generationId) throw new Error("card and account data belong to different import generations");
+    return results.slice(3);
+  })
     .then(function (loaded) {
       editor.available = loaded[0].editable === true;
       // The server compares the code files it started from with what is on
@@ -7787,6 +7723,7 @@
         ? insuranceYears[insuranceYears.length - 1] : null;
       state.period.year = state.month.slice(0, 4);
       state.period.month = state.month.slice(5);
+      restoreNavigation();
       buildControls();
       renderAll();
       var gaps = (data.months.length && account.months.length)

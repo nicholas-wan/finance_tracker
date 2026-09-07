@@ -9,7 +9,7 @@
   function load(url) {
     var k = key(url);
     if (!promises[k]) {
-      promises[k] = fetch(url, { cache: "no-store" }).then(function (r) {
+      promises[k] = fetch(url, { cache: "no-cache" }).then(function (r) {
         if (!r.ok) throw new Error(url + " -> HTTP " + r.status);
         return r.json();
       });

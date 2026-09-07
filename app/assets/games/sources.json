@@ -1,0 +1,44 @@
+[
+  {
+    "file": "zenless-zone-zero-thumb.webp",
+    "imageUrl": "https://fastcdn.hoyoverse.com/mi18n/nap_global/m20260714hy5gtjg0e8/upload/253cf8be88a2134827b125f2fd565b7e_709316931256797948.png",
+    "sourcePage": "https://zenless.hoyoverse.com/en-us/",
+    "bytes": 13162,
+    "originalBytes": 1855675
+  },
+  {
+    "file": "neverness-to-everness-thumb.webp",
+    "imageUrl": "https://nte.perfectworld.com/public/images/share_en.jpg",
+    "sourcePage": "https://nevernesstoeverness.com/en/",
+    "bytes": 15800,
+    "originalBytes": 1018990
+  },
+  {
+    "file": "chaos-zero-nightmare-thumb.webp",
+    "imageUrl": "https://static-pubcomm.onstove.com/live/czn/brand/images/promotion/update/260819/en/ogtag_1200.jpg",
+    "sourcePage": "https://chaoszeronightmare.onstove.com/en",
+    "bytes": 10528,
+    "originalBytes": 620460
+  },
+  {
+    "file": "slay-the-spire-2-thumb.webp",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2868840/6a19172e7bc3045dd4625018ca82dce8a18ed0ab/capsule_616x353.jpg?t=1787169309",
+    "sourcePage": "https://store.steampowered.com/app/2868840/Slay_the_Spire_2/",
+    "bytes": 16260,
+    "originalBytes": 142524
+  },
+  {
+    "file": "wuthering-waves-thumb.webp",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/3513350/dd1bfd403173b32367807e955ef33da7682bfee1/capsule_616x353.jpg?t=1787182292",
+    "sourcePage": "https://store.steampowered.com/app/3513350/Wuthering_Waves/",
+    "bytes": 16382,
+    "originalBytes": 116729
+  },
+  {
+    "file": "etheria-restart-thumb.webp",
+    "imageUrl": "https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/2084970/d33ed432e3bee49225d5ad7a1fd2dce3a010c886/capsule_616x353.jpg?t=1788329146",
+    "sourcePage": "https://store.steampowered.com/app/2084970/Etheria_Restart/",
+    "bytes": 12316,
+    "originalBytes": 100531
+  }
+]
