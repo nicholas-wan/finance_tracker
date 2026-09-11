@@ -3799,24 +3799,48 @@
     var base = data.months.slice(Math.max(0, idx - 6), idx);
     var last12 = data.months.slice(Math.max(0, idx - 11), idx + 1);
 
-    KEY_METRICS.forEach(function (metric) {
+    var rows = KEY_METRICS.map(function (metric) {
       var value = metricTotal(state.month, metric);
       var typical = median(base.map(function (m) { return metricTotal(m, metric); }));
       var yearTotal = 0;
       last12.forEach(function (m) { yearTotal += metricTotal(m, metric); });
+      return { metric: metric, value: value, typical: typical, yearTotal: yearTotal };
+    });
+    // One scale for every bar, so Food at S$850 visibly outweighs Games at S$170.
+    var scale = rows.reduce(function (largest, row) {
+      return Math.max(largest, row.value, row.typical || 0);
+    }, 1) * 1.04;
 
-      var card = el("div", "kpi");
-      var head = el("p", "label");
-      head.appendChild(icon(metric.icon));
-      head.appendChild(document.createTextNode(metric.label));
-      card.appendChild(head);
-      card.appendChild(el("p", "value", fmt0(value)));
+    rows.forEach(function (row) {
+      var metric = row.metric, value = row.value, typical = row.typical;
+      var card = el("div", "key-row");
+      var name = el("span", "key-name");
+      name.appendChild(icon(metric.icon));
+      name.appendChild(el("span", "", metric.label));
+      card.appendChild(name);
 
+      var bar = el("span", "key-bar");
+      var fill = el("span", "key-bar-fill");
+      fill.style.width = (Math.min(value, scale) / scale * 100).toFixed(1) + "%";
+      bar.appendChild(fill);
+      if (typical > 0) {
+        var tick = el("span", "key-bar-tick");
+        tick.style.left = (Math.min(typical, scale) / scale * 100).toFixed(1) + "%";
+        tick.title = "Typical statement: " + fmt0(typical);
+        bar.appendChild(tick);
+      }
+      bar.setAttribute("role", "img");
+      bar.setAttribute("aria-label", fmt0(value) + " this statement" +
+        (typical > 0 ? ", typical " + fmt0(typical) : ""));
+      card.appendChild(bar);
+
+      card.appendChild(el("span", "key-value", fmt0(value)));
+
+      var tone = "", text;
       if (typical > 0) {
         var diff = value - typical;
         var pc = (diff / typical) * 100;
-        var tone = Math.abs(pc) < 5 ? "" : diff > 0 ? "up" : "down";
-        var text;
+        tone = Math.abs(pc) < 5 ? "" : diff > 0 ? "up" : "down";
         if (Math.abs(pc) < 5) {
           text = "in line with typical " + fmt0(typical);
         } else if (typical < 25) {
@@ -3826,13 +3850,14 @@
         } else {
           text = (pc > 0 ? "+" : "") + pc.toFixed(0) + "% vs typical " + fmt0(typical);
         }
-        card.appendChild(el("p", "delta " + tone, text));
       } else if (value > 0) {
-        card.appendChild(el("p", "delta", "no recent baseline"));
+        text = "no recent baseline";
       } else {
-        card.appendChild(el("p", "delta", "nothing this month"));
+        text = "nothing this month";
       }
-      card.appendChild(el("p", "delta sub", fmt0(yearTotal) + " over " + last12.length + " months"));
+      card.appendChild(el("span", "key-delta " + tone, text));
+      card.appendChild(el("span", "key-year", fmt0(row.yearTotal) + " \u00b7 " + last12.length + " months"));
+
       makeActionable(card, "View " + metric.label + " transactions for " +
         statementLabel(state.month), function () {
         openTransactions({

@@ -85,7 +85,10 @@ investing against the year's monthly average, since both arrive in lumps),
 a sparkline of the year's statement months with the current one in accent
 and the monthly average as a dashed line, and the year-to-date total with
 its change on the same months last year. A scope line above the tiles names
-the statement and the year-to-date span. When nothing needs attention the statement freshness and card-fee
+the statement and the year-to-date span. **Key spending** is one full-width
+row per category with a bullet bar on a shared scale (this statement as the
+bar, the typical statement as a tick), the amount, its change and the
+12-month total; **What changed** is a row of cards beneath it. When nothing needs attention the statement freshness and card-fee
 status collapse into one line above the KPIs (through-month, next statement,
 last refresh, resolved fee); the full cards return only for a missing or
 overdue statement, a stale build, or an unresolved fee. The visible tab renders first; the

@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260912-kpis-9">
+<link rel="stylesheet" href="css/styles.css?v=20260912-keyspend-11">
 <script src="js/data-cache.js?v=3"></script>
 <script>
   // The data files are the long pole of a page load; fetch them now, in
@@ -151,23 +151,22 @@
       </div>
     </section>
 
-    <div class="overview-priority">
-      <section class="panel">
-        <div class="panel-head">
-          <h2><svg class="icon"><use href="#i-bulb"/></svg>What changed</h2>
-          <span class="hint">select to explore</span>
-        </div>
-        <div id="overview-insights" class="insight-list"></div>
-      </section>
+    <section class="panel key-spending-panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-target"/></svg>Key spending</h2>
+        <span class="hint" id="key-hint"></span>
+      </div>
+      <div class="key-spending-list" id="key-metrics"></div>
+      <p class="hint key-spending-legend"><span class="key-legend-bar" aria-hidden="true"></span>this statement <span class="key-legend-tick" aria-hidden="true"></span>typical statement (median of the previous six)</p>
+    </section>
 
-      <section class="panel">
-        <div class="panel-head">
-          <h2><svg class="icon"><use href="#i-target"/></svg>Key spending</h2>
-          <span class="hint" id="key-hint"></span>
-        </div>
-        <div class="kpis" id="key-metrics"></div>
-      </section>
-    </div>
+    <section class="panel">
+      <div class="panel-head">
+        <h2><svg class="icon"><use href="#i-bulb"/></svg>What changed</h2>
+        <span class="hint">select to explore</span>
+      </div>
+      <div id="overview-insights" class="insight-list insight-grid"></div>
+    </section>
 
     <section class="panel recurring-panel" aria-labelledby="recurring-title">
       <div class="panel-head">
@@ -651,7 +650,7 @@
 <script defer src="js/insights.js?v=20260905-4"></script>
 <script defer src="js/transaction-grouping.js?v=20260904-1"></script>
 <script defer src="js/games.js?v=4"></script>
-<script defer src="js/app.js?v=20260912-kpis-8"></script>
+<script defer src="js/app.js?v=20260912-keyspend-9"></script>
 <script defer src="js/home.js?v=30"></script>
 <script defer src="js/networth.js?v=9"></script>
 </body>

@@ -401,6 +401,9 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 
 .two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
 .two-col.income-history-single { grid-template-columns: 1fr; }
+/* Overview: Categories and Outflows differ in length; stretching the shorter
+   panel to match only framed empty space. */
+#pane-overview .two-col { align-items: start; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
 .overview-priority {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);
@@ -432,9 +435,40 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
   max-width: 92ch; margin: 5px 0 0; color: var(--text-2);
   font-size: var(--fs-body); line-height: 1.55;
 }
-#key-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
-#key-metrics .kpi { padding: 12px 12px; }
-#key-metrics .kpi .value { font-size: var(--fs-stat-sm); }
+/* Key spending: one row per category with a bullet bar (this statement as
+   the bar, the typical statement as a tick) on a scale shared by every row,
+   so both the size of each category and its swing read at a glance. */
+.key-spending-list { display: grid; gap: 4px; }
+.key-row {
+  display: grid; grid-template-columns: minmax(130px, 170px) minmax(120px, 1fr) 84px minmax(170px, 210px) 130px;
+  align-items: center; gap: 12px; padding: 8px 10px; border-radius: var(--radius);
+  background: var(--surface-2); font-size: var(--fs-small);
+}
+.key-row.actionable { padding-right: 30px; }
+.key-name { display: flex; align-items: center; gap: 8px; color: var(--text); font-weight: 600; min-width: 0; }
+.key-name .icon { width: 15px; height: 15px; color: var(--text-3); flex-shrink: 0; }
+.key-name span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.key-bar { position: relative; height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--border) 76%, transparent); overflow: visible; }
+.key-bar-fill { position: absolute; left: 0; top: 0; height: 100%; border-radius: 999px; background: var(--accent); }
+.key-bar-tick { position: absolute; top: -3px; width: 2px; height: 14px; margin-left: -1px; border-radius: 1px; background: var(--text-2); }
+.key-value { text-align: right; font-weight: 650; font-size: var(--fs-md); font-variant-numeric: tabular-nums; letter-spacing: -0.01em; }
+.key-delta { color: var(--text-3); font-variant-numeric: tabular-nums; }
+.key-delta.up { color: var(--red); }
+.key-delta.down { color: var(--green); }
+.key-year { color: var(--text-3); text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.key-spending-legend { display: flex; align-items: center; gap: 6px; margin: 10px 0 0; }
+.key-legend-bar { display: inline-block; width: 18px; height: 6px; border-radius: 999px; background: var(--accent); }
+.key-legend-tick { display: inline-block; width: 2px; height: 12px; border-radius: 1px; background: var(--text-2); margin-left: 8px; }
+/* Insights read as a row of cards when they have the full width. */
+.insight-list.insight-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 8px; }
+@media (max-width: 760px) {
+  .key-row { grid-template-columns: minmax(0, 1fr) 84px; grid-template-areas: "name value" "bar bar" "delta year"; row-gap: 6px; }
+  .key-name { grid-area: name; }
+  .key-value { grid-area: value; }
+  .key-bar { grid-area: bar; }
+  .key-delta { grid-area: delta; }
+  .key-year { grid-area: year; }
+}
 
 .actionable {
   cursor: pointer;
