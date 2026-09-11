@@ -82,7 +82,11 @@ away, a small monogram on the pinned tab row keeps the Overview one click
 away. The visible tab renders first; the
 other tabs are then built one per idle slot (Home and Net worth fetch their
 data at the same time), so the first click on any tab lands on a finished
-pane. A tab clicked before its turn renders at once.
+pane. A tab clicked before its turn renders at once. The server listens on both
+127.0.0.1 and ::1 (Windows resolves `localhost` to ::1 first, and an
+IPv4-only listener cost every connection a refused attempt) and speaks
+HTTP/1.1 so the browser reuses connections; the page fetches its data files
+from the head, in parallel with the deferred scripts.
 
 - **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
   summary, categories, outflows and the month's ledger. 6M/12M figures on the

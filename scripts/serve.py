@@ -1519,6 +1519,12 @@ class StaticMixin:
 
 
 class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
+    # HTTP/1.1 keeps the browser's connections open between requests. The
+    # stock handler speaks HTTP/1.0 and closes after every response, so a
+    # page load paid a fresh TCP connection for each of its ~30 requests.
+    # Every response path here sends a Content-Length, which keep-alive needs.
+    protocol_version = "HTTP/1.1"
+
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(APP_DIR), **kwargs)
 
@@ -1528,7 +1534,10 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
         self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
-        self.wfile.write(body)
+        # A HEAD response carries headers only; writing a body would desync
+        # a kept-alive connection.
+        if self.command != "HEAD":
+            self.wfile.write(body)
 
     def bound_port(self, port=None):
         # The guards compare against the port we actually bound. Unit tests
@@ -2224,6 +2233,11 @@ def main():
     server.auto_stop = args.auto_stop
     lifecycle = DashboardLifecycle(server) if args.auto_stop else None
     server.dashboard_lifecycle = lifecycle
+    # "localhost" resolves to ::1 before 127.0.0.1 on Windows. With only an
+    # IPv4 listener every browser connection was refused on ::1 and retried
+    # on IPv4, about 200 ms per request. A second listener on ::1 answers on
+    # the first try; it shares the lifecycle so heartbeats count once.
+    companion = start_ipv6_listener(args.port, server.auto_stop, lifecycle)
     print("Editable finance dashboard: http://localhost:%d" % args.port)
     print("Owner, remark, and transaction-review changes are rebuilt and validated.")
     if lifecycle:
@@ -2236,7 +2250,27 @@ def main():
     finally:
         if lifecycle:
             lifecycle.stop()
+        if companion is not None:
+            companion.shutdown()
+            companion.server_close()
         server.server_close()
+
+
+class IPv6ThreadingHTTPServer(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+def start_ipv6_listener(port, auto_stop, lifecycle):
+    """Serve the same handler on ::1, or None when IPv6 loopback is unavailable."""
+    try:
+        companion = IPv6ThreadingHTTPServer(("::1", port), FinanceHandler)
+    except OSError as error:
+        print("IPv6 localhost listener unavailable (%s); serving on 127.0.0.1 only." % error)
+        return None
+    companion.auto_stop = auto_stop
+    companion.dashboard_lifecycle = lifecycle
+    threading.Thread(target=companion.serve_forever, name="ipv6-listener", daemon=True).start()
+    return companion
 
 
 if __name__ == "__main__":

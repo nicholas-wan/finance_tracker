@@ -341,6 +341,33 @@ def make_headers(**fields):
     return headers
 
 
+class KeepAliveTests(unittest.TestCase):
+    def test_handler_speaks_http_1_1_so_connections_are_reused(self):
+        self.assertEqual(serve.FinanceHandler.protocol_version, "HTTP/1.1")
+
+    def test_ipv6_listener_shares_lifecycle_and_survives_no_ipv6(self):
+        companion = serve.start_ipv6_listener(0, False, None)
+        if companion is None:
+            self.skipTest("IPv6 loopback unavailable on this machine")
+        try:
+            self.assertEqual(companion.address_family, socket.AF_INET6)
+            self.assertIsNone(companion.dashboard_lifecycle)
+            port = companion.server_address[1]
+            connection = http.client.HTTPConnection("::1", port, timeout=5)
+            connection.request("GET", "/api/status", headers={"Host": "[::1]:%d" % port})
+            response = connection.getresponse()
+            self.assertEqual(response.status, 200)
+            self.assertTrue(response.getheader("Content-Length"))
+            response.read()
+            # Same connection, second request: keep-alive is real, not advertised.
+            connection.request("GET", "/api/status", headers={"Host": "[::1]:%d" % port})
+            self.assertEqual(connection.getresponse().status, 200)
+            connection.close()
+        finally:
+            companion.shutdown()
+            companion.server_close()
+
+
 class LocalRequestGuardTests(unittest.TestCase):
     """The guard decides, per request, whether a caller is the local dashboard."""
 
