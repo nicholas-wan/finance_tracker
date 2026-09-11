@@ -283,12 +283,20 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 /* Overview tiles: scope line above, year sparkline and year-to-date below. */
 .kpis-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap; margin: 14px 0 8px; font-size: var(--fs-small); color: var(--text-2); }
 .kpis-head strong { color: var(--text); font-weight: 600; }
-.kpi-spark { display: block; width: 100%; height: 28px; margin-top: 10px; overflow: visible; }
+/* Fixed stack so the sparklines line up across the row whatever the notes
+   say: label, value, sparkline, notes, then the year footer at the bottom. */
+#kpis .kpi { display: flex; flex-direction: column; }
+#kpis .kpi > .label { order: 1; }
+#kpis .kpi > .value { order: 2; }
+#kpis .kpi > .kpi-spark { order: 3; }
+#kpis .kpi > .delta { order: 4; }
+#kpis .kpi > .kpi-year { order: 5; margin-top: auto; }
+.kpi-spark { display: block; width: 100%; height: 28px; margin: 8px 0 8px; overflow: visible; flex-shrink: 0; }
 .kpi-spark rect { fill: var(--text-3); opacity: 0.4; }
 .kpi-spark rect.current { fill: var(--accent); opacity: 1; }
 .kpi-spark rect.negative { fill: var(--red); }
 .kpi-spark .kpi-spark-avg { stroke: var(--text-2); stroke-width: 1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
-.kpi-year { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-caption); color: var(--text-3); }
+.kpi-year { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin: 10px 0 0; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-caption); color: var(--text-3); }
 .kpi-year strong { color: var(--text); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 
 .panel {
