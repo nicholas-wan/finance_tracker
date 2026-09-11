@@ -1385,6 +1385,51 @@ table.mini tr.settlement-opening-row td { background: var(--surface-2); color: v
   color: var(--text); font-size: var(--fs-body); font-weight: 670;
   font-variant-numeric: tabular-nums;
 }
+/* Coverage gap: one card per benefit, a bar of in-force cover against the
+   recommended amount, then the findings that explain what to do about it. */
+.insurance-gap-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px;
+}
+.insurance-gap-row {
+  min-width: 0; padding: 13px 15px; border: 1px solid var(--border); border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-2) 35%, var(--surface));
+}
+.insurance-gap-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.insurance-gap-head strong { color: var(--text); font-size: var(--fs-body); font-weight: 670; }
+.insurance-gap-status {
+  flex: 0 0 auto; padding: 2px 9px; border-radius: 999px; background: var(--surface-2);
+  color: var(--text-3); font-size: var(--fs-small); font-weight: 650; white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.insurance-gap-row.short .insurance-gap-status { background: var(--red-soft); color: var(--red); }
+.insurance-gap-row.met .insurance-gap-status { background: var(--green-soft); color: var(--green); }
+.insurance-gap-bar {
+  display: flex; height: 8px; margin: 10px 0 8px; border-radius: 999px;
+  background: var(--surface-2); overflow: hidden;
+}
+.insurance-gap-fill { display: block; height: 100%; background: var(--accent); }
+.insurance-gap-fill.linked { background: color-mix(in srgb, var(--accent) 45%, var(--surface)); }
+.insurance-gap-row.met .insurance-gap-fill { background: var(--green); }
+.insurance-gap-row.met .insurance-gap-fill.linked { background: color-mix(in srgb, var(--green) 45%, var(--surface)); }
+.insurance-gap-figures {
+  margin: 0; color: var(--text-2); font-size: var(--fs-small); line-height: 1.45;
+  font-variant-numeric: tabular-nums;
+}
+.insurance-gap-note { margin: 6px 0 0; color: var(--text-3); font-size: var(--fs-small); line-height: 1.45; }
+.insurance-gap-findings { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 8px; }
+.insurance-gap-finding {
+  display: flex; gap: 10px; align-items: flex-start; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: 10px;
+}
+.insurance-gap-finding.warn { border-color: color-mix(in srgb, var(--red) 38%, var(--border)); }
+.insurance-gap-dot {
+  width: 8px; height: 8px; flex: 0 0 8px; margin-top: 6px; border-radius: 50%; background: var(--text-3);
+}
+.insurance-gap-finding.warn .insurance-gap-dot { background: var(--red); }
+.insurance-gap-finding.ok .insurance-gap-dot { background: var(--green); }
+.insurance-gap-finding strong { display: block; color: var(--text); font-size: var(--fs-small); font-weight: 670; }
+.insurance-gap-finding p { margin: 2px 0 0; color: var(--text-2); font-size: var(--fs-small); line-height: 1.45; }
+.insurance-gap-assumptions { margin: 12px 0 0; }
 .insurance-table-wrap { overflow-x: auto; overscroll-behavior-x: contain; scrollbar-width: thin; }
 .insurance-table { min-width: 870px; }
 .insurance-table thead { background: color-mix(in srgb, var(--surface-2) 62%, var(--surface)); }

@@ -4717,6 +4717,71 @@
       wrap.appendChild(card);
     });
   }
+  // Recommended cover against what is in force, per benefit. The needs and
+  // their basis come from manual/insurance.json; only the comparison is drawn
+  // here. Linked cover someone else pays for is shown as a lighter segment.
+  function renderInsuranceGap() {
+    var panel = document.getElementById("insurance-gap-panel");
+    if (!panel) return;
+    var selected = selectedInsurancePeople();
+    var person = selected.length === 1 ? selected[0] : null;
+    var needs = person && person.needs;
+    var show = Boolean(needs && needs.items && needs.items.length);
+    panel.classList.toggle("hidden", !show);
+    if (!show) return;
+    document.getElementById("insurance-gap-meta").textContent =
+      (needs.basis || "Recommended cover against what is in force") +
+      (needs.asOf ? " · assessed " + dateLabel(needs.asOf) : "");
+    var wrap = document.getElementById("insurance-gap");
+    clear(wrap);
+    needs.items.forEach(function (item) {
+      var state = !item.need ? "none" : item.gap ? "short" : "met";
+      var row = el("article", "insurance-gap-row " + state);
+      var head = el("div", "insurance-gap-head");
+      head.appendChild(el("strong", "", INSURANCE_BENEFIT_LABELS[item.benefit] || item.benefit));
+      head.appendChild(el("span", "insurance-gap-status",
+        state === "none" ? "No rule of thumb" : state === "short" ? "Short " + fmt0(item.gap) : "Covered"));
+      row.appendChild(head);
+      if (item.need) {
+        var bar = el("div", "insurance-gap-bar");
+        var own = Math.min(100, item.coverOwn / item.need * 100);
+        var linked = Math.min(100 - own, (item.cover - item.coverOwn) / item.need * 100);
+        var ownFill = el("span", "insurance-gap-fill");
+        ownFill.style.width = own.toFixed(1) + "%";
+        bar.appendChild(ownFill);
+        if (linked > 0) {
+          var linkedFill = el("span", "insurance-gap-fill linked");
+          linkedFill.style.width = linked.toFixed(1) + "%";
+          bar.appendChild(linkedFill);
+        }
+        row.appendChild(bar);
+      }
+      var linkedAmount = roundMoney(item.cover - item.coverOwn);
+      var figures = item.need
+        ? fmt0(item.cover) + " in force of " + fmt0(item.need) + " recommended"
+        : item.cover ? fmt0(item.cover) + " in force" : "Nothing in force";
+      if (linkedAmount > 0) figures += " · " + fmt0(linkedAmount) + " of it linked cover";
+      if (item.basis) figures += " · " + item.basis;
+      row.appendChild(el("p", "insurance-gap-figures", figures));
+      if (item.note) row.appendChild(el("p", "insurance-gap-note", item.note));
+      wrap.appendChild(row);
+    });
+    var findings = document.getElementById("insurance-gap-findings");
+    clear(findings);
+    needs.findings.forEach(function (finding) {
+      var item = el("li", "insurance-gap-finding " + finding.tone);
+      item.appendChild(el("span", "insurance-gap-dot"));
+      var body = el("div", "");
+      if (finding.title) body.appendChild(el("strong", "", finding.title));
+      body.appendChild(el("p", "", finding.text));
+      item.appendChild(body);
+      findings.appendChild(item);
+    });
+    findings.classList.toggle("hidden", !needs.findings.length);
+    var assumptions = document.getElementById("insurance-gap-assumptions");
+    assumptions.textContent = needs.assumptions.length ? "Assumptions: " + needs.assumptions.join(" ") : "";
+    assumptions.classList.toggle("hidden", !needs.assumptions.length);
+  }
   function renderPastInsurancePolicies(entries) {
     var list = document.getElementById("insurance-past-list");
     clear(list);
@@ -5350,6 +5415,7 @@
     kpis.appendChild(policyCard);
 
     renderInsuranceCoverage();
+    renderInsuranceGap();
     renderInsurancePolicies();
     renderInsuranceCharges();
   }

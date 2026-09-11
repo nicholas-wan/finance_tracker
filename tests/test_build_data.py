@@ -484,6 +484,47 @@ class InsuranceTests(unittest.TestCase):
         self.assertTrue(person["policies"][3]["coverageOnly"])
         self.assertTrue(person["policies"][3]["hiddenInRegister"])
         self.assertEqual(person["policies"][3]["premiumPaidBy"], "Partner")
+        self.assertIsNone(person["needs"])
+
+    def test_coverage_needs_compare_recommended_cover_with_what_is_in_force(self):
+        insurance = build_data.prepare_insurance({"people": [{
+            "id": "person", "name": "Person",
+            "needs": {
+                "asOf": "2026-09-12", "annualIncome": 100000, "basis": "Rule of thumb",
+                "assumptions": ["Income from the latest Notice of Assessment."],
+                "items": [
+                    {"benefit": "death", "need": 900000, "basis": "9 × income"},
+                    {"benefit": "disabilityIncome", "need": 75000},
+                    {"benefit": "personalAccident", "need": 0, "note": "No rule."},
+                ],
+                "findings": [{"tone": "warn", "title": "Short", "text": "Death cover is short."}],
+            },
+            "policies": [
+                {"id": "own", "company": "A", "plan": "Term",
+                 "benefits": {"death": 300000}, "premiums": {}},
+                {"id": "linked", "company": "B", "plan": "Group", "coverageOnly": True,
+                 "benefits": {"death": 200000}, "premiums": {}},
+                {"id": "old", "company": "C", "plan": "Old", "status": "Lapsed",
+                 "benefits": {"death": 999}, "premiums": {}},
+            ],
+        }]})
+        needs = insurance["people"][0]["needs"]
+        death = needs["items"][0]
+        self.assertEqual((death["cover"], death["coverOwn"], death["gap"]), (500000, 300000, 400000))
+        self.assertEqual(needs["items"][1]["gap"], 75000)
+        self.assertEqual((needs["items"][2]["gap"], needs["items"][2]["note"]), (0, "No rule."))
+        self.assertEqual(needs["findings"][0]["tone"], "warn")
+        self.assertEqual(needs["assumptions"], ["Income from the latest Notice of Assessment."])
+        with self.assertRaisesRegex(SystemExit, "invalid or duplicate benefit"):
+            build_data.prepare_insurance({"people": [{
+                "id": "p", "name": "P", "policies": [],
+                "needs": {"items": [{"benefit": "dental", "need": 1}]},
+            }]})
+        with self.assertRaisesRegex(SystemExit, "unsupported tone"):
+            build_data.prepare_insurance({"people": [{
+                "id": "p", "name": "P", "policies": [],
+                "needs": {"findings": [{"tone": "loud", "text": "x"}]},
+            }]})
 
 
 if __name__ == "__main__":

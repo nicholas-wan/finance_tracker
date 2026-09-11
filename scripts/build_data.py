@@ -1646,6 +1646,9 @@ def prepare_insurance(insurance_data):
         if not isinstance(raw_policies, list):
             raise SystemExit("%s policies must be a list" % label)
         coverage = {benefit: 0 for benefit in INSURANCE_BENEFITS}
+        # Cover from the person's own policies, without linked cover someone
+        # else pays for, so the gap view can say how much is really theirs.
+        coverage_own = {benefit: 0 for benefit in INSURANCE_BENEFITS}
         policies = []
         totals = {
             "policies": 0, "activePolicies": 0, "maturedPolicies": 0,
@@ -1812,6 +1815,9 @@ def prepare_insurance(insurance_data):
                 "remarks": str(raw.get("remarks") or "").strip(),
             }
             policies.append(policy)
+            if status == "In Force" and not coverage_only:
+                for benefit, amount in benefits.items():
+                    coverage_own[benefit] = round(coverage_own[benefit] + amount, 2)
             if not coverage_only:
                 totals["policies"] += 1
                 if status == "In Force":
@@ -1831,6 +1837,8 @@ def prepare_insurance(insurance_data):
         output_people.append({
             "id": person_id, "name": name, "owner": owner, "coverage": coverage,
             "totals": totals, "policies": policies,
+            "needs": prepare_coverage_needs(
+                raw_person.get("needs"), name, coverage, coverage_own, money, date_value),
         })
     combined["annualCashPremium"] = round(combined["annualCashPremium"], 2)
     combined["annualCpfPremium"] = round(combined["annualCpfPremium"], 2)
@@ -1842,6 +1850,68 @@ def prepare_insurance(insurance_data):
         "premiumPolicy": str(insurance_data.get("premiumPolicy") or "").strip(),
         "totals": combined,
         "people": output_people,
+    }
+
+
+def prepare_coverage_needs(raw_needs, name, coverage, coverage_own, money, date_value):
+    """Recommended cover per benefit, written by hand with its basis, against
+    what the policies above add up to. Nothing here is computed from a formula
+    in the browser: the manual file says what the need is and why."""
+    if raw_needs is None:
+        return None
+    label = "%s coverage needs" % name
+    if not isinstance(raw_needs, dict):
+        raise SystemExit("%s must be an object" % label)
+    raw_items = raw_needs.get("items", [])
+    if not isinstance(raw_items, list):
+        raise SystemExit("%s items must be a list" % label)
+    items = []
+    seen = set()
+    for index, item in enumerate(raw_items, 1):
+        item_label = "%s item %d" % (label, index)
+        if not isinstance(item, dict):
+            raise SystemExit("%s must be an object" % item_label)
+        benefit = str(item.get("benefit") or "").strip()
+        if benefit not in INSURANCE_BENEFITS or benefit in seen:
+            raise SystemExit("%s has an invalid or duplicate benefit" % item_label)
+        seen.add(benefit)
+        need = money(item.get("need"), item_label + " need")
+        cover = coverage[benefit]
+        items.append({
+            "benefit": benefit,
+            "need": need,
+            "cover": cover,
+            "coverOwn": coverage_own[benefit],
+            "gap": round(max(need - cover, 0), 2),
+            "basis": str(item.get("basis") or "").strip(),
+            "note": str(item.get("note") or "").strip(),
+        })
+    raw_findings = raw_needs.get("findings", [])
+    if not isinstance(raw_findings, list):
+        raise SystemExit("%s findings must be a list" % label)
+    findings = []
+    for index, finding in enumerate(raw_findings, 1):
+        finding_label = "%s finding %d" % (label, index)
+        if not isinstance(finding, dict) or not str(finding.get("text") or "").strip():
+            raise SystemExit("%s needs text" % finding_label)
+        tone = str(finding.get("tone") or "info").strip().lower()
+        if tone not in ("ok", "info", "warn"):
+            raise SystemExit("%s has an unsupported tone" % finding_label)
+        findings.append({
+            "tone": tone,
+            "title": str(finding.get("title") or "").strip(),
+            "text": str(finding.get("text") or "").strip(),
+        })
+    raw_assumptions = raw_needs.get("assumptions", [])
+    if not isinstance(raw_assumptions, list):
+        raise SystemExit("%s assumptions must be a list" % label)
+    return {
+        "asOf": date_value(raw_needs.get("asOf"), label + " date"),
+        "annualIncome": money(raw_needs.get("annualIncome"), label + " annual income"),
+        "basis": str(raw_needs.get("basis") or "").strip(),
+        "assumptions": [str(note).strip() for note in raw_assumptions if str(note).strip()],
+        "items": items,
+        "findings": findings,
     }
 
 

@@ -108,6 +108,10 @@ away.
   separate; a policy paid by GIRO reconciles against bank statements,
   everything else against card statements. Matured and lapsed policies sit in
   an archive. Portal-checked policies carry a static **Verified** badge.
+  A person's optional `needs` block (recommended cover per benefit, each with
+  its basis, plus findings and assumptions) draws **Where the cover falls
+  short**: in-force cover against the recommended amount, with cover someone
+  else pays for shown as a lighter segment.
 - **Home** — the household register in Git-ignored `manual/home.json`:
   appliances, fixtures, furniture and pet items with costs, key dates,
   warranty cover and documents; home and fire policies; the mortgage; and
@@ -234,7 +238,7 @@ the running process does not have.
 |---|---|
 | Merchant category and game seller rules | `CATEGORY_RULES`, `GAME_RULES` in `scripts/build_data.py` |
 | Salary history, game sales, settlements | `manual/salary.json`, `manual/game_sales.json`, `manual/settlements.json` |
-| Insurance policies | `manual/insurance.json` (see the file's `summary`, `verification`, `components`, `coverageOnly`, `premiumPaidBy`, `hiddenInRegister`, `reconcileWithImportedStatements` fields) |
+| Insurance policies | `manual/insurance.json` (see the file's `summary`, `verification`, `components`, `coverageOnly`, `premiumPaidBy`, `hiddenInRegister`, `reconcileWithImportedStatements` fields; a person's `needs` block holds recommended cover per benefit with its basis, findings and assumptions) |
 | Foodpanda, Shopee, Grab history | `manual/foodpanda_orders.json`, `manual/shopee_orders.json` (`statementOrderMaxHistoryIndex`, `statementAggregates`), `manual/grab_receipts.json` via `scripts/import_grab_receipts.py`, `manual/grab_web_history.json` |
 | Trip.com bookings, Klook orders, WeChat Pay on YouTrip, the other member's travel | `manual/trip_bookings.json` (`scripts/import_trip_bookings.py`), `manual/klook_orders.json`, `manual/wechat_payments.json` (`scripts/import_wechat_statement.py`), `manual/partner_travel.json` (`scripts/import_partner_travel.py`) |
 | Clone identity | `manual/branding.json` and `manual/branding/favicon.*` (see `examples/branding.example.json`) |
