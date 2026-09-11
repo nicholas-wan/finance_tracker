@@ -2645,8 +2645,26 @@
     var generatedDate = data.generatedAt ? localDate(data.generatedAt.replace(" ", "T")) : today;
     var buildAge = Math.max(0, dayDifference(today, generatedDate));
     var tone = missing.length || overdueDays > 5 || buildAge > 7 ? "warn" : "current";
+    var refreshed = "refreshed " + (buildAge === 0 ? "today" : buildAge + "d ago");
+    if (tone === "current") {
+      // Nothing to do: one quiet line. The full card only appears when a
+      // statement is missing, overdue, or the build has gone stale.
+      wrap.className = "freshness-strip current compact";
+      wrap.appendChild(icon("calendar"));
+      var items = el("div", "freshness-items");
+      items.appendChild(el("strong", "", "Statements through " + monthLabel(latest)));
+      if (freshness.expectedNextStatementMonth) {
+        items.appendChild(el("span", "", "next " + monthLabel(freshness.expectedNextStatementMonth) +
+          (freshness.expectedNextStatementDate ? " around " + dateLabel(freshness.expectedNextStatementDate) : "")));
+      }
+      items.appendChild(el("span", "", refreshed));
+      wrap.appendChild(items);
+      wrap.title = freshness.statementCount + " PDF statement" + (freshness.statementCount === 1 ? "" : "s") +
+        " · no gaps · transactions through " + dateLabel(freshness.sourceThrough);
+      return;
+    }
     wrap.className = "freshness-strip " + tone;
-    wrap.appendChild(icon(tone === "current" ? "calendar" : "receipt"));
+    wrap.appendChild(icon("receipt"));
 
     var copy = el("div", "freshness-copy");
     var title = "Statements current through " + monthLabel(latest);
@@ -2672,7 +2690,7 @@
     var meta = freshness.statementCount + " PDF statement" +
       (freshness.statementCount === 1 ? "" : "s") + " · " +
       (missing.length ? missing.map(monthLabel).join(", ") + " missing" : "no gaps") +
-      " · refreshed " + (buildAge === 0 ? "today" : buildAge + "d ago");
+      " · " + refreshed;
     wrap.appendChild(el("span", "freshness-meta", meta));
   }
 
@@ -2691,20 +2709,26 @@
       return t.type === "debit" && /CARD MEMBERSHIP FEE/i.test(t.description || "") &&
         chargeDate && chargeDate >= feeCutoff && chargeDate <= feeAnchor;
     });
-    panel.classList.toggle("hidden", !allFees.length);
-    if (!allFees.length) return;
     allFees.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
     var fees = allFees.filter(function (fee) { return !resolved[fee.id]; });
-    panel.querySelector(".hint").textContent = fees.length
-      ? fees.length + " active fee" + (fees.length === 1 ? "" : "s")
-      : "No active fee alerts";
+    // A resolved fee needs nothing from you: it becomes one item on the
+    // status line instead of a panel of its own.
+    var stripItems = document.querySelector("#statement-freshness .freshness-items");
+    var stale = document.getElementById("freshness-fee");
+    if (stale) stale.remove();
+    if (allFees.length && !fees.length && stripItems) {
+      var done = el("span", "freshness-fee", "card fee resolved, charged " + dateLabel(allFees[0].date));
+      done.id = "freshness-fee";
+      done.title = allFees.length + " card membership fee" + (allFees.length === 1 ? "" : "s") +
+        " in the last year, all resolved (" + statementLabel(allFees[0].month) + " statement)";
+      stripItems.appendChild(done);
+    }
+    panel.classList.toggle("hidden", !fees.length);
+    if (!fees.length) return;
+    panel.querySelector(".hint").textContent = fees.length + " active fee" + (fees.length === 1 ? "" : "s");
     wrap.appendChild(el("p", "card-fee-alert-summary", allFees.length +
       " card membership fee" + (allFees.length === 1 ? "" : "s") + " recorded · Last charged " +
       dateLabel(allFees[0].date) + " (" + statementLabel(allFees[0].month) + ")"));
-    if (!fees.length) {
-      wrap.appendChild(el("p", "card-fee-alert-clear", "All recorded card fees are resolved."));
-      return;
-    }
     fees.forEach(function (fee) {
       var item = el("div", "card-fee-alert");
       var copy = el("div", "card-fee-alert-copy");
