@@ -1528,6 +1528,16 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=str(APP_DIR), **kwargs)
 
+    def handle(self):
+        # With keep-alive the browser drops idle connections whenever it
+        # likes; the thread waiting for that connection's next request then
+        # sees a reset. That is the normal end of a connection, not an error
+        # worth a traceback in the log.
+        try:
+            super().handle()
+        except (ConnectionResetError, ConnectionAbortedError, BrokenPipeError):
+            self.close_connection = True
+
     def send_json(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
         self.send_response(status)
