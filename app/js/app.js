@@ -5959,8 +5959,8 @@
       var ratio = averages[6] / averages[12];
       if (ratio < 0.85 || ratio > 1.15) {
         comparison.appendChild(el("div", "transaction-average-hint",
-          "The last six months ran " + (ratio < 1 ? "lighter" : "heavier") +
-          " than the year, so this month can sit above one average and below the other."));
+          "Recent six months ran " + (ratio < 1 ? "lighter" : "heavier") +
+          " than the full year."));
       }
     }
     headline.appendChild(comparison);
@@ -6165,8 +6165,8 @@
         if (item.folded) {
           // The fold hid more than it showed some months; one click lists everything.
           row.type = "button";
-          name = "Other categories (" + item.folded + ")";
-          row.title = "Show all categories";
+          name = "Other (" + item.folded + ")";
+          row.title = "Show all " + item.folded + " remaining categories";
           row.addEventListener("click", function () { state.summaryExpanded = true; renderTransactionSummary(lastSummaryRows); });
         }
         row.appendChild(el("span", "transaction-breakdown-name", name));

@@ -185,10 +185,10 @@ away.
   the card ledger, the date printed once per day, owner chips and the remark
   box revealed on hover or focus (always visible on touch screens), a category
   dot under each description on phones, and a category breakdown that lists
-  six lines with **Other categories** opening the rest in place. Under the 6M
+  six lines with **Other (n)** opening the rest in place. Under the 6M
   and 12M averages a 12-month bar strip shows net cost per statement month,
-  with a note when the two averages disagree. The rules explainer sits below
-  the table. Additional
+  with a note when the two averages disagree. The summary sits above the filter bar so the filters stay next to the
+  table, and the rules explainer sits below it. Additional
   filters in an expandable panel grouped by ownership, category, merchant, review
   and inclusion settings. Bank mode shows relevant bank controls. Active filters
   remain visible as removable chips, with a count on the Filters button. Clear
