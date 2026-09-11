@@ -6110,45 +6110,7 @@
     });
     comparison.appendChild(grid);
     // "36% above the 6M average" beside "30% below the 12M average" reads as
-    // a contradiction until the months themselves are visible: one bar per
-    // statement month, the current one in accent, with the same filters.
-    var spanMonths = allPriorMonths.slice(-12).concat([currentMonth]);
-    var points = spanMonths.map(function (month) {
-      var monthRows = data.transactions.filter(function (transaction) {
-        return transaction.month === month && matchesLedgerFilters(transaction, true);
-      });
-      return { month: month, cost: window.FinanceGrouping.summarize(monthRows, EXCLUDED).netCost };
-    });
-    if (points.length > 2) {
-      var spark = el("div", "transaction-sparkline");
-      var svgNS = "http://www.w3.org/2000/svg";
-      var svg = document.createElementNS(svgNS, "svg");
-      var width = 240, height = 44, gap = 2, slot = width / points.length;
-      svg.setAttribute("viewBox", "0 0 " + width + " " + height);
-      svg.setAttribute("preserveAspectRatio", "none");
-      svg.setAttribute("role", "img");
-      svg.setAttribute("aria-label", "Net cost by statement month: " + points.map(function (point) {
-        return monthLabel(point.month) + " " + fmt0(point.cost);
-      }).join(", "));
-      var peak = points.reduce(function (largest, point) { return Math.max(largest, Math.abs(point.cost)); }, 0.01);
-      points.forEach(function (point, index) {
-        var bar = document.createElementNS(svgNS, "rect");
-        var barHeight = Math.max(1, Math.abs(point.cost) / peak * (height - 2));
-        bar.setAttribute("x", (index * slot + gap / 2).toFixed(1));
-        bar.setAttribute("y", (height - barHeight).toFixed(1));
-        bar.setAttribute("width", (slot - gap).toFixed(1));
-        bar.setAttribute("height", barHeight.toFixed(1));
-        bar.setAttribute("rx", "1.5");
-        if (point.month === currentMonth) bar.setAttribute("class", "current");
-        var tip = document.createElementNS(svgNS, "title");
-        tip.textContent = monthLabel(point.month) + ": " + fmt(point.cost);
-        bar.appendChild(tip);
-        svg.appendChild(bar);
-      });
-      spark.appendChild(svg);
-      spark.appendChild(el("small", "", monthLabel(points[0].month) + " to " + monthLabel(currentMonth) + " · net cost per statement month"));
-      comparison.appendChild(spark);
-    }
+    // a contradiction; one line says why when the two windows disagree.
     if (averages[6] !== undefined && averages[12] !== undefined && Math.abs(averages[12]) >= 0.01) {
       var ratio = averages[6] / averages[12];
       if (ratio < 0.85 || ratio > 1.15) {

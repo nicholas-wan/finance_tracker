@@ -174,8 +174,7 @@ away.
   collapsed. Account sales (`manual/game_sales.json`) are kept separate.
 - **Split** — the Yx settlement shared with the Overview: opening balances
   carry forward, `Yx share` is half of `Shared` plus rows assigned to `Yx`.
-- **Transactions** — the net-cost summary (with a 12-month strip under the
-  6M/12M averages), then the bar: source, period, search (matches amounts
+- **Transactions** — the net-cost summary, then the bar: source, period, search (matches amounts
   too), a pinned category select and a **Filters** panel of label-and-controls
   rows. Every filter value shows how many rows it would match, zero-match
   values are dimmed, the panel head shows the live count with **Clear all**,

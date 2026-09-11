@@ -2561,13 +2561,6 @@ button.filter-summary-chip:hover { border-color:var(--brand); }
 /* Category on phones, where the Category column is hidden. */
 .cat-inline { align-items: center; gap: 5px; color: var(--text-3); font-size: var(--fs-micro); }
 .cat-inline::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--dot, var(--accent)); flex-shrink: 0; }
-/* Net cost over the last 12 statement months, under the 6M/12M averages. */
-.transaction-sparkline { margin-top: 10px; }
-.transaction-sparkline svg { display: block; width: 100%; height: 32px; overflow: visible; }
-.transaction-sparkline rect { fill: var(--text-3); opacity: 0.45; }
-.transaction-sparkline rect.current { fill: var(--accent); opacity: 1; }
-.transaction-sparkline rect:hover { opacity: 0.85; }
-.transaction-sparkline small { display: block; margin-top: 4px; color: var(--text-3); font-size: var(--fs-caption); }
 .transaction-average-hint { margin-top: 6px; color: var(--text-3); font-size: var(--fs-caption); }
 /* "Other categories" opens the full list in place. */
 .transaction-breakdown-row.expandable { cursor: pointer; border: 0; background: none; padding: 0; width: 100%; font-family: inherit; font-size: var(--fs-caption); line-height: inherit; color: inherit; text-align: left; }
