@@ -135,7 +135,10 @@ away.
   come from data already present: the UOB ONE closing balance on every
   statement and the mortgage balance on the Home register. A value carries
   forward until the next snapshot, so each account shows its as-at date and
-  anything over three months old is marked. The history chart stacks groups
+  anything over three months old is marked. The headline figures (net worth,
+  personal accounts, property equity, assets less liabilities, 12-month
+  change) are one tile row with the counting rules in a collapsed note; the
+  money-moved reference sits above the balances table. The history chart stacks groups
   by month with liabilities below zero; the 12-month change counts only
   accounts recorded at both dates, and a second figure excludes property and
   the home loan. `/api/net-worth` saves one account, snapshot or deletion per

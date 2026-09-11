@@ -404,6 +404,12 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 /* Overview: Categories and Outflows differ in length; stretching the shorter
    panel to match only framed empty space. */
 #pane-overview .two-col { align-items: start; }
+/* Income: salary steps and the annual table stack on the left; the monthly
+   credits list takes the right column at its own height. */
+.income-grid { grid-template-columns: 1fr 1fr; align-items: start; }
+.income-column { display: grid; gap: 16px; min-width: 0; }
+.income-grid.income-history-single { grid-template-columns: 1fr; }
+.step-row { padding: 2px 0; }
 @media (max-width: 760px) { .two-col { grid-template-columns: 1fr; } }
 .overview-priority {
   display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.18fr);

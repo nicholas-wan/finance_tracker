@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260912-summary-12">
+<link rel="stylesheet" href="css/styles.css?v=20260912-wealth-13">
 <script src="js/data-cache.js?v=3"></script>
 <script>
   // The data files are the long pole of a page load; fetch them now, in
@@ -29,7 +29,7 @@
 </script>
 <link rel="stylesheet" href="css/games.css?v=7">
 <link rel="stylesheet" href="css/home.css?v=21">
-<link rel="stylesheet" href="css/networth.css?v=2">
+<link rel="stylesheet" href="css/networth.css?v=3">
 </head>
 <body>
 <svg class="sprite" aria-hidden="true" focusable="false"><defs>
@@ -260,20 +260,22 @@
     </div>
   <section class="subpane" data-subpane="income" id="pane-income" role="tabpanel" aria-labelledby="subtab-income">
     <div class="kpis" id="income-kpis"></div>
-    <section class="panel" id="salary-steps-panel">
-      <div class="panel-head">
-        <h2><svg class="icon"><use href="#i-up"/></svg>Salary steps</h2>
-        <span class="hint">effective month and monthly gross</span>
+    <div class="two-col income-grid" id="income-history-grid">
+      <div class="income-column">
+        <section class="panel" id="salary-steps-panel">
+          <div class="panel-head">
+            <h2><svg class="icon"><use href="#i-up"/></svg>Salary steps</h2>
+            <span class="hint">effective month and monthly gross</span>
+          </div>
+          <div id="salary-steps"></div>
+        </section>
+        <section class="panel" id="salary-years-panel">
+          <div class="panel-head"><h2><svg class="icon"><use href="#i-calendar"/></svg>Annual income</h2><span class="hint">from your Salary sheet</span></div>
+          <div id="salary-years"></div>
+        </section>
       </div>
-      <div id="salary-steps"></div>
-    </section>
-    <div class="two-col" id="income-history-grid">
-      <section class="panel" id="salary-years-panel">
-        <div class="panel-head"><h2><svg class="icon"><use href="#i-calendar"/></svg>Annual income</h2><span class="hint">from your Salary sheet</span></div>
-        <div id="salary-years"></div>
-      </section>
       <section class="panel">
-        <div class="panel-head"><h2><svg class="icon"><use href="#i-wallet"/></svg>Monthly credits</h2><span class="hint">bonus months stand out</span></div>
+        <div class="panel-head"><h2><svg class="icon"><use href="#i-wallet"/></svg>Monthly credits</h2><span class="hint">last 24 months · bonus months stand out</span></div>
         <div id="income-months"></div>
       </section>
     </div>
@@ -650,8 +652,8 @@
 <script defer src="js/insights.js?v=20260905-4"></script>
 <script defer src="js/transaction-grouping.js?v=20260904-1"></script>
 <script defer src="js/games.js?v=4"></script>
-<script defer src="js/app.js?v=20260912-summary-10"></script>
+<script defer src="js/app.js?v=20260912-wealth-11"></script>
 <script defer src="js/home.js?v=30"></script>
-<script defer src="js/networth.js?v=9"></script>
+<script defer src="js/networth.js?v=10"></script>
 </body>
 </html>

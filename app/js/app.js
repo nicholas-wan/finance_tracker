@@ -3577,7 +3577,7 @@
     // Monthly credits
     var monthsWrap = document.getElementById("income-months");
     clear(monthsWrap);
-    var series = account.months.slice(-18).map(function (m) {
+    var series = account.months.slice(-24).map(function (m) {
       return { month: m, income: incomeFor(m) };
     }).filter(function (r) { return r.income > 0; });
     var maxInc = 1;

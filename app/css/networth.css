@@ -24,10 +24,10 @@
 }
 :root[data-theme="dark"] .nw-dialog { --nw-shadow-modal: 0 24px 60px rgba(0, 0, 0, .55); }
 
-/* ---------- Heading band ---------- */
-.nw-heading { display: flex; align-items: flex-end; justify-content: space-between; gap: 32px; padding: 22px 24px; margin: 0 0 18px; border-radius: 16px; background: linear-gradient(115deg, var(--nw-tint) 0%, var(--nw-tint-2) 100%); border: 1px solid var(--nw-line); }
-.nw-heading h2 { font-family: Georgia, 'Times New Roman', serif; font-weight: 400; letter-spacing: -.03em; font-size: 34px; line-height: 1.1; margin: 0 0 6px; }
-.nw-heading p { color: var(--text-2); font-size: var(--fs-md); margin: 0; max-width: 60ch; }
+/* ---------- Heading ---------- */
+.nw-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 4px 2px 0; margin: 0 0 10px; }
+.nw-heading h2 { font-size: var(--fs-xl); font-weight: 600; margin: 0 0 2px; }
+.nw-heading p { margin: 0; }
 .nw-total { text-align: right; flex-shrink: 0; }
 .nw-total span, .nw-total small { display: block; color: var(--text-2); font-size: var(--fs-small); }
 .nw-total strong { display: block; font-size: 30px; font-weight: 500; letter-spacing: -.03em; font-variant-numeric: tabular-nums; margin: 4px 0; }
@@ -35,7 +35,10 @@
 .nw-icon { width: 1em; height: 1em; flex: 0 0 auto; vertical-align: -0.12em; }
 
 /* ---------- KPI row ---------- */
-.nw-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 18px; }
+.nw-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 10px; }
+.nw-about { margin: 0 0 16px; color: var(--text-2); font-size: var(--fs-small); }
+.nw-about summary { cursor: pointer; width: fit-content; }
+.nw-about p { margin: 8px 0 0; max-width: 92ch; line-height: 1.5; }
 .nw-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-soft); }
 .nw-kpi .label { font-size: var(--fs-small); color: var(--text-3); margin: 0 0 3px; display: flex; align-items: center; gap: 6px; }
 .nw-kpi .value { font-size: var(--fs-stat); font-weight: 650; margin: 0; font-variant-numeric: tabular-nums; letter-spacing: -0.02em; }

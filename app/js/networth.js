@@ -43,7 +43,7 @@
     }, 0);
   }
   function replaceHomeSeries(series, home) { return series.filter(function (s) { return s.sourceType !== 'home'; }).concat(deriveMortgage(home)); }
-  var ICONS = { close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>', down: '<path d="m6 10 6 6 6-6"/>', up: '<path d="m6 14 6-6 6 6"/>', trend: '<path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/>', scale: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0L7 7Zm10 0-3 7a3 3 0 0 0 6 0l-3-7Z"/>' };
+  var ICONS = { home: '<path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>', close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>', down: '<path d="m6 10 6 6 6-6"/>', up: '<path d="m6 14 6-6 6 6"/>', trend: '<path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/>', scale: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0L7 7Zm10 0-3 7a3 3 0 0 0 6 0l-3-7Z"/>' };
   function icon(name) { return '<svg class="nw-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>'; }
   async function json(url) { if (window.FinanceData && url.indexOf('api/') !== 0) return window.FinanceData.load(url); var r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error('Could not load ' + url); return r.json(); }
 
@@ -103,20 +103,25 @@
     var change = back && history.length > 1 ? changeBetween(all, back, now) : null;
     var span = back ? monthsBetween(back.month, now.month) : 0;
     var homeOnly = homeEquity(all, now.values || {}), showExcl = all.some(function (s) { return s.account.group === 'property' || s.sourceType === 'home'; });
+    var latestNote = newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' \u00b7 oldest ' + date(oldest) : '') : 'No balances recorded yet';
+    var assetNote = Object.keys(now.byGroup).filter(function (g) { return g !== 'liabilities' && now.byGroup[g]; }).map(function (g) { return GROUP_NAME[g] + ' ' + money0(now.byGroup[g]); }).join(' \u00b7 ') || 'nothing recorded';
+    var changeTile = kpi(span ? 'Change over ' + span + ' month' + (span === 1 ? '' : 's') : 'Change', change == null ? '\u2014' : signed(change.delta), back && span ? 'since ' + monthLabel(back.month) + (change && change.excluded.length ? ' \u00b7 excludes ' + change.excluded.join(', ') + ' (not recorded at both dates)' : '') : 'needs two dated balances', change == null ? null : change.delta >= 0 ? 'good' : 'bad', 'trend');
+    // One row of tiles carries every headline figure; the explanations sit
+    // in a collapsed note beneath instead of a sentence on every block.
     root.innerHTML =
-      '<header class="nw-heading"><div><h2>Net worth</h2><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Values carry forward until you record a newer one, so the as-at dates matter.</p></div>' +
-      '<div class="nw-total"><span>' + (showExcl ? 'Including whole property' : 'Net worth') + '</span><strong>' + money0(history.length ? now.net : null) + '</strong><small>' + (newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' · oldest ' + date(oldest) : '') : 'No balances recorded yet') + '</small>' +
-      (staleAccounts(all).length ? '<small class="nw-stale">Over 90 days old: ' + esc(staleAccounts(all).join(', ')) + '</small>' : '') + '</div></header>' +
-      (showExcl ? '<section class="nw-scope" aria-label="Personal and property scope"><div><span>Personal accounts</span><strong>' + money0(now.net - homeOnly) + '</strong><small>Excludes property and the home loan. Other debts remain included.</small></div><div><span>Whole-property equity</span><strong>' + money0(homeOnly) + '</strong><small>Recorded property value less the full home loan. No personal ownership share applied.</small></div><p>The total combines personal accounts with whole-property equity. Acquisition cost is historical, not a current market valuation.</p></section>' : '') +
+      '<header class="nw-heading"><div><h2>Net worth</h2><p class="nw-muted">' + latestNote + (staleAccounts(all).length ? ' \u00b7 <span class="nw-stale">over 90 days old: ' + esc(staleAccounts(all).join(', ')) + '</span>' : '') + '</p></div></header>' +
       '<div class="nw-kpis">' +
-        kpi('Assets', money0(now.assets), Object.keys(now.byGroup).filter(function (g) { return g !== 'liabilities' && now.byGroup[g]; }).map(function (g) { return GROUP_NAME[g] + ' ' + money0(now.byGroup[g]); }).join(' · ') || 'nothing recorded', null, 'up') +
-        kpi('Liabilities', money0(now.liabilities), now.liabilities ? 'subtracted from assets' : 'none recorded', null, 'down') +
-        kpi(span ? 'Change over ' + span + ' month' + (span === 1 ? '' : 's') : 'Change', change == null ? '—' : signed(change.delta), back && span ? 'since ' + monthLabel(back.month) + (change && change.excluded.length ? ' · excludes ' + change.excluded.join(', ') + ' (not recorded at both dates)' : '') : 'needs two dated balances', change == null ? null : change.delta >= 0 ? 'good' : 'bad', 'trend') +
-        kpi('CPF', money0(now.byGroup.cpf == null ? null : now.byGroup.cpf), cpfNote(all), null, 'scale') +
+        kpi(showExcl ? 'Net worth incl. property' : 'Net worth', money0(history.length ? now.net : null), showExcl ? 'personal accounts plus whole-property equity' : 'assets minus liabilities', null, 'scale') +
+        (showExcl ? kpi('Personal accounts', money0(now.net - homeOnly), 'excludes property and the home loan', null, 'up') +
+                    kpi('Property equity', money0(homeOnly), 'recorded value less the full home loan', null, 'home') : '') +
+        kpi('Assets', money0(now.assets), (now.liabilities ? 'less ' + money0(now.liabilities) + ' liabilities \u00b7 ' : '') + assetNote, null, 'up') +
+        changeTile +
+        (showExcl ? '' : kpi('CPF', money0(now.byGroup.cpf == null ? null : now.byGroup.cpf), cpfNote(all), null, 'scale')) +
       '</div>' +
-      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>History</h3><p class="nw-muted">Month-end view. Each account holds its last recorded balance until the next one.</p></div></div><div class="nw-chart" id="nw-chart"></div></section>' +
-      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, all.filter(function (s) { return s.account.group === g[0]; }), now.byGroup[g[0]]); }).join('') + '</div></section>' +
-      flowsHTML();
+      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (showExcl ? ' Personal accounts exclude property and the home loan but keep other debts; property equity is the recorded value less the full loan, with no ownership share applied, and the recorded value is acquisition cost, not a market valuation.' : '') + ' The 12-month change compares only accounts recorded at both dates.</p></details>' +
+      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>History</h3><p class="nw-muted">Month-end view</p></div></div><div class="nw-chart" id="nw-chart"></div></section>' +
+      flowsHTML() +
+      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, all.filter(function (s) { return s.account.group === g[0]; }), now.byGroup[g[0]]); }).join('') + '</div></section>';
     drawChart(document.getElementById('nw-chart'), history);
     bind(all);
   }
@@ -155,7 +160,7 @@
   }
   function flowsHTML() {
     if (!flows.length) return '';
-    return '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Money moved from the bank account</h3><p class="nw-muted">From the statements: what has left UOB ONE for investments and retirement, net of what came back. A reference when you record a broker balance, not a valuation.</p></div></div><div class="nw-flows">' +
+    return '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Money moved from the bank account</h3><p class="nw-muted">Net of what came back, from the statements \u00b7 a reference when recording a broker balance, not a valuation</p></div></div><div class="nw-flows">' +
       flows.map(function (f) { return '<div class="nw-flow"><span>' + esc(f.name) + '</span><strong>' + money0(f.net) + '</strong><span>' + esc(f.detail) + '</span></div>'; }).join('') + '</div></section>';
   }
 
