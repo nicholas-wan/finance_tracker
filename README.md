@@ -180,8 +180,14 @@ away.
   `manual/game_sales.json` remain separate from statements.
 - **Split** — the Yx settlement shared with the Overview: opening balances
   carry forward, `Yx share` is half of `Shared` plus rows assigned to `Yx`.
-- **Transactions**: compact source, period and search controls (search also
-  matches amounts), sortable Date, Description, Category and Amount headers on
+- **Transactions**: compact source, period, search and category controls
+  (search also matches amounts; the category select is pinned in the bar and
+  the remaining filters open in a panel of label-and-controls rows). Every
+  filter value carries the number of rows it would match with the other
+  filters kept, zero-match values are dimmed or disabled, the panel head
+  reports the live match count with **Clear all**, and each applied-filter
+  chip opens its control to adjust or removes the filter with its cross.
+  Sortable Date, Description, Category and Amount headers on
   the card ledger, the date printed once per day, owner chips and the remark
   box revealed on hover or focus (always visible on touch screens), a category
   dot under each description on phones, and a category breakdown that lists

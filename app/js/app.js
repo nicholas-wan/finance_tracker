@@ -1882,10 +1882,72 @@
 
   function syncOwnerPills() {
     Array.prototype.forEach.call(document.getElementById("owner-pills").children, function (button) {
-      var active = button.textContent === state.owner;
+      var active = button.dataset.owner === state.owner;
       button.classList.toggle("active", active);
       setPressed(button, active);
     });
+  }
+
+  // Result counts beside every filter value (Baymard's "Blue (34)" pattern):
+  // each count is the ledger with that one value swapped in and every other
+  // filter kept, so it predicts the click. Zero-result values stay visible but
+  // dimmed, and the panel head reports the live match count.
+  function countLedgerWith(patch) {
+    var saved = {};
+    Object.keys(patch).forEach(function (key) { saved[key] = state[key]; state[key] = patch[key]; });
+    var count = data.transactions.filter(function (t) { return matchesLedgerFilters(t, false); }).length;
+    Object.keys(saved).forEach(function (key) { state[key] = saved[key]; });
+    return count;
+  }
+  function countAccountWith(patch) {
+    var saved = {};
+    Object.keys(patch).forEach(function (key) { saved[key] = state[key]; state[key] = patch[key]; });
+    var count = account.transactions.filter(function (t) { return matchesAccountLedgerFilters(t, false); }).length;
+    Object.keys(saved).forEach(function (key) { state[key] = saved[key]; });
+    return count;
+  }
+  function pillCount(button, count, show) {
+    var badge = button.querySelector(".pill-count");
+    if (!show) { if (badge) badge.remove(); button.classList.remove("is-empty"); return; }
+    if (!badge) { badge = el("span", "pill-count"); button.appendChild(badge); }
+    badge.textContent = count;
+    button.classList.toggle("is-empty", count === 0 && !button.classList.contains("active"));
+  }
+  function renderFilterCounts(matched) {
+    var bank = state.transactionSource === "bank";
+    var matchNode = document.getElementById("transaction-filter-match");
+    if (matchNode) matchNode.textContent = matched + " transaction" + (matched === 1 ? "" : "s") + " match";
+    var MERCHANT_KEYS = ["foodpandaOnly", "shopeeOnly", "tripOnly", "grabOnly"];
+    Array.prototype.forEach.call(document.getElementById("owner-pills").children, function (button) {
+      pillCount(button, bank ? 0 : countLedgerWith({ owner: button.dataset.owner }), !bank);
+    });
+    var select = document.getElementById("category-filter");
+    Array.prototype.forEach.call(select.options, function (option) {
+      var base = option.dataset.label || option.textContent;
+      option.dataset.label = base;
+      var count = bank ? countAccountWith({ category: option.value })
+        : countLedgerWith({ category: option.value, travelCountry: "All" });
+      option.textContent = base + " (" + count + ")";
+      option.disabled = count === 0 && option.value !== state.category && option.value !== "All";
+    });
+    [["foodpanda-filter", "foodpandaOnly"], ["shopee-filter", "shopeeOnly"], ["trip-filter", "tripOnly"], ["grab-filter", "grabOnly"]].forEach(function (pair) {
+      var button = document.getElementById(pair[0]);
+      if (bank || button.classList.contains("hidden")) { pillCount(button, 0, false); return; }
+      var patch = {};
+      MERCHANT_KEYS.forEach(function (key) { patch[key] = key === pair[1]; });
+      pillCount(button, countLedgerWith(patch), true);
+    });
+    var suspicious = document.getElementById("suspicious-filter");
+    pillCount(suspicious, bank ? 0 : countLedgerWith({ reviewMode: "suspicious" }), !bank);
+    var includeLabel = document.getElementById("show-excluded-label");
+    if (includeLabel && !bank) {
+      var extra = countLedgerWith({ showExcluded: true }) - countLedgerWith({ showExcluded: false });
+      var note = includeLabel.querySelector(".pill-count");
+      if (!note) { note = el("span", "pill-count"); includeLabel.appendChild(note); }
+      note.textContent = "+" + extra;
+    }
+    var reset = document.getElementById("transaction-filters-reset");
+    if (reset) reset.classList.toggle("hidden", !document.getElementById("active-transaction-filters").children.length);
   }
 
   function populateTransactionCategoryFilter() {
@@ -6096,6 +6158,7 @@
     summary.appendChild(section);
   }
 
+  var openFilterPanel = function () {};
   var lastSummaryRows = [];
   function renderTransactionSummary(rows) {
     lastSummaryRows = rows;
@@ -7157,9 +7220,20 @@
     }
     if(state.idFilter)add(state.idFilterLabel||'Selected transactions','idFilter',null);
     var host=document.getElementById('active-transaction-filters');clear(host);
+    var FILTER_CONTROLS={search:'search',category:'category-filter',owner:'owner-pills',travelCountry:'travel-country-pills',foodpandaOnly:'foodpanda-filter',shopeeOnly:'shopee-filter',tripOnly:'trip-filter',grabOnly:'grab-filter',showExcluded:'show-excluded',reviewMode:'suspicious-filter',bankDirection:'bank-direction-pills',bankReview:'bank-review-filter',bankExcludeInternal:'bank-exclude-internal'};
     parts.forEach(function(p){
-      var chip=el('button','filter-summary-chip',p.label+' \u00d7');chip.type='button';chip.setAttribute('aria-label','Remove filter: '+p.label);
-      chip.onclick=function(){
+      var chip=el('span','filter-summary-chip'),controlId=FILTER_CONTROLS[p.key];
+      var edit=el('button','filter-summary-edit',p.label);edit.type='button';
+      if(controlId&&p.key!=='search'&&p.key!=='category'){
+        edit.title='Adjust this filter';edit.setAttribute('aria-label','Adjust filter: '+p.label);
+        edit.onclick=function(){openFilterPanel();var target=document.getElementById(controlId);var focusable=target&&(target.matches('button,input,select')?target:(target.querySelector('.active')||target.querySelector('button,input,select')));if(focusable)focusable.focus({preventScroll:false});};
+      } else if(controlId){
+        edit.title='Edit';edit.setAttribute('aria-label','Edit filter: '+p.label);
+        edit.onclick=function(){var target=document.getElementById(controlId);if(target)target.focus();};
+      } else {edit.disabled=true;}
+      chip.appendChild(edit);
+      var remove=el('button','filter-summary-remove','\u00d7');remove.type='button';remove.setAttribute('aria-label','Remove filter: '+p.label);chip.appendChild(remove);
+      remove.onclick=function(){
         state[p.key]=p.value;if(p.key==='idFilter')setIdFilter(null);
         if(p.key==='category')state.travelCountry='All';
         state.ledgerLimit=LEDGER_CAP;
@@ -7173,6 +7247,7 @@
       };host.appendChild(chip);
     });
     document.getElementById('transaction-filter-count').textContent=parts.length?'('+parts.length+')':'';
+    var reset=document.getElementById('transaction-filters-reset');if(reset)reset.classList.toggle('hidden',!parts.length);
     document.getElementById('clear-transaction-filters').classList.toggle('hidden',!parts.length);
     if(!bank&&state.category==='Games'){
       // The Games sub-tab is the richer view of the same rows.
@@ -7194,6 +7269,7 @@
     if (state.transactionSource === "bank") {
       syncLedgerSortHeads(false);
       renderAccountLedger(body);
+      renderFilterCounts(filteredAccountLedger().length);
       return;
     }
     var allRows = filteredLedger();
@@ -7211,6 +7287,7 @@
     if (state.groupPurchases) {
       syncLedgerSortHeads(false);
       renderGroupedLedger(body, rows, showYear);
+      renderFilterCounts(rows.length);
       return;
     }
     document.getElementById("ledger-date-head").textContent = "Date";
@@ -7450,6 +7527,7 @@
       foot.appendChild(more);
     }
     appendLedgerNet(foot, rows);
+    renderFilterCounts(rows.length);
     document.getElementById("ledger-hint").textContent = periodLabel() +
       (state.foodpandaOnly ? " · Foodpanda" : "") +
       (state.shopeeOnly ? " · Shopee" : "") +
@@ -7639,8 +7717,10 @@
 
     var filterToggle=document.getElementById('transaction-filters-toggle'),filterPanel=document.getElementById('transaction-filter-panel');
     function closeFilterPanel(){filterPanel.classList.add('hidden');filterToggle.setAttribute('aria-expanded','false');filterToggle.focus({preventScroll:true});}
-    filterToggle.onclick=function(){var open=filterToggle.getAttribute('aria-expanded')!=='true';filterToggle.setAttribute('aria-expanded',String(open));filterPanel.classList.toggle('hidden',!open);};
+    openFilterPanel=function(){filterPanel.classList.remove('hidden');filterToggle.setAttribute('aria-expanded','true');};
+    filterToggle.onclick=function(){var open=filterToggle.getAttribute('aria-expanded')!=='true';if(open)openFilterPanel();else closeFilterPanel();};
     document.getElementById('transaction-filters-close').onclick=closeFilterPanel;
+    document.getElementById('transaction-filters-reset').onclick=function(){document.getElementById('clear-transaction-filters').click();};
     filterPanel.addEventListener('keydown',function(e){if(e.key==='Escape'){e.preventDefault();closeFilterPanel();}});
     document.getElementById('clear-transaction-filters').onclick = function () {
       // Keep the selected ledger and period; clear its additional restrictions.
@@ -7730,6 +7810,7 @@
     var pills = document.getElementById("owner-pills");
     ["All"].concat(OWNER_ORDER).forEach(function (o) {
       var b = el("button", "pill" + (o === state.owner ? " active" : ""), o);
+      b.dataset.owner = o;
       setPressed(b, o === state.owner);
       b.addEventListener("click", function () {
         state.owner = o;
@@ -7738,7 +7819,7 @@
         if (state.reviewMode !== "suspicious") state.reviewMode = null;
         state.ledgerLimit = LEDGER_CAP;
         Array.prototype.forEach.call(pills.children, function (c) {
-          var active = c.textContent === o;
+          var active = c.dataset.owner === o;
           c.classList.toggle("active", active);
           setPressed(c, active);
         });

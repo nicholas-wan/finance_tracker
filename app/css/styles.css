@@ -2102,6 +2102,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
   .filters > #transaction-source-pills { flex: 1 1 auto; }
   .filters > .period { flex: 0 0 auto; }
   .filters > input[type="search"] { flex: 1 1 100%; min-width: 0; }
+  .filters > .pinned-filter { flex: 1 1 auto; max-width: none; }
   .source-filter-strip {
     display: flex; flex: 1 1 100%; gap: 8px; overflow-x: auto; padding-bottom: 2px;
     scrollbar-width: none; overscroll-behavior-x: contain; -webkit-overflow-scrolling: touch;
@@ -2423,13 +2424,26 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 .pill .game-logo { margin-right: 6px; width: 16px; height: 16px; }
 .transaction-filter-summary { display:flex; align-items:center; justify-content:space-between; gap:12px; margin:12px 0 18px; padding:10px 12px; background:var(--surface); border:1px solid var(--border); border-radius:10px; }
 #active-transaction-filters { display:flex; flex-wrap:wrap; gap:6px; min-width:0; }
-.filter-summary-chip { color:var(--text-2); background:var(--bg); border:1px solid var(--border); padding:4px 8px; border-radius:6px; font-size:var(--fs-small); overflow-wrap:anywhere; }
+.filter-summary-chip { display:inline-flex; align-items:stretch; color:var(--text-2); background:var(--bg); border:1px solid var(--border); border-radius:6px; font-size:var(--fs-small); overflow-wrap:anywhere; }
+.filter-summary-chip:hover { border-color:var(--brand); }
+.filter-summary-chip > button { border:0; background:none; color:inherit; font:inherit; font-size:var(--fs-small); cursor:pointer; padding:4px 8px; }
+.filter-summary-chip > button.filter-summary-remove { padding:4px 7px 4px 5px; border-left:1px solid var(--border); color:var(--text-3); }
+.filter-summary-chip > button.filter-summary-remove:hover { color:var(--red); background:var(--red-soft); }
+.filter-summary-chip > button:focus-visible { outline:2px solid var(--brand); outline-offset:-2px; border-radius:6px; }
 .transaction-filter-summary > button { flex-shrink:0; }
 @media(max-width:600px) { .transaction-filter-summary { align-items:flex-start; flex-direction:column; } }
 
 /* Transaction toolbar and progressive filter disclosure. */
 .transaction-filter-panel { border:1px solid var(--border); border-radius:10px; padding:12px 16px 14px; margin:0 0 12px; background:var(--surface); }
-.transaction-filter-panel-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; font-size:13px; }
+.transaction-filter-panel-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:10px; font-size:13px; }
+.transaction-filter-panel-title { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+.transaction-filter-panel-actions { display:flex; gap:6px; flex-shrink:0; }
+/* A group whose only control is hidden (Destination outside Travel) folds away. */
+.transaction-filter-group:has(> .transaction-filter-controls > .hidden:only-child) { display:none; }
+/* Result counts on filter values, and values that would match nothing. */
+.pill.is-empty { opacity:.55; }
+.pill.is-empty:not(.active) .pill-count { color:var(--text-3); }
+.filters > .pinned-filter { flex:0 1 auto; min-width:150px; max-width:230px; }
 /* One row per group: a fixed-width label, then the controls flowing beside
    it. A three-column grid left most cells nearly empty. */
 .transaction-filter-grid { display:grid; gap:8px; }
@@ -2444,7 +2458,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 .transaction-view { position:relative; }
 .transaction-view > summary { cursor:pointer; }
 .transaction-view-menu { position:absolute; right:0; top:calc(100% + 6px); z-index:20; padding:10px; background:var(--surface); border:1px solid var(--border); border-radius:8px; white-space:nowrap; box-shadow:0 8px 24px #0002; }
-button.filter-summary-chip { font:inherit; font-size:12px; cursor:pointer; }
+button.filter-summary-chip { font:inherit; font-size:12px; cursor:pointer; padding:4px 8px; }
 button.filter-summary-chip:hover { border-color:var(--brand); }
 #transaction-filters-toggle[aria-expanded="true"] { border-color:var(--brand); }
 @media(max-width:600px) { .transaction-filter-grid { gap:12px; } .transaction-filter-group { flex-direction:column; align-items:stretch; gap:6px; } .transaction-filter-group h3 { flex-basis:auto; } .transaction-filter-controls select { min-width:0; width:100%; } .transaction-filter-panel { width:100%; box-sizing:border-box; padding:14px; } .transaction-filter-panel-head { position:sticky; top:0; background:var(--surface); z-index:2; padding-bottom:8px; } }
