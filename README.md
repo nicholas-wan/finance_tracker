@@ -79,33 +79,18 @@ Income and Net worth are sub-tabs of **Wealth**, Games is a sub-tab of
 (no combined view), so the tab row holds at most six tabs; each clone lists
 the ones it shows in `manual/branding.json`. Once the brand row has scrolled
 away, a small monogram on the pinned tab row keeps the Overview one click
-away. The four Overview tiles carry both scopes: the statement month large with
-its change (card spending against the previous statement; income and
-investing against the year's monthly average, since both arrive in lumps),
-a sparkline of the year's statement months with the current one in accent
-and the monthly average as a dashed line, and the year-to-date total with
-its change on the same months last year. A scope line above the tiles names
-the statement and the year-to-date span. **Key spending** is one full-width
-row per category with a bullet bar on a shared scale (this statement as the
-bar, the typical statement as a tick), the amount, its change and the
-12-month total; **What changed** is a row of cards beneath it. When nothing needs attention the statement freshness and card-fee
-status collapse into one line above the KPIs (through-month, next statement,
-last refresh, resolved fee); the full cards return only for a missing or
-overdue statement, a stale build, or an unresolved fee. The visible tab renders first; the
-other tabs are then built one per idle slot (Home and Net worth fetch their
-data at the same time), so the first click on any tab lands on a finished
-pane. A tab clicked before its turn renders at once. The server listens on both
-127.0.0.1 and ::1 (Windows resolves `localhost` to ::1 first, and an
-IPv4-only listener cost every connection a refused attempt) and speaks
-HTTP/1.1 so the browser reuses connections; the page fetches its data files
-from the head, in parallel with the deferred scripts.
+away.
 
-- **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
-  summary, categories, outflows and the month's ledger. 6M/12M figures on the
-  Transactions page are means; overview baselines are medians. **Year so
-  far** sums the selected month's year to date (income, card spending,
-  invested, kept) and compares with the same months a year earlier when all
-  of them have statements. **Recurring charges** lists every merchant or
+- **Overview** — a status line (statements through, next statement, last
+  refresh, resolved card fee) that only grows into cards when something needs
+  action; four tiles that each show the statement month with its change, a
+  sparkline of the year's months with the monthly average as a dashed line,
+  and the year-to-date total against the same months last year; the spending
+  summary; **Key spending** as one bullet-bar row per category on a shared
+  scale (bar: this statement, tick: typical statement); **What changed** as
+  a row of cards; then recurring charges, the month chart, categories and
+  outflows. 6M/12M figures on the Transactions page are means; overview
+  baselines are medians. **Recurring charges** lists every merchant or
   payee that charges at a steady interval (weekly to yearly) and a steady
   amount, detected from the rows alone after the third charge: latest
   amount against the usual one, cadence, last and next date, and a status of
@@ -176,51 +161,31 @@ from the head, in parallel with the deferred scripts.
   clone's published data into `manual/partner_travel.json`, shown beside the
   statements and never inside them, with a **Paid by** filter. Every panel
   opens the Transactions tab already filtered to that trip, country or year.
-- **Games**: year-filtered purchases and refunds grouped by assigned title,
-  with thumbnails, purchase counts, each game's share of the period, a
-  year-over-year tile (same months of the prior year while a year is in
-  progress, before account sales), gaming as a share of net card cost, and
-  expandable daily charges. The monthly chart stacks each bar by game with a
-  fixed colour per title (eight validated slots, then a neutral "other"), and
-  the legend filters like the library rows. Select a game or month again to
-  clear its filter; a selected game offers **See in Transactions** and the
-  charges column switches to store / platform. Transaction details store
-  title, platform and purchase type on the exact charge; a missing purchase
-  type shows the store's usual kind marked as a guess. Tick charges (or use
-  **Assign game to N charges** on a library row) and **Assign game** saves one
-  title, store or type on all of them through `/api/game-details` under a
-  single rebuild, still as per-transaction overrides. Hidden entries remain in
-  the main ledger and are counted in a note under the KPIs. **Release timing** shows the game's age at purchase
-  with sourced launch dates and early-access labels, collapsed by default.
-  **Games over time** is a collapsed monthly heatmap with game counts, thumbnails,
-  column highlighting and click-to-filter tiles. All years uses annual blocks.
-  Activity reflects purchases, not measured playtime; months beyond statement
-  coverage are distinct from months without purchases. Account sales from
-  `manual/game_sales.json` remain separate from statements.
+- **Games** — purchases and refunds by assigned title for a year or all
+  years: thumbnails, purchase counts and share of the period, a monthly chart
+  stacked by game with a fixed colour per title, tiles for net spend, year
+  over year (same months of the prior year, before account sales) and share
+  of card spend, and day-grouped charges. Title, platform and purchase type
+  live on the exact charge as `gameDetails` overrides; tick charges and
+  **Assign game** saves one title on all of them through `/api/game-details`
+  under a single rebuild. A missing purchase type shows the store's usual
+  kind as a guess; hidden charges stay in the ledger and are counted in a
+  note. **Release timing** and the **Games over time** heatmap stay
+  collapsed. Account sales (`manual/game_sales.json`) are kept separate.
 - **Split** — the Yx settlement shared with the Overview: opening balances
   carry forward, `Yx share` is half of `Shared` plus rows assigned to `Yx`.
-- **Transactions**: compact source, period, search and category controls
-  (search also matches amounts; the category select is pinned in the bar and
-  the remaining filters open in a panel of label-and-controls rows). Every
-  filter value carries the number of rows it would match with the other
-  filters kept, zero-match values are dimmed or disabled, the panel head
-  reports the live match count with **Clear all**, and each applied-filter
-  chip opens its control to adjust or removes the filter with its cross.
-  Sortable Date, Description, Category and Amount headers on
-  the card ledger, the date printed once per day, owner chips and the remark
-  box revealed on hover or focus (always visible on touch screens), a category
-  dot under each description on phones, and a category breakdown that lists
-  six lines with **Other (n)** opening the rest in place. Under the 6M
-  and 12M averages a 12-month bar strip shows net cost per statement month,
-  with a note when the two averages disagree. The summary sits above the filter bar so the filters stay next to the
-  table, and the rules explainer sits below it. Additional
-  filters in an expandable panel grouped by ownership, category, merchant, review
-  and inclusion settings. Bank mode shows relevant bank controls. Active filters
-  remain visible as removable chips, with a count on the Filters button. Clear
-  filters retains source and period. **View** contains purchase or counterparty
-  grouping, while **History** stays separate. Owner chips tag a row (or a merchant group, or the filtered
-  list up to 100 rows) in one click; clicking the active chip clears the tag
-  and hands the row back to `manual/owner_rules.json`. A charge refunded in
+- **Transactions** — the net-cost summary (with a 12-month strip under the
+  6M/12M averages), then the bar: source, period, search (matches amounts
+  too), a pinned category select and a **Filters** panel of label-and-controls
+  rows. Every filter value shows how many rows it would match, zero-match
+  values are dimmed, the panel head shows the live count with **Clear all**,
+  and applied-filter chips open their control or remove the filter. The card
+  ledger sorts by Date, Description, Category or Amount, prints the date once
+  per day, shows owner chips and the remark box on hover or focus (always on
+  touch), and puts a category dot under descriptions on phones. **View**
+  holds grouping; **History** lists manual changes. Owner chips tag a row, a
+  merchant group or the filtered list in one click; the active chip clears
+  the tag and hands the row back to `manual/owner_rules.json`. A charge refunded in
   full by the same merchant within 180 days folds away with its refund.
   Recognised brands show a locally bundled icon; no third-party logo service
   is contacted. **Foodpanda**, **Shopee** and **Grab** views match imported
@@ -233,9 +198,12 @@ Manual edits use stable content-based transaction IDs, so PDF renames or
 extraction shifts do not detach decisions. Saves and rebuilds are atomic and
 roll back on validation failure.
 
-Across the page: startup requests run together, tabs render when opened, and
-Home and Net worth load on demand. Data requests are shared within the page
-(`app/js/data-cache.js`). The local server gzips JSON, scripts and stylesheets,
+Across the page: the visible tab renders first and the others are built in
+idle time (Home and Net worth fetch alongside), so first clicks land on
+finished panes. The server listens on 127.0.0.1 and ::1 and speaks HTTP/1.1,
+so `localhost` connects first time and connections are reused; data files
+are fetched from the page head while the scripts load deferred, and shared
+within the page (`app/js/data-cache.js`). The local server gzips JSON, scripts and stylesheets,
 then uses private revalidation with ETags so unchanged static files return 304
 responses after refresh. API responses remain uncached. Optimized local WebP
 assets reduce image transfer size; asset provenance is kept in `sources.json`.
