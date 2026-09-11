@@ -7546,13 +7546,11 @@
   // ---------- Shell ----------
 
   var panelsReady = false, dirtyPanels = {};
-  function renderActivePanel() {
-    if (!panelsReady) return;
-    var key = state.tab;
-    if (key === 'wealth') key = (state.subtab || {}).wealth || 'income';
-    if (key === 'transactions') key = (state.subtab || {}).transactions || 'ledger';
-    if (!dirtyPanels[key]) return;
-    delete dirtyPanels[key];
+  var PANEL_KEYS = ['overview','ledger','income','insurance','games','split','travel'];
+  // The header tab each panel lives under; a panel whose tab this clone does
+  // not show is never worth warming.
+  var PANEL_TAB = { overview: 'overview', ledger: 'transactions', games: 'transactions', income: 'wealth', insurance: 'insurance', split: 'split', travel: 'travel' };
+  function renderPanel(key) {
     if (key === 'overview') {
       renderFreshness(); renderCardFeeAlerts(); renderKpis(); renderYearReview();
       renderRecurring(); renderDataQuality(); renderStacked(); renderKeyMetrics();
@@ -7565,10 +7563,55 @@
     else if (key === 'split') renderSplit();
     else if (key === 'travel') renderTravel();
   }
+  function activePanelKey() {
+    var key = state.tab;
+    if (key === 'wealth') key = (state.subtab || {}).wealth || 'income';
+    if (key === 'transactions') key = (state.subtab || {}).transactions || 'ledger';
+    return key;
+  }
+  function renderActivePanel() {
+    if (!panelsReady) return;
+    var key = activePanelKey();
+    if (!dirtyPanels[key]) return;
+    delete dirtyPanels[key];
+    renderPanel(key);
+  }
+  // The visible tab paints first; the others are then rendered one per idle
+  // slot so the first click on any tab lands on a finished pane instead of
+  // waiting for it to build. A tab clicked before its turn renders at once
+  // and drops out of the queue. The overview chart sizes itself to its
+  // container, so a copy drawn while hidden is redrawn on arrival.
+  var prerenderHandle = null;
+  var requestIdle = window.requestIdleCallback
+    ? function (fn) { return window.requestIdleCallback(fn, { timeout: 400 }); }
+    : function (fn) { return window.setTimeout(fn, 80); };
+  var cancelIdle = window.cancelIdleCallback || window.clearTimeout;
+  function schedulePrerender() {
+    if (prerenderHandle !== null) cancelIdle(prerenderHandle);
+    function step() {
+      prerenderHandle = null;
+      var next = PANEL_KEYS.find(function (key) {
+        return dirtyPanels[key] && key !== activePanelKey() &&
+          (PANEL_TAB[key] === 'overview' || document.getElementById('tab-' + PANEL_TAB[key]));
+      });
+      if (!next) {
+        // Home and Net worth fetch their own data on first sight; ask them to
+        // start now so those tabs are warm too.
+        window.dispatchEvent(new Event('finance:prewarm'));
+        return;
+      }
+      delete dirtyPanels[next];
+      try { renderPanel(next); } catch (error) { console.error('Prerender failed for ' + next, error); }
+      if (next === 'overview' && document.getElementById('pane-overview').classList.contains('hidden')) state.chartStale = true;
+      prerenderHandle = requestIdle(step);
+    }
+    prerenderHandle = requestIdle(step);
+  }
   function renderAll() {
     panelsReady = true;
-    ['overview','ledger','income','insurance','games','split','travel'].forEach(function (key) { dirtyPanels[key] = true; });
+    PANEL_KEYS.forEach(function (key) { dirtyPanels[key] = true; });
     renderActivePanel();
+    schedulePrerender();
     var idx = data.months.indexOf(state.month);
     document.getElementById("prev-month").disabled = idx <= 0;
     document.getElementById("next-month").disabled = idx >= data.months.length - 1;

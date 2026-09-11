@@ -667,5 +667,11 @@
     load();
   }
   window.addEventListener('finance:navigation', startVisible);
+  // The shell warms hidden tabs in idle time once the visible one is painted.
+  window.addEventListener('finance:prewarm', function () {
+    if (started || !document.getElementById('tab-home')) return;
+    started = true;
+    load();
+  });
   startVisible();
 }());

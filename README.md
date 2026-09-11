@@ -79,7 +79,10 @@ Income and Net worth are sub-tabs of **Wealth**, Games is a sub-tab of
 (no combined view), so the tab row holds at most six tabs; each clone lists
 the ones it shows in `manual/branding.json`. Once the brand row has scrolled
 away, a small monogram on the pinned tab row keeps the Overview one click
-away.
+away. The visible tab renders first; the
+other tabs are then built one per idle slot (Home and Net worth fetch their
+data at the same time), so the first click on any tab lands on a finished
+pane. A tab clicked before its turn renders at once.
 
 - **Overview** — statement freshness, card-fee waiver prompts, KPIs, spending
   summary, categories, outflows and the month's ledger. 6M/12M figures on the
