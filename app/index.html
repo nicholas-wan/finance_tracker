@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260912-ledger-4">
+<link rel="stylesheet" href="css/styles.css?v=20260912-filters-5">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -437,9 +437,9 @@
       <div id="transaction-filter-panel" class="transaction-filter-panel hidden">
         <div class="transaction-filter-panel-head"><strong>Filter transactions</strong><button type="button" class="history-button" id="transaction-filters-close">Done</button></div>
         <div class="transaction-filter-grid">
-          <section class="transaction-filter-group" id="transaction-owner-group"><h3>Ownership</h3>        <div class="pills" id="owner-pills"></div></section>
-          <section class="transaction-filter-group"><h3>Category</h3>        <select id="category-filter" aria-label="Filter by category"></select>        <div class="pills travel-country-pills hidden" id="travel-country-pills" aria-label="Filter travel by country / region"></div></section>
-          <section class="transaction-filter-group" id="transaction-merchant-group"><h3>Merchant</h3>        <div class="source-filter-strip" id="source-filter-strip" aria-label="Merchant and review filters">
+          <section class="transaction-filter-group" id="transaction-owner-group"><h3>Ownership</h3><div class="transaction-filter-controls"><div class="pills" id="owner-pills"></div></div></section>
+          <section class="transaction-filter-group"><h3>Category</h3><div class="transaction-filter-controls"><select id="category-filter" aria-label="Filter by category"></select><div class="pills travel-country-pills hidden" id="travel-country-pills" aria-label="Filter travel by country / region"></div></div></section>
+          <section class="transaction-filter-group" id="transaction-merchant-group"><h3>Merchant</h3><div class="transaction-filter-controls"><div class="source-filter-strip" id="source-filter-strip" aria-label="Merchant and review filters">
         <button class="pill" id="foodpanda-filter" type="button" aria-pressed="false"
           title="Show statement transactions matched to a Foodpanda order">
           <svg class="icon"><use href="#i-bike"/></svg>Foodpanda only
@@ -457,15 +457,12 @@
           <svg class="icon"><use href="#i-bus"/></svg>Grab only
         </button>
         <a class="history-help-button" href="https://help.grab.com/passenger/en-my/360038782911-How-to-find-my-Grab-transaction-history" target="_blank" rel="noopener noreferrer" title="Instructions for finding Grab transaction history">Get Grab history</a>
-
-
-        </div>
-</section>
-          <section class="transaction-filter-group"><h3>Review</h3>        <button class="pill suspicious-pill" id="suspicious-filter" type="button" aria-pressed="false"
+        </div></div></section>
+          <section class="transaction-filter-group"><h3>Review</h3><div class="transaction-filter-controls"><button class="pill suspicious-pill" id="suspicious-filter" type="button" aria-pressed="false"
           title="Show only transactions the checks flagged and you have not reviewed">
           <svg class="icon"><use href="#i-target"/></svg>Suspicious only
-        </button>        <button class="pill view-all-pill hidden" id="view-all-filter" type="button"
-          title="Keep this review filter and widen the period to the whole history">All time</button>        <div class="bank-review-controls hidden" id="bank-review-controls">
+        </button><button class="pill view-all-pill hidden" id="view-all-filter" type="button"
+          title="Keep this review filter and widen the period to the whole history">All time</button><div class="bank-review-controls hidden" id="bank-review-controls">
           <div class="pills bank-direction-pills" id="bank-direction-pills"
             aria-label="Bank transaction direction"></div>
           <select id="bank-review-filter" aria-label="Filter bank review status">
@@ -481,9 +478,8 @@
             <input type="checkbox" id="bank-exclude-internal">
             exclude transfers &amp; internal movements
           </label>
-        </div>
-</section>
-          <section class="transaction-filter-group" id="transaction-include-group"><h3>Include</h3>        <label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label></section>
+        </div></div></section>
+          <section class="transaction-filter-group" id="transaction-include-group"><h3>Include</h3><div class="transaction-filter-controls"><label class="toggle" id="show-excluded-label"><input type="checkbox" id="show-excluded"> payments &amp; rebates</label></div></section>
         </div>
       </div>
       <div class="transaction-filter-summary" aria-label="Current transaction filters">

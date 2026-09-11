@@ -2428,14 +2428,18 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 @media(max-width:600px) { .transaction-filter-summary { align-items:flex-start; flex-direction:column; } }
 
 /* Transaction toolbar and progressive filter disclosure. */
-.transaction-filter-panel { border:1px solid var(--border); border-radius:10px; padding:16px; margin:0 0 12px; background:var(--surface); }
-.transaction-filter-panel-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; font-size:13px; }
-.transaction-filter-grid { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:20px; }
-.transaction-filter-group h3 { margin:0 0 8px; font-size:12px; color:var(--muted); font-weight:500; }
-.transaction-filter-group .pills, .transaction-filter-group .source-filter-strip { display:flex; flex-wrap:wrap; gap:6px; margin:0; }
-.transaction-filter-group select { width:100%; }
-.transaction-filter-group .bank-review-controls { flex-direction:column; align-items:stretch; gap:10px; }
-.transaction-filter-group .history-help-button { font-size:11px; flex-basis:100%; }
+.transaction-filter-panel { border:1px solid var(--border); border-radius:10px; padding:12px 16px 14px; margin:0 0 12px; background:var(--surface); }
+.transaction-filter-panel-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; font-size:13px; }
+/* One row per group: a fixed-width label, then the controls flowing beside
+   it. A three-column grid left most cells nearly empty. */
+.transaction-filter-grid { display:grid; gap:8px; }
+.transaction-filter-group { display:flex; align-items:center; gap:8px 14px; min-height:32px; }
+.transaction-filter-group h3 { flex:0 0 84px; margin:0; font-size:11px; letter-spacing:.04em; text-transform:uppercase; color:var(--muted); font-weight:500; }
+.transaction-filter-controls { flex:1 1 auto; min-width:0; display:flex; flex-wrap:wrap; align-items:center; gap:6px; }
+.transaction-filter-controls .pills, .transaction-filter-controls .source-filter-strip { display:contents; }
+.transaction-filter-controls select { width:auto; min-width:200px; max-width:100%; }
+.transaction-filter-controls .bank-review-controls { flex:1 1 100%; }
+.transaction-filter-controls .history-help-button { font-size:11px; padding:4px 8px; margin-left:4px; }
 .transaction-filter-group .toggle { font-size:12px; }
 .transaction-view { position:relative; }
 .transaction-view > summary { cursor:pointer; }
@@ -2443,8 +2447,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 button.filter-summary-chip { font:inherit; font-size:12px; cursor:pointer; }
 button.filter-summary-chip:hover { border-color:var(--brand); }
 #transaction-filters-toggle[aria-expanded="true"] { border-color:var(--brand); }
-@media(max-width:800px) { .transaction-filter-grid { grid-template-columns:repeat(2,minmax(0,1fr)); } }
-@media(max-width:600px) { .transaction-filter-grid { grid-template-columns:1fr; gap:16px; } .transaction-filter-panel { width:100%; box-sizing:border-box; padding:14px; } .transaction-filter-panel-head { position:sticky; top:0; background:var(--surface); z-index:2; padding-bottom:8px; } }
+@media(max-width:600px) { .transaction-filter-grid { gap:12px; } .transaction-filter-group { flex-direction:column; align-items:stretch; gap:6px; } .transaction-filter-group h3 { flex-basis:auto; } .transaction-filter-controls select { min-width:0; width:100%; } .transaction-filter-panel { width:100%; box-sizing:border-box; padding:14px; } .transaction-filter-panel-head { position:sticky; top:0; background:var(--surface); z-index:2; padding-bottom:8px; } }
 
 /* Quiet row controls (8 Sep 2026). Every row used to show a three-chip owner
    picker and an empty "Add remark" box; with almost every row already tagged
