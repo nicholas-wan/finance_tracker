@@ -72,12 +72,16 @@ window.Charts = (function () {
     });
 
     var narrow = window.matchMedia && window.matchMedia("(max-width: 760px)").matches;
-    var H = 246, plotTop = 18, plotBottom = 178, axisL = 40;
+    // The canvas ends just under the year labels (month names at +20, years
+    // at +34 below the plot); anything taller was blank.
+    var plotTop = 18, plotBottom = 178, axisL = 40, H = plotBottom + 44;
     // On phones the chart fills the panel when every month can keep a bar
     // pair at least 36px wide (six months on any phone); longer ranges keep
     // each month legible and scroll sideways instead, latest months first.
+    // On desktop it is drawn at the panel's real width: a fixed 680 canvas
+    // stretched to fit scaled every label and gap up with it.
     var containerW = Math.max(container.clientWidth || 0, 280);
-    var W = narrow ? Math.max(containerW, 36 * rows.length + axisL + 12) : 680;
+    var W = narrow ? Math.max(containerW, 36 * rows.length + axisL + 12) : Math.max(containerW, 520);
     var slot = (W - axisL - 12) / rows.length;
     var labelStep = slot >= 30 ? 1 : slot >= 18 ? 2 : slot >= 12 ? 3 : 6;
     var pairW = Math.max(2, Math.min(26, (slot - 10) / 2));
