@@ -2904,29 +2904,6 @@
     var pc = ((now - then) / Math.abs(then)) * 100;
     return (pc >= 0 ? "+" : "") + pc.toFixed(0) + "%";
   }
-  function renderYearReview() {
-    var wrap = document.getElementById("year-review");
-    if (!wrap) return;
-    clear(wrap);
-    var y = yearSoFar(state.month);
-    var first = y.months[0], last = y.months[y.months.length - 1];
-    var span = y.months.length === 1 ? monthLabel(first) : monthLabel(first).replace(/ \d{4}$/, "") + "–" + monthLabel(last);
-    document.getElementById("year-review-heading").textContent = y.year + " so far";
-    document.getElementById("year-review-hint").textContent = span + " · " + y.months.length + " statement" + (y.months.length === 1 ? "" : "s") +
-      (y.prior ? " · vs " + monthLabel(y.priorMonths[0]).replace(/ \d{4}$/, "") + "–" + monthLabel(y.priorMonths[y.priorMonths.length - 1]) : " · no full comparison period last year");
-    var n = y.now, p = y.prior;
-    var left = n.income - n.spend;
-    wrap.appendChild(metric("Income", n.income ? fmt0(n.income) : "—",
-      n.income ? (p ? pctDelta(n.income, p.income) + " vs last year" : n.incomeMonths + " salary months") : "no salary credits", null, "wallet"));
-    wrap.appendChild(metric("Card spending", fmt0(n.spend),
-      (p ? pctDelta(n.spend, p.spend) + " vs last year · " : "") + fmt0(n.spend / Math.max(y.months.length, 1)) + " a month", null, "card"));
-    wrap.appendChild(metric("Invested", n.invested ? fmt0(n.invested) : "—",
-      n.invested ? (p ? pctDelta(n.invested, p.invested) + " vs last year" : "moved to investments") : "nothing moved", null, "up"));
-    wrap.appendChild(metric("After card spending", n.income ? fmt0(left) : "—",
-      n.income ? Math.round((left / n.income) * 100) + "% of income kept" + (n.invested > left ? " · investing drew on savings" : "") : "needs salary credits",
-      n.income ? (left >= 0 ? "good" : "bad") : null, "coins"));
-  }
-
   // ---------- Recurring charges ----------
   // A merchant that charges at a steady interval and a steady amount: monthly
   // subscriptions, yearly fees, GIRO premiums. Detected from the rows alone,
@@ -3087,45 +3064,151 @@
     }
   }
 
+  // One tile per measure: the statement month large with its delta against
+  // the previous statement (Stripe's home cards: current period, previous
+  // period in smaller text beneath, a monochrome sparkline), then the year's
+  // statement months as a sparkline with the current month in accent and the
+  // year's monthly average as a dashed reference (Few's bullet-graph mark),
+  // and the year-to-date total with its change on the same months last year.
+  function kpiSparkline(points, currentMonth, average, label) {
+    var svgNS = "http://www.w3.org/2000/svg", width = 160, height = 28, gap = 2;
+    var slot = width / Math.max(points.length, 1);
+    var svg = document.createElementNS(svgNS, "svg");
+    svg.setAttribute("class", "kpi-spark");
+    svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+    svg.setAttribute("preserveAspectRatio", "none");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", label + " by statement month: " + points.map(function (point) {
+      return monthLabel(point.month).replace(/ \d{4}$/, "") + " " + fmt0(point.value);
+    }).join(", ") + (average > 0 ? "; monthly average " + fmt0(average) : ""));
+    var peak = points.reduce(function (largest, point) { return Math.max(largest, Math.abs(point.value)); }, average > 0 ? average : 0);
+    peak = Math.max(peak, 0.01);
+    var negative = points.some(function (point) { return point.value < 0; });
+    var baseline = negative ? height / 2 : height;
+    var scale = (negative ? height / 2 - 1 : height - 1) / peak;
+    points.forEach(function (point, index) {
+      var bar = document.createElementNS(svgNS, "rect");
+      var barHeight = Math.max(1, Math.abs(point.value) * scale);
+      bar.setAttribute("x", (index * slot + gap / 2).toFixed(1));
+      bar.setAttribute("y", (point.value >= 0 ? baseline - barHeight : baseline).toFixed(1));
+      bar.setAttribute("width", Math.max(1, slot - gap).toFixed(1));
+      bar.setAttribute("height", barHeight.toFixed(1));
+      bar.setAttribute("rx", "1.5");
+      var classes = [];
+      if (point.month === currentMonth) classes.push("current");
+      if (point.value < 0) classes.push("negative");
+      if (classes.length) bar.setAttribute("class", classes.join(" "));
+      var tip = document.createElementNS(svgNS, "title");
+      tip.textContent = monthLabel(point.month) + ": " + fmt(point.value);
+      bar.appendChild(tip);
+      svg.appendChild(bar);
+    });
+    if (average > 0) {
+      var line = document.createElementNS(svgNS, "line");
+      var y = (baseline - average * scale).toFixed(1);
+      line.setAttribute("x1", "0"); line.setAttribute("x2", String(width));
+      line.setAttribute("y1", y); line.setAttribute("y2", y);
+      line.setAttribute("class", "kpi-spark-avg");
+      var tip2 = document.createElementNS(svgNS, "title");
+      tip2.textContent = "Monthly average this year: " + fmt(average);
+      line.appendChild(tip2);
+      svg.appendChild(line);
+    }
+    return svg;
+  }
+  function deltaAgainst(now, then, label, higherIsBetter) {
+    if (!then) return null;
+    var pc = ((now - then) / Math.abs(then)) * 100;
+    var text = (pc >= 0 ? "+" : "") + pc.toFixed(1) + "% vs " + label;
+    var tone = pc === 0 ? "" : (pc > 0) === !!higherIsBetter ? "better" : "worse";
+    return { text: text, tone: tone };
+  }
   function renderKpis() {
     var wrap = document.getElementById("kpis");
     clear(wrap);
     var m = state.month;
-    var spend = cardSpend(m);
-    var income = incomeFor(m);
-    var invested = investedFor(m);
-
+    var y = yearSoFar(m), p = y.prior, n = y.now;
+    var months = y.months.length;
     var idx = data.months.indexOf(m);
-    var comparison = null;
-    if (idx > 0) {
-      var prev = cardSpend(data.months[idx - 1]);
-      if (prev > 0) {
-        var pc = ((spend - prev) / prev) * 100;
-        comparison = (pc >= 0 ? "+" : "") + pc.toFixed(1) + "% vs " +
-          statementLabel(data.months[idx - 1]);
-      }
-    }
-    var cycle = statementRange(m);
-    var note = cycle + (cycle && comparison ? " · " : "") + (comparison || "");
+    var prevMonth = idx > 0 ? data.months[idx - 1] : null;
+    var prevLabel = prevMonth ? statementLabel(prevMonth) : "";
+    var first = y.months[0], last = y.months[months - 1];
+    var span = months === 1 ? monthLabel(first) : monthLabel(first).replace(/ \d{4}$/, "") + "\u2013" + monthLabel(last);
+    document.getElementById("kpis-scope").textContent = statementLabel(m) + (statementRange(m) ? " \u00b7 " + statementRange(m) : "");
+    document.getElementById("kpis-year-hint").textContent = y.year + " so far: " + span + " \u00b7 " + months +
+      " statement" + (months === 1 ? "" : "s") +
+      (p ? " \u00b7 vs " + monthLabel(y.priorMonths[0]).replace(/ \d{4}$/, "") + "\u2013" + monthLabel(y.priorMonths[y.priorMonths.length - 1])
+         : " \u00b7 no full comparison period last year");
 
-    wrap.appendChild(metric("Income", income ? fmt0(income) : "—",
-      income ? "salary credited" : "no statement", null, "wallet"));
-    var spendCard = metric("Card statement spending", fmt0(spend), note, null, "card");
+    var series = { income: [], spend: [], invested: [], left: [] };
+    y.months.forEach(function (month) {
+      var income = incomeFor(month), spend = cardSpend(month);
+      series.income.push({ month: month, value: income });
+      series.spend.push({ month: month, value: spend });
+      series.invested.push({ month: month, value: investedFor(month) });
+      series.left.push({ month: month, value: income - spend });
+    });
+    function tile(opts) {
+      var card = metric(opts.label, opts.value, opts.note, opts.tone, opts.icon);
+      if (opts.delta) {
+        var delta = el("p", "delta " + opts.delta.tone, opts.delta.text);
+        card.appendChild(delta);
+      }
+      if (opts.points && opts.points.length > 1) card.appendChild(kpiSparkline(opts.points, m, opts.average || 0, opts.label));
+      var foot = el("p", "kpi-year");
+      foot.appendChild(el("span", "kpi-year-label", y.year + " so far"));
+      foot.appendChild(el("strong", "", opts.ytd));
+      if (opts.ytdNote) foot.appendChild(el("span", "", opts.ytdNote));
+      card.appendChild(foot);
+      return card;
+    }
+
+    var income = incomeFor(m), spend = cardSpend(m), invested = investedFor(m);
+    var prevSpend = prevMonth ? cardSpend(prevMonth) : 0;
+    // Income and investing arrive in lumps (a bonus month, a one-off
+    // transfer), so "vs last month" swings wildly; the year's monthly average
+    // is the steadier yardstick and is the dashed line on the sparkline.
+    var incomeAverage = n.incomeMonths > 1 ? n.income / n.incomeMonths : 0;
+    var investedAverage = months > 1 ? n.invested / months : 0;
+    var averageLabel = y.year + " monthly average";
+
+    wrap.appendChild(tile({
+      label: "Income", icon: "wallet", value: income ? fmt0(income) : "\u2014",
+      note: income ? "salary credited" : "no statement",
+      delta: income && incomeAverage > 0 ? deltaAgainst(income, incomeAverage, averageLabel, true) : null,
+      points: series.income, average: incomeAverage,
+      ytd: n.income ? fmt0(n.income) : "\u2014",
+      ytdNote: n.income ? (p ? pctDelta(n.income, p.income) + " vs last year" : n.incomeMonths + " salary months") : "no salary credits"
+    }));
+    var spendCard = tile({
+      label: "Card statement spending", icon: "card", value: fmt0(spend),
+      note: null,
+      delta: prevSpend > 0 ? deltaAgainst(spend, prevSpend, prevLabel, false) : null,
+      points: series.spend, average: months ? n.spend / months : 0,
+      ytd: fmt0(n.spend),
+      ytdNote: (p ? pctDelta(n.spend, p.spend) + " vs last year \u00b7 " : "") + fmt0(n.spend / Math.max(months, 1)) + " a month"
+    });
     makeActionable(spendCard, "View " + statementLabel(m) + " transactions", function () {
       openTransactions({ month: m });
     });
     wrap.appendChild(spendCard);
-    wrap.appendChild(metric("Invested", invested ? fmt0(invested) : "—",
-      hasAccount(m) ? "moved to investments" : "no statement", null, "up"));
-    if (income > 0) {
-      var left = income - spend;
-      wrap.appendChild(metric("After card spending", fmt0(left),
-        Math.round((left / income) * 100) + "% of income" +
-        (invested > left ? ", investing drew on savings" : ""),
-        left >= 0 ? "good" : "bad", "coins"));
-    } else {
-      wrap.appendChild(metric("After card spending", "—", "needs statement", null, "coins"));
-    }
+    wrap.appendChild(tile({
+      label: "Invested", icon: "up", value: invested ? fmt0(invested) : "\u2014",
+      note: hasAccount(m) ? "moved to investments" : "no statement",
+      delta: invested && investedAverage > 0 ? deltaAgainst(invested, investedAverage, averageLabel, true) : null,
+      points: series.invested, average: investedAverage,
+      ytd: n.invested ? fmt0(n.invested) : "\u2014",
+      ytdNote: n.invested ? (p ? pctDelta(n.invested, p.invested) + " vs last year" : "moved to investments") : "nothing moved"
+    }));
+    var left = income - spend, yearLeft = n.income - n.spend;
+    wrap.appendChild(tile({
+      label: "After card spending", icon: "coins", value: income > 0 ? fmt0(left) : "\u2014",
+      note: income > 0 ? Math.round((left / income) * 100) + "% of income" + (invested > left ? ", investing drew on savings" : "") : "needs statement",
+      tone: income > 0 ? (left >= 0 ? "good" : "bad") : null,
+      points: series.left, average: n.incomeMonths ? yearLeft / n.incomeMonths : 0,
+      ytd: n.income ? fmt0(yearLeft) : "\u2014",
+      ytdNote: n.income ? Math.round((yearLeft / n.income) * 100) + "% of income kept" + (n.invested > yearLeft ? " \u00b7 investing drew on savings" : "") : "needs salary credits"
+    }));
   }
 
   // "spent" is every non-wealth withdrawal, card-bill payments and transfers to
@@ -7576,7 +7659,7 @@
   var PANEL_TAB = { overview: 'overview', ledger: 'transactions', games: 'transactions', income: 'wealth', insurance: 'insurance', split: 'split', travel: 'travel' };
   function renderPanel(key) {
     if (key === 'overview') {
-      renderFreshness(); renderCardFeeAlerts(); renderKpis(); renderYearReview();
+      renderFreshness(); renderCardFeeAlerts(); renderKpis();
       renderRecurring(); renderDataQuality(); renderStacked(); renderKeyMetrics();
       renderInsights(); renderSpendingSummary(); renderCategories(); renderOutflows();
     } else if (key === 'ledger') {

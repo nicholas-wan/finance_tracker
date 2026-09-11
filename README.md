@@ -79,7 +79,13 @@ Income and Net worth are sub-tabs of **Wealth**, Games is a sub-tab of
 (no combined view), so the tab row holds at most six tabs; each clone lists
 the ones it shows in `manual/branding.json`. Once the brand row has scrolled
 away, a small monogram on the pinned tab row keeps the Overview one click
-away. When nothing needs attention the statement freshness and card-fee
+away. The four Overview tiles carry both scopes: the statement month large with
+its change (card spending against the previous statement; income and
+investing against the year's monthly average, since both arrive in lumps),
+a sparkline of the year's statement months with the current one in accent
+and the monthly average as a dashed line, and the year-to-date total with
+its change on the same months last year. A scope line above the tiles names
+the statement and the year-to-date span. When nothing needs attention the statement freshness and card-fee
 status collapse into one line above the KPIs (through-month, next statement,
 last refresh, resolved fee); the full cards return only for a missing or
 overdue statement, a stale build, or an unresolved fee. The visible tab renders first; the

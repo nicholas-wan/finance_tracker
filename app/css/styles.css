@@ -276,6 +276,20 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 .kpi .delta.up { color: var(--red); }
 .kpi .delta.down { color: var(--green); }
 .kpi .delta.sub { color: var(--text-3); margin-top: 1px; }
+/* Direction colour follows meaning, not sign: more income is "better", more
+   spending is "worse" (NN/g: invert the colour logic for lower-is-better). */
+.kpi .delta.better { color: var(--green); }
+.kpi .delta.worse { color: var(--red); }
+/* Overview tiles: scope line above, year sparkline and year-to-date below. */
+.kpis-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px 16px; flex-wrap: wrap; margin: 14px 0 8px; font-size: var(--fs-small); color: var(--text-2); }
+.kpis-head strong { color: var(--text); font-weight: 600; }
+.kpi-spark { display: block; width: 100%; height: 28px; margin-top: 10px; overflow: visible; }
+.kpi-spark rect { fill: var(--text-3); opacity: 0.4; }
+.kpi-spark rect.current { fill: var(--accent); opacity: 1; }
+.kpi-spark rect.negative { fill: var(--red); }
+.kpi-spark .kpi-spark-avg { stroke: var(--text-2); stroke-width: 1; stroke-dasharray: 3 2; vector-effect: non-scaling-stroke; }
+.kpi-year { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 6px; margin: 8px 0 0; padding-top: 8px; border-top: 1px solid var(--border); font-size: var(--fs-caption); color: var(--text-3); }
+.kpi-year strong { color: var(--text); font-size: var(--fs-small); font-variant-numeric: tabular-nums; }
 
 .panel {
   background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
