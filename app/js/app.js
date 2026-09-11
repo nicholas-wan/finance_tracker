@@ -3170,12 +3170,12 @@
     // is the steadier yardstick and is the dashed line on the sparkline.
     var incomeAverage = n.incomeMonths > 1 ? n.income / n.incomeMonths : 0;
     var investedAverage = months > 1 ? n.invested / months : 0;
-    var averageLabel = y.year + " monthly average";
+    function averageLabel(amount) { return y.year + " monthly average of " + fmt0(amount); }
 
     wrap.appendChild(tile({
       label: "Income", icon: "wallet", value: income ? fmt0(income) : "\u2014",
       note: income ? "salary credited" : "no statement",
-      delta: income && incomeAverage > 0 ? deltaAgainst(income, incomeAverage, averageLabel, true) : null,
+      delta: income && incomeAverage > 0 ? deltaAgainst(income, incomeAverage, averageLabel(incomeAverage), true) : null,
       points: series.income, average: incomeAverage,
       ytd: n.income ? fmt0(n.income) : "\u2014",
       ytdNote: n.income ? (p ? pctDelta(n.income, p.income) + " vs last year" : n.incomeMonths + " salary months") : "no salary credits"
@@ -3195,7 +3195,7 @@
     wrap.appendChild(tile({
       label: "Invested", icon: "up", value: invested ? fmt0(invested) : "\u2014",
       note: hasAccount(m) ? "moved to investments" : "no statement",
-      delta: invested && investedAverage > 0 ? deltaAgainst(invested, investedAverage, averageLabel, true) : null,
+      delta: invested && investedAverage > 0 ? deltaAgainst(invested, investedAverage, averageLabel(investedAverage), true) : null,
       points: series.invested, average: investedAverage,
       ytd: n.invested ? fmt0(n.invested) : "\u2014",
       ytdNote: n.invested ? (p ? pctDelta(n.invested, p.invested) + " vs last year" : "moved to investments") : "nothing moved"
