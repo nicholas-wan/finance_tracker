@@ -151,7 +151,7 @@ CATEGORY_RULES = [
     ("Groceries", ["NTUC FAIRPRICE", "FAIRPRICE", "COLD STORAGE", "SHENG SIONG", " GIANT ",
                    "GIANT-", "NTUC FP-", "CHEERS HOLDINGS", "DON DON DONKI",
                    "PRIME SUPERMARKET", "BBQ WHOLESALE CENTRE", "CS FRESH", "JAYA GROCER",
-                   "KAPITAN GROCERY", "7-ELEVEN", "7 ELEVEN", "ESSO-CHEERS", "LEE MART",
+                   "KAPITAN GROCERY", "ESSO-CHEERS", "LEE MART",
                    "NTUC FP ", "ACE DYNAMIC HOLDINGS"],
      # Vetoes: the supermarket token inside an unrelated business name.
      ["GIANT LEAP", "GIANT SWING", "GIANT CYCLE"]),
