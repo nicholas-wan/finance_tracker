@@ -35,6 +35,15 @@
     }
     return {date:release.date,label:release.label,source:release.source,age:age,days:days};
   }
+  // A store implies how money usually reaches a game; the guess is shown as a
+  // guess until a purchase type is saved on the transaction.
+  var storeTypes={'HoYoverse':'Top-up','Kuro Games':'Top-up','Steam':'Base game','G2G marketplace':'Account purchase','ZeusX marketplace':'Account purchase','PlayStation':'Base game','Nintendo':'Base game','Xbox':'Base game','Epic Games':'Base game','Top-up sites':'Top-up'};
+  function purchaseType(t) {
+    var saved=(t.gameDetails||{}).purchaseType;
+    if(saved)return {type:saved,guessed:false};
+    var guess=storeTypes[(t.gameDetails||{}).platform]||storeTypes[t.game];
+    return guess?{type:guess,guessed:true}:null;
+  }
   function month(t){return (t.date||t.month).slice(0,7);}
   function cents(t){return Math.round(t.amount*100)*(t.type==='debit'?1:-1);}
   function saleKey(s){return 'title:'+s.game;}
@@ -44,6 +53,8 @@
     transactions.forEach(function(t){var info=identity(t),g=group(info.key,info);g.lifetime+=cents(t);if(year==='All'||month(t).slice(0,4)===year){g.total+=cents(t);g.rows.push(t);}});
     sales.forEach(function(s){if(year==='All'||s.month.slice(0,4)===year)group(saleKey(s),{title:s.game,label:s.game,store:s.publisher||'',assigned:true}).sales.push(s);});
     var visible=Object.values(groups).filter(function(g){return g.rows.length||g.sales.length;}).sort(function(a,b){return b.total-a.total||a.info.label.localeCompare(b.info.label);});
+    var positive=visible.reduce(function(n,g){return n+Math.max(g.total,0);},0);
+    visible.forEach(function(g){g.purchaseCount=g.rows.filter(function(t){return t.type==='debit';}).length;g.share=positive&&g.total>0?g.total/positive:0;});
     if(!visible.some(function(g){return g.key===key;}))key='All';
     var rows=transactions.filter(function(t){return (year==='All'||month(t).slice(0,4)===year)&&(key==='All'||identity(t).key===key);});
     var selectedSales=sales.filter(function(s){return (year==='All'||s.month.slice(0,4)===year)&&(key==='All'||saleKey(s)===key);});
@@ -66,6 +77,18 @@
       return {key:g.key,title:g.info.label,cells:cells};
     }).filter(function(g){return g.cells.some(function(c){return c.count;});}).sort(function(a,b){return a.title.localeCompare(b.title);});
   }
-  var api={activity:activity,releaseTiming:releaseTiming,identity:identity,month:month,cents:cents,summary:summary};
+  // One bar per month, split by game so the chart carries what the activity
+  // grid shows. Refund-heavy months keep their net below the baseline.
+  function stacked(groups,months,rows) {
+    var order=groups.map(function(g){return g.key;}),lookup={};
+    var out=months.map(function(m){var cell={month:m.month,cents:0,refund:0,segments:[]};lookup[m.month]=cell;return cell;});
+    var perGame={};
+    rows.forEach(function(t){var cell=lookup[month(t)];if(!cell)return;var k=identity(t).key;perGame[cell.month]=perGame[cell.month]||{};perGame[cell.month][k]=(perGame[cell.month][k]||0)+cents(t);});
+    out.forEach(function(cell){var byGame=perGame[cell.month]||{};
+      Object.keys(byGame).sort(function(a,b){return order.indexOf(a)-order.indexOf(b);}).forEach(function(k){var c=byGame[k];cell.cents+=c;if(c>0)cell.segments.push({key:k,cents:c});else cell.refund+=c;});
+    });
+    return out;
+  }
+  var api={activity:activity,releaseTiming:releaseTiming,identity:identity,month:month,cents:cents,summary:summary,stacked:stacked,purchaseType:purchaseType};
   if(typeof module!=='undefined'&&module.exports)module.exports=api;else root.Gaming=api;
 })(typeof window==='undefined'?this:window);

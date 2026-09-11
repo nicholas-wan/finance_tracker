@@ -6,7 +6,7 @@
 <meta name="robots" content="noindex, nofollow">
 <title>Finances</title>
 <link rel="icon" type="image/svg+xml" href="favicon.svg">
-<link rel="stylesheet" href="css/styles.css?v=20260908-filters-1">
+<link rel="stylesheet" href="css/styles.css?v=20260908-ledger-2">
 <script>
   // Runs before first paint so the page never flashes the wrong theme.
   (function () {
@@ -17,7 +17,7 @@
     document.documentElement.setAttribute("data-theme", dark ? "dark" : "light");
   })();
 </script>
-<link rel="stylesheet" href="css/games.css?v=6">
+<link rel="stylesheet" href="css/games.css?v=7">
 <link rel="stylesheet" href="css/home.css?v=21">
 <link rel="stylesheet" href="css/networth.css?v=2">
 </head>
@@ -488,6 +488,16 @@
         <div id="active-transaction-filters" aria-live="polite"></div>
         <button type="button" class="history-button" id="clear-transaction-filters" title="Clear additional filters; keep the current source and period">Clear filters</button>
       </div>
+      <section class="transaction-summary" id="transaction-summary"
+        aria-label="Transaction cost breakdown"></section>
+      <section class="trips hidden" id="trips" aria-label="Trips"></section>
+      <table class="ledger">
+        <thead>
+          <tr><th class="col-date" id="ledger-date-head">Date</th><th id="ledger-description-head">Description</th><th class="col-cat" id="ledger-category-head">Category</th><th class="col-owner" id="ledger-owner-head">Owner</th><th class="col-remark" id="ledger-remark-head">Remarks</th><th class="col-amt" id="ledger-amount-head">Amount</th></tr>
+        </thead>
+        <tbody id="ledger-body"></tbody>
+      </table>
+      <div class="ledger-foot" id="ledger-foot"></div>
       <!-- Threshold values mirror the documented constants in
            scripts/risk_checks.py and app/js/transaction-grouping.js;
            update both places together. -->
@@ -515,21 +525,12 @@
           <p>Review prompts use statement history only and are not fraud verdicts.</p>
         </div>
       </details>
-      <section class="transaction-summary" id="transaction-summary"
-        aria-label="Transaction cost breakdown"></section>
-      <section class="trips hidden" id="trips" aria-label="Trips"></section>
-      <table class="ledger">
-        <thead>
-          <tr><th class="col-date" id="ledger-date-head">Date</th><th id="ledger-description-head">Description</th><th class="col-cat" id="ledger-category-head">Category</th><th class="col-owner" id="ledger-owner-head">Owner</th><th class="col-remark" id="ledger-remark-head">Remarks</th><th class="col-amt" id="ledger-amount-head">Amount</th></tr>
-        </thead>
-        <tbody id="ledger-body"></tbody>
-      </table>
-      <div class="ledger-foot" id="ledger-foot"></div>
     </div>
     </div>
   <section class="subpane hidden" data-subpane="games" id="pane-games" role="tabpanel" aria-labelledby="subtab-games">
     <div class="panel-head games-scope-header"><h2 id="games-scope">Gaming</h2><div class="year-pills" id="games-years"></div></div>
     <div class="kpis" id="games-kpis"></div>
+    <p class="hint games-hidden-note hidden" id="games-hidden-note"></p>
     <section class="panel">
       <div class="panel-head">
         <h2><svg class="icon"><use href="#i-gamepad"/></svg>Your games & purchases</h2>
@@ -544,7 +545,8 @@
         <h2><svg class="icon"><use href="#i-bars"/></svg>Month by month</h2>
         <span class="hint" id="games-trend-hint"></span>
       </div>
-      <div id="games-trend" class="cat-bars"></div>
+      <div class="games-legend" id="games-legend" aria-label="Games in the chart"></div>
+      <div id="games-trend" class="games-trend"></div>
     </section>
     <details class="panel games-activity" id="games-activity">
       <summary>Games over time <span class="hint">Activity based on purchases</span></summary>
@@ -557,9 +559,19 @@
         <h2><svg class="icon"><use href="#i-receipt"/></svg>Charges</h2>
         <span class="hint" id="games-count"></span>
       </div>
+      <div class="games-selection-bar hidden" id="games-selection-bar"></div>
+      <form class="games-assign hidden" id="games-assign-form" data-panel="games-assign" novalidate>
+        <div class="games-assign-head"><strong>Assign game</strong><span class="hint" id="games-assign-count"></span></div>
+        <div class="games-assign-grid">
+          <label class="drawer-field"><span class="drawer-field-label">Game title</span><input type="text" id="games-assign-title" list="games-title-options" maxlength="100" placeholder="Actual game title" autocomplete="off"><datalist id="games-title-options"></datalist></label>
+          <label class="drawer-field"><span class="drawer-field-label">Store / platform</span><input type="text" id="games-assign-platform" list="games-platform-options" maxlength="60" placeholder="Leave blank to keep each row's store" autocomplete="off"><datalist id="games-platform-options"></datalist></label>
+          <label class="drawer-field"><span class="drawer-field-label">Purchase type</span><select id="games-assign-type"><option value="">Keep as is</option><option>Base game</option><option>DLC</option><option>Monthly pass</option><option>Top-up</option><option>Account purchase</option><option>Subscription</option><option>Other</option></select></label>
+        </div>
+        <div class="games-assign-actions"><span class="hint" id="games-assign-status" role="status"></span><button type="button" class="history-button" id="games-assign-cancel">Cancel</button><button type="submit" class="drawer-save" id="games-assign-save">Save on selected charges</button></div>
+      </form>
       <div class="games-charges-scroll"><table class="ledger" id="games-transactions">
         <thead>
-          <tr><th class="col-date">Date</th><th>Description</th><th class="col-cat">Game / store</th><th class="col-amt">Amount</th></tr>
+          <tr><th class="col-select"><span class="sr-only">Select</span></th><th class="col-date">Date</th><th>Description</th><th class="col-cat" id="games-column-head">Game / store</th><th class="col-amt">Amount</th></tr>
         </thead>
         <tbody id="games-body"></tbody>
       </table></div>
@@ -636,8 +648,8 @@
 <script src="js/charts.js?v=20260905-2"></script>
 <script src="js/insights.js?v=20260905-4"></script>
 <script src="js/transaction-grouping.js?v=20260904-1"></script>
-<script src="js/games.js?v=3"></script>
-<script src="js/app.js?v=20260908-filters-1"></script>
+<script src="js/games.js?v=4"></script>
+<script src="js/app.js?v=20260908-ledger-2"></script>
 <script src="js/home.js?v=29"></script>
 <script src="js/networth.js?v=8"></script>
 </body>

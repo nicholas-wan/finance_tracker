@@ -818,6 +818,124 @@ def save_owner(tx_ids, owner):
         }
 
 
+def validate_game_details_request(payload, transactions):
+    """Resolve a batch game assignment to Games rows in the current build.
+
+    Posted by the Games tab's "Assign game" control. Only the fields given
+    are applied; ``hidden`` and any field left blank stay as they are on each
+    row, so one title can be stamped across rows with different stores.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object.")
+    ids = payload.get("ids")
+    if not isinstance(ids, list) or not ids or len(ids) > MAX_OWNER_BATCH:
+        raise ValueError(
+            "Between 1 and %d transaction IDs are required." % MAX_OWNER_BATCH)
+    if any(not isinstance(tx_id, str) or not tx_id.startswith("tx_") for tx_id in ids):
+        raise ValueError("A valid transaction ID is required.")
+    ids = sorted(set(ids))
+    if any(tx_id not in transactions for tx_id in ids):
+        raise ValueError("That transaction is not present in the current build.")
+    if any(transactions[tx_id].get("category") != "Games" for tx_id in ids):
+        raise ValueError("Only Games transactions can be assigned a game.")
+    details = validate_game_details(payload.get("gameDetails"))
+    if not details or "hidden" in details:
+        raise ValueError("A game title, store or purchase type is required.")
+    return ids, details
+
+
+def save_game_details(tx_ids, game_details):
+    """Stamp one game's details on a batch of rows under a single rebuild."""
+    if isinstance(tx_ids, str):
+        tx_ids = [tx_ids]
+    with WRITE_LOCK:
+        transaction_data = load_json(TRANSACTIONS_PATH)
+        transactions = {
+            row.get("id"): row for row in transaction_data.get("transactions", [])
+        }
+        tx_ids, game_details = validate_game_details_request(
+            {"ids": list(tx_ids), "gameDetails": game_details}, transactions)
+        rows = [transactions[tx_id] for tx_id in tx_ids]
+        paths = (OVERRIDE_PATH, AUDIT_PATH)
+        originals = {path: path.read_bytes() for path in paths}
+        override_data = json.loads(originals[OVERRIDE_PATH].decode("utf-8"))
+        overrides = override_data.setdefault("overridesById", {})
+        for tx_id in tx_ids:
+            override = overrides.setdefault(tx_id, {})
+            merged = dict(override.get("gameDetails", {}))
+            merged.update(game_details)
+            override["gameDetails"] = merged
+        override_data["overridesById"] = dict(sorted(overrides.items()))
+        previous = sorted({
+            (row.get("gameDetails") or {}).get("title") or "Game not assigned"
+            for row in rows
+        })
+        changes = [{
+            "field": "Game details",
+            "before": ", ".join(previous),
+            "after": ", ".join(
+                "%s: %s" % (key, game_details[key])
+                for key in ("title", "platform", "purchaseType") if key in game_details
+            ),
+        }]
+        audit_data = json.loads(originals[AUDIT_PATH].decode("utf-8"))
+        append_audit_entry(
+            audit_data,
+            make_audit_entry(
+                rows[0],
+                "Assigned game" if len(tx_ids) == 1
+                else "Assigned game for %d transactions" % len(tx_ids),
+                changes,
+                transaction_ids=tx_ids,
+            ),
+        )
+        payloads = {OVERRIDE_PATH: override_data, AUDIT_PATH: audit_data}
+        try:
+            snapshot_backups(paths)
+            for path in paths:
+                atomic_write_json(path, payloads[path])
+            build_output = run_script(BUILD_SCRIPT)
+            validation_output = run_script(VALIDATE_SCRIPT)
+            refreshed = load_json(TRANSACTIONS_PATH)
+            rebuilt = {
+                row.get("id"): row for row in refreshed.get("transactions", [])
+            }
+            updated_rows = [rebuilt.get(tx_id) for tx_id in tx_ids]
+            # Every posted field must land on every row; fields the batch did
+            # not touch are free to differ between rows.
+            if any(row is None or any(
+                    (row.get("gameDetails") or {}).get(key) != value
+                    for key, value in game_details.items())
+                   for row in updated_rows):
+                raise RuntimeError("The rebuilt dashboard did not apply the game details.")
+        except Exception as save_error:
+            failed_restores = restore_originals(paths, originals)
+            if failed_restores:
+                raise RuntimeError(
+                    "Save failed (%s) AND these manual files could not be "
+                    "restored, so they may still hold the rejected edit: %s. "
+                    "Copy their newest copies in manual/backups/ back "
+                    "before saving again."
+                    % (save_error, ", ".join(failed_restores))
+                )
+            try:
+                run_script(BUILD_SCRIPT)
+            except Exception as rollback_error:
+                raise RuntimeError(
+                    "Save failed and the prior overrides file was restored, but "
+                    "rebuilding that prior state also failed: %s" % rollback_error
+                )
+            raise
+        return {
+            "ok": True,
+            "transactions": updated_rows,
+            "quality": refreshed.get("quality", {}),
+            "build": build_output.splitlines()[0] if build_output else "Build completed.",
+            "validation": validation_output.splitlines()[0]
+            if validation_output else "Validation completed.",
+        }
+
+
 def save_risk_review(ids, recognized, key=None):
     with WRITE_LOCK:
         transaction_data = load_json(TRANSACTIONS_PATH)
@@ -1631,6 +1749,7 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
             "/api/risk-review",
             "/api/remark",
             "/api/transaction-detail",
+            "/api/game-details",
             "/api/game-profile",
             "/api/account-review",
             "/api/card-fee-review",
@@ -1713,6 +1832,9 @@ class FinanceHandler(StaticMixin, SimpleHTTPRequestHandler):
                 elif endpoint == "/api/remark":
                     tx_id, remark = validate_remark_request(payload, transactions)
                     result = save_remark(tx_id, remark)
+                elif endpoint == "/api/game-details":
+                    tx_ids, details = validate_game_details_request(payload, transactions)
+                    result = save_game_details(tx_ids, details)
                 else:
                     details = validate_transaction_detail_request(payload, transactions)
                     result = save_transaction_detail(*details, game_details=payload.get("gameDetails"))

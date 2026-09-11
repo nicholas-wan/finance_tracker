@@ -79,6 +79,10 @@
     // person whose charges were copied in.
     travelPayer: "All",
     ledgerLimit: LEDGER_CAP,
+    // Column sort on the card ledger; "date" descending is the statement order.
+    ledgerSort: { key: "date", dir: "desc" },
+    // "Other categories" in the summary opened into the full list.
+    summaryExpanded: false,
     period: { mode: "month", year: null, month: null }
   };
 
@@ -5132,47 +5136,128 @@
     return data.transactions.filter(function (t) { return t.category === "Games" && !(t.gameDetails||{}).hidden; });
   }
 
-  var gamesMonth='';
+  var gamesMonth='', gamesSelection={}, gamesAssignIds=null;
+  var GAME_SERIES=8;
+  // Colours follow the game, not its rank in the current period: the slot is
+  // fixed by all-years spend so a year filter never repaints a bar.
+  function gameColorSlots(all,sales,through){
+    var slots={};window.Gaming.summary(all,sales,'All','All',through).groups.forEach(function(g,i){slots[g.key]=i<GAME_SERIES?i+1:0;});
+    return slots;
+  }
+  function gameSwatch(slot){var s=el('span','games-swatch'+(slot?'':' other'));if(slot)s.style.background='var(--game-'+slot+')';s.setAttribute('aria-hidden','true');return s;}
+  function gamesSelectedIds(){return Object.keys(gamesSelection);}
+  function gamesYearMatches(t,year){return year==='All'||(t.date||t.month).slice(0,4)===year;}
+  function pct(value){return (value<10?value.toFixed(1):String(Math.round(value)))+'%';}
   function renderGames() {
     var all=gameTx(), sales=data.gameSales||[], G=window.Gaming;
     var through=((data.freshness||{}).sourceThrough||data.months[data.months.length-1]).slice(0,7);
     var years=Array.from(new Set(all.map(function(t){return G.month(t).slice(0,4);}).concat(sales.map(function(t){return t.month.slice(0,4);}),[through.slice(0,4)]))).sort().reverse();
     if(state.gameYear!=='All'&&years.indexOf(state.gameYear)<0)state.gameYear=years[0];
     var model=G.summary(all,sales,state.gameYear,state.game,through);state.game=model.key;
+    var slots=gameColorSlots(all,sales,through);
+    var selected=state.game==='All'?null:model.groups.find(function(g){return g.key===state.game;});
+    var visibleIds={};model.rows.forEach(function(t){visibleIds[t.id]=true;});
+    Object.keys(gamesSelection).forEach(function(id){if(!visibleIds[id])delete gamesSelection[id];});
     document.getElementById('games-scope').textContent=state.gameYear==='All'?'Gaming · All years':'Gaming in '+state.gameYear;
     var yearWrap=document.getElementById('games-years');clear(yearWrap);
-    years.concat(['All']).forEach(function(y){var b=el('button','pill'+(y===state.gameYear?' active':''),y==='All'?'All years':y);setPressed(b,y===state.gameYear);b.onclick=function(){state.gameYear=y;gamesMonth='';renderGames();};yearWrap.appendChild(b);});
+    years.concat(['All']).forEach(function(y){var b=el('button','pill'+(y===state.gameYear?' active':''),y==='All'?'All years':y);setPressed(b,y===state.gameYear);b.onclick=function(){state.gameYear=y;gamesMonth='';gamesSelection={};gamesAssignIds=null;renderGames();};yearWrap.appendChild(b);});
+
     var pills=document.getElementById('game-pills');clear(pills);
-    var reset=el('button','pill'+(state.game==='All'?' active':''),state.gameYear==='All'?'All games · All years':'All games in '+state.gameYear);setPressed(reset,state.game==='All');reset.onclick=function(){state.game='All';gamesMonth='';renderGames();};pills.appendChild(reset);
-    if(state.game!=='All'){var selected=model.groups.find(function(g){return g.key===state.game;});pills.appendChild(el('span','hint','Showing '+selected.info.label));}
+    var reset=el('button','pill'+(state.game==='All'?' active':''),state.gameYear==='All'?'All games · All years':'All games in '+state.gameYear);setPressed(reset,state.game==='All');reset.onclick=function(){state.game='All';gamesMonth='';gamesAssignIds=null;renderGames();};pills.appendChild(reset);
+    if(selected){
+      pills.appendChild(el('span','hint','Showing '+selected.info.label));
+      var jump=el('button','history-button','See in Transactions');jump.type='button';jump.title='Open these charges in the Transactions ledger';
+      jump.onclick=function(){
+        var ids=selected.rows.map(function(t){return t.id;});
+        openTransactions({ids:ids,filterLabel:selected.info.label+(state.gameYear==='All'?'':' · '+state.gameYear),category:'Games',period:state.gameYear==='All'?{mode:'all'}:{mode:'year',year:state.gameYear}});
+      };pills.appendChild(jump);
+      if(editor.available&&selected.rows.length){
+        var assign=el('button','history-button',(selected.info.assigned?'Change game for ':'Assign game to ')+selected.rows.length+' charge'+(selected.rows.length===1?'':'s'));assign.type='button';
+        assign.onclick=function(){gamesSelection={};selected.rows.forEach(function(t){gamesSelection[t.id]=true;});gamesAssignIds=gamesSelectedIds();renderGames();document.getElementById('games-assign-title').focus();};
+        pills.appendChild(assign);
+      }
+    }
+
     var kpis=document.getElementById('games-kpis');clear(kpis);
-    kpis.appendChild(metric('Purchases',fmt0(model.purchases/100),model.purchaseCount+' purchases',null,'gamepad'));
-    kpis.appendChild(metric('Refunds',fmt0(model.refunds/100),model.refundCount+' refunds',null,'receipt'));
-    kpis.appendChild(metric('Net gaming spend',fmt0(model.net/100),model.proceeds?'After refunds and '+fmt0(model.proceeds/100)+' sales':'After refunds',null,'coins'));
-    kpis.appendChild(metric('Monthly average',fmt0(model.average/100),model.months.length+' calendar months · through '+monthLabel(model.months.length?model.months[model.months.length-1].month:through),null,'calendar'));
+    kpis.appendChild(metric('Purchases',fmt0(model.purchases/100),model.purchaseCount+' purchase'+(model.purchaseCount===1?'':'s')+' · '+model.refundCount+' refund'+(model.refundCount===1?'':'s')+(model.refunds?' ('+fmt0(model.refunds/100)+')':''),null,'gamepad'));
+    kpis.appendChild(metric('Net gaming spend',fmt0(model.net/100),model.proceeds?'After refunds and '+fmt0(model.proceeds/100)+' account sales':'After refunds',null,'coins'));
+    kpis.appendChild(metric('Monthly average',fmt0(model.average/100),model.months.length+' calendar month'+(model.months.length===1?'':'s')+' · through '+monthLabel(model.months.length?model.months[model.months.length-1].month:through),null,'calendar'));
+    var previousYear=state.gameYear==='All'?null:String(+state.gameYear-1);
+    if(previousYear&&years.indexOf(previousYear)>=0){
+      // Spend after refunds, not net of account sales: a sale is a one-off
+      // windfall and would make a quiet year look like a negative one.
+      var previous=G.summary(all,sales,previousYear,state.game,through);
+      var partial=state.gameYear===through.slice(0,4),comparableSpend=previous.spend;
+      if(partial){
+        // A year still in progress is compared with the same months last year.
+        var cutoff=previousYear+through.slice(4);
+        comparableSpend=previous.rows.filter(function(t){return G.month(t)<=cutoff;}).reduce(function(n,t){return n+G.cents(t);},0);
+      }
+      var delta=model.spend-comparableSpend;
+      kpis.appendChild(metric('vs '+previousYear,(delta>0?'+':delta<0?'-':'')+fmt0(Math.abs(delta)/100),fmt0(comparableSpend/100)+(partial?' by '+MONTH_NAMES[+through.slice(5)-1]+' '+previousYear+' · '+fmt0(previous.spend/100)+' full year':' spent in '+previousYear)+' · before account sales',delta>0?'bad':delta<0?'good':null,'repeat'));
+    }
+    var cardNet=data.transactions.filter(function(t){return gamesYearMatches(t,state.gameYear)&&!EXCLUDED[t.category];}).reduce(function(n,t){return n+signed(t);},0);
+    var share=cardNet>0?model.spend/100/cardNet*100:0;
+    kpis.appendChild(metric('Share of card spend',pct(share),'of '+fmt0(cardNet)+' net card cost'+(state.gameYear==='All'?' across all years':' in '+state.gameYear)+(selected?' · '+selected.info.label+' only':''),null,'percent'));
+    var hiddenRows=data.transactions.filter(function(t){return t.category==='Games'&&(t.gameDetails||{}).hidden&&gamesYearMatches(t,state.gameYear);});
+    var hiddenNote=document.getElementById('games-hidden-note');
+    hiddenNote.textContent=hiddenRows.length?hiddenRows.length+' charge'+(hiddenRows.length===1?'':'s')+' hidden from Games ('+fmt(hiddenRows.reduce(function(n,t){return n+Math.abs(signed(t));},0))+' gross, netting to '+fmt(hiddenRows.reduce(function(n,t){return n+signed(t);},0))+') · still listed in Transactions':'';
+    hiddenNote.classList.toggle('hidden',!hiddenRows.length);
+
     var list=document.getElementById('games-breakdown');clear(list);list.className='games-library';
     var largestGameSpend=Math.max.apply(null,[1].concat(model.groups.map(function(g){return Math.abs(g.total);})));
     model.groups.forEach(function(g){
       var b=el('button','games-library-row'+(state.game===g.key?' selected':''));setPressed(b,state.game===g.key);
       var art=el('span','games-art');if(GAME_THUMBNAILS[g.info.label]){art.classList.add('has-thumbnail');var thumb=el('img','games-thumbnail');thumb.src=GAME_THUMBNAILS[g.info.label];thumb.alt='';thumb.loading='lazy';thumb.onerror=function(){art.classList.remove('has-thumbnail');clear(art);art.appendChild(gameLogo(g.info.label));};art.appendChild(thumb);}else art.appendChild(gameLogo(g.info.store||g.info.label));b.appendChild(art);
-      var copy=el('span','games-game-copy');copy.appendChild(el('strong','',g.info.label));
+      var copy=el('span','games-game-copy'),title=el('strong','');title.appendChild(gameSwatch(slots[g.key]));title.appendChild(document.createTextNode(g.info.label));copy.appendChild(title);
       var platforms=Array.from(new Set(g.rows.map(function(t){return (t.gameDetails||{}).platform||'';}).filter(Boolean)));
       var last=g.rows.slice().sort(function(a,b){return (b.date||b.month).localeCompare(a.date||a.month);})[0];
       copy.appendChild(el('small','',(!g.info.assigned?'Game not assigned · ':platforms.length?platforms.join(', ')+' · ':'')+(last?'Last activity '+dateLabel(last.date||last.month+'-01'):'Account sale recorded')));b.appendChild(copy);
       var spendTrack=el('span','games-spend-track');spendTrack.setAttribute('aria-hidden','true');
-      var spendFill=el('span','games-spend-fill'+(g.total<0?' refund':''));spendFill.style.width=(Math.abs(g.total)/largestGameSpend*100)+'%';spendTrack.appendChild(spendFill);copy.appendChild(spendTrack);
-      var amount=el('span','games-game-amount');amount.appendChild(el('strong','',fmt(g.total/100)));amount.appendChild(el('small','',state.gameYear==='All'?'All-years spend':state.gameYear+' spend'));b.appendChild(amount);
-      b.onclick=function(){state.game=state.game===g.key?'All':g.key;gamesMonth='';renderGames();};list.appendChild(b);
+      var spendFill=el('span','games-spend-fill'+(g.total<0?' refund':''));spendFill.style.width=(Math.abs(g.total)/largestGameSpend*100)+'%';if(g.total>0&&slots[g.key])spendFill.style.background='var(--game-'+slots[g.key]+')';spendTrack.appendChild(spendFill);copy.appendChild(spendTrack);
+      var amount=el('span','games-game-amount');amount.appendChild(el('strong','',fmt(g.total/100)));
+      var detail=g.purchaseCount+' purchase'+(g.purchaseCount===1?'':'s');
+      if(g.share>0)detail+=' · '+pct(g.share*100)+' of '+(state.gameYear==='All'?'all-years':state.gameYear)+' spend';
+      else if(g.total<0)detail+=' · net refund';
+      amount.appendChild(el('small','',detail));b.appendChild(amount);
+      b.onclick=function(){state.game=state.game===g.key?'All':g.key;gamesMonth='';gamesAssignIds=null;renderGames();};list.appendChild(b);
     });
     if(!model.groups.length)list.appendChild(emptyState('No gaming activity in this period','Choose another year to see your purchases.','gamepad'));
     list.appendChild(el('p','hint','Bars compare spending after refunds in this period; green bars show net refunds. Select a game to filter purchases; click it again to show all games.'));
-    var trend=document.getElementById('games-trend');clear(trend);trend.className='games-month-chart';
-    var max=Math.max.apply(null,[1].concat(model.months.map(function(m){return Math.abs(m.cents);})));
-    model.months.forEach(function(m){var b=el('button','games-month'+(m.month===gamesMonth?' selected':''));setPressed(b,m.month===gamesMonth);b.title=monthLabel(m.month)+': '+fmt(m.cents/100)+' net spending';b.setAttribute('aria-label',b.title);
-      b.appendChild(el('span','games-month-value',fmt0(m.cents/100)));var track=el('span','games-month-track'),bar=el('span','games-month-fill'+(m.cents<0?' refund':''));bar.style.height=(Math.abs(m.cents)/max*100)+'%';track.appendChild(bar);b.appendChild(track);b.appendChild(el('span','',state.gameYear==='All'?monthLabel(m.month):MONTH_NAMES[+m.month.slice(5)-1]));
-      b.onclick=function(){gamesMonth=gamesMonth===m.month?'':m.month;renderGames();};trend.appendChild(b);
+
+    // Month by month: one bar per month, stacked by game in library order.
+    var legend=document.getElementById('games-legend');clear(legend);
+    var legendGroups=model.groups.filter(function(g){return g.rows.length;});
+    if(legendGroups.length>1)legendGroups.forEach(function(g){
+      var chip=el('button','games-legend-chip'+(state.game===g.key?' active':''));chip.type='button';setPressed(chip,state.game===g.key);
+      chip.appendChild(gameSwatch(slots[g.key]));chip.appendChild(document.createTextNode(g.info.label));
+      chip.onclick=function(){state.game=state.game===g.key?'All':g.key;gamesMonth='';gamesAssignIds=null;renderGames();};legend.appendChild(chip);
     });
-    document.getElementById('games-trend-hint').textContent='Transaction months · '+(gamesMonth?monthLabel(gamesMonth)+' selected — click again to clear':'click a month to filter purchases');
+    var trend=document.getElementById('games-trend');clear(trend);trend.className='games-trend';
+    var cells=G.stacked(model.groups,model.months,model.rows),labelByKey={};model.groups.forEach(function(g){labelByKey[g.key]=g.info.label;});
+    var max=Math.max.apply(null,[1].concat(cells.map(function(c){return Math.max(c.cents,c.segments.reduce(function(n,s){return n+s.cents;},0),-c.refund);})));
+    var chartYears=state.gameYear==='All'?Array.from(new Set(cells.map(function(c){return c.month.slice(0,4);}))):[state.gameYear];
+    chartYears.forEach(function(year){
+      var block=el('div','games-month-block');
+      if(state.gameYear==='All')block.appendChild(el('h3','',year));
+      var chart=el('div','games-month-chart');
+      cells.filter(function(c){return c.month.slice(0,4)===year;}).forEach(function(m){
+        var b=el('button','games-month'+(m.month===gamesMonth?' selected':''));setPressed(b,m.month===gamesMonth);
+        var lines=[monthLabel(m.month)+': '+fmt(m.cents/100)+' net spending'];
+        m.segments.forEach(function(s){lines.push(labelByKey[s.key]+' '+fmt(s.cents/100));});
+        if(m.refund)lines.push('Refunds '+fmt(m.refund/100));
+        b.title=lines.join('\n');b.setAttribute('aria-label',lines.join('; '));
+        b.appendChild(el('span','games-month-value',fmt0(m.cents/100)));
+        var track=el('span','games-month-track');
+        if(m.cents<0){var refundBar=el('span','games-month-fill refund');refundBar.style.height=(-m.cents/max*100)+'%';track.appendChild(refundBar);}
+        else m.segments.forEach(function(s){var seg=el('span','games-month-fill');seg.style.height=(s.cents/max*100)+'%';if(slots[s.key])seg.style.background='var(--game-'+slots[s.key]+')';track.appendChild(seg);});
+        b.appendChild(track);b.appendChild(el('span','',MONTH_NAMES[+m.month.slice(5)-1]));
+        b.onclick=function(){gamesMonth=gamesMonth===m.month?'':m.month;renderGames();};chart.appendChild(b);
+      });
+      block.appendChild(chart);trend.appendChild(block);
+    });
+    document.getElementById('games-trend-hint').textContent=(gamesMonth?monthLabel(gamesMonth)+' selected — click again to clear':'Click a month to filter charges');
+
     var timeline=document.getElementById('games-activity-scroll'),scrollPositions={};
     timeline.querySelectorAll('.games-activity-year-scroll').forEach(function(n){scrollPositions[n.dataset.year]=n.scrollLeft;});
     clear(timeline);
@@ -5205,6 +5290,7 @@
             var tile=el('button','games-activity-tile'+(active?' selected':''));tile.type='button';
             var description=g.title+' - '+monthLabel(c.month)+': '+fmt(c.cents/100)+' across '+c.count+' purchase'+(c.count===1?'':'s');
             tile.title=description;tile.setAttribute('aria-label',description);tile.setAttribute('aria-pressed',String(active));tile.dataset.game=g.key;tile.dataset.month=c.month;
+            if(slots[g.key]){tile.style.background='color-mix(in srgb,var(--game-'+slots[g.key]+') 45%,transparent)';tile.style.borderColor='var(--game-'+slots[g.key]+')';}
             if(active)selectionText=description+'. Select again to clear.';
             tile.onclick=function(){state.game=active?'All':g.key;gamesMonth=active?'':c.month;renderGames();
               var target=Array.from(timeline.querySelectorAll('button')).find(function(b){return b.dataset.game===g.key&&b.dataset.month===c.month;});if(target)target.focus({preventScroll:true});
@@ -5222,28 +5308,45 @@
     });
     if(!timeline.children.length)timeline.appendChild(el('p','hint','No assigned game purchases in this period.'));
     document.getElementById('games-activity-selection').textContent=selectionText;
+
+    // Charges: day-grouped rows, with a selection column when the server can save.
+    document.getElementById('games-transactions').classList.toggle('selectable',editor.available);
+    document.getElementById('games-column-head').textContent=selected?'Store / platform':'Game / store';
     var body=document.getElementById('games-body');clear(body);
     var rows=model.rows.filter(function(t){return !gamesMonth||G.month(t)===gamesMonth;}).sort(function(a,b){return (b.date||b.month).localeCompare(a.date||a.month);});
     var grouped={};rows.forEach(function(t){var key=(t.date||t.month)+':'+G.identity(t).key;if(!grouped[key])grouped[key]=[];grouped[key].push(t);});
+    function stopRow(node){node.addEventListener('click',function(e){e.stopPropagation();});node.addEventListener('keydown',function(e){if(e.key==='Enter'||e.key===' ')e.stopPropagation();});}
+    function selectCell(ids,label){
+      var td=el('td','col-select');if(!editor.available)return td;
+      var box=document.createElement('input');box.type='checkbox';box.className='games-select';box.checked=ids.every(function(id){return gamesSelection[id];});
+      box.indeterminate=!box.checked&&ids.some(function(id){return gamesSelection[id];});
+      box.setAttribute('aria-label','Select '+label);stopRow(box);
+      box.addEventListener('change',function(){ids.forEach(function(id){if(box.checked)gamesSelection[id]=true;else delete gamesSelection[id];});renderGames();});
+      td.appendChild(box);return td;
+    }
+    function gameCell(t){var info=G.identity(t);return selected?((t.gameDetails||{}).platform||(info.store&&info.store!==info.label?info.store:'')||t.game||'—'):info.label;}
     function addTransaction(target,t){
       var tr=el('tr','games-charge');
+      tr.appendChild(selectCell([t.id],(t.displayName||t.description)+' on '+(t.date?dateLabel(t.date):monthLabel(t.month))));
       tr.appendChild(el('td','col-date',t.date?dateLabel(t.date):monthLabel(t.month)));
       var desc=el('td','games-charge-description',t.displayName||t.description);
-      if((t.gameDetails||{}).purchaseType)desc.appendChild(el('small','games-purchase-type',t.gameDetails.purchaseType));
-      tr.appendChild(desc);tr.appendChild(el('td','col-cat',G.identity(t).label));
+      var type=G.purchaseType(t);
+      if(type){var typeNote=el('small','games-purchase-type'+(type.guessed?' guessed':''),type.type+(type.guessed?' · guessed from the store':''));if(type.guessed)typeNote.title='Not saved on this transaction; open it to set the purchase type.';desc.appendChild(typeNote);}
+      tr.appendChild(desc);tr.appendChild(el('td','col-cat',gameCell(t)));
       tr.appendChild(el('td','col-amt'+(t.type!=='debit'?' credit':''),(t.type==='debit'?'-':'+')+fmt(t.amount)));
-      appendExpandableRow(target,tr,t,4,[],'games');return tr;
+      appendExpandableRow(target,tr,t,editor.available?5:4,[],'games');return tr;
     }
     Object.values(grouped).forEach(function(group,index){
       if(group.length===1){addTransaction(body,group[0]);return;}
       var tr=el('tr','games-charge-summary'),dateCell=el('td','col-date');
+      tr.appendChild(selectCell(group.map(function(t){return t.id;}),group.length+' '+G.identity(group[0]).label+' charges on '+dateLabel(group[0].date||group[0].month+'-01')));
       var toggle=el('button','games-charge-toggle');toggle.type='button';toggle.setAttribute('aria-expanded','false');
       var arrow=el('span','games-charge-arrow','›');arrow.setAttribute('aria-hidden','true');toggle.appendChild(arrow);
       toggle.appendChild(el('span','',dateLabel(group[0].date||group[0].month+'-01')));
       toggle.setAttribute('aria-label',dateLabel(group[0].date||group[0].month+'-01')+' · '+G.identity(group[0]).label+' · '+group.length+' transactions');
       dateCell.appendChild(toggle);tr.appendChild(dateCell);
       tr.appendChild(el('td','',group.length+' transactions'));
-      tr.appendChild(el('td','col-cat',G.identity(group[0]).label));
+      tr.appendChild(el('td','col-cat',gameCell(group[0])));
       var total=group.reduce(function(n,t){return n+G.cents(t);},0);
       tr.appendChild(el('td','col-amt'+(total<0?' credit':''),(total>0?'-':total<0?'+':'')+fmt(Math.abs(total)/100)));
       body.appendChild(tr);
@@ -5251,11 +5354,66 @@
       toggle.setAttribute('aria-controls',children.map(function(row){return row.id;}).join(' '));
       toggle.onclick=function(){var open=toggle.getAttribute('aria-expanded')!=='true';toggle.setAttribute('aria-expanded',String(open));tr.classList.toggle('expanded',open);children.forEach(function(row){row.classList.toggle('hidden',!open);});};
     });
-    if(!rows.length){var tr=el('tr',''),td=el('td','','No purchases or refunds in this selection.');td.colSpan=4;tr.appendChild(td);body.appendChild(tr);}
+    if(!rows.length){var tr=el('tr',''),td=el('td','','No purchases or refunds in this selection.');td.colSpan=editor.available?5:4;tr.appendChild(td);body.appendChild(tr);}
     document.getElementById('games-count').textContent=rows.filter(function(t){return t.type==='debit';}).length+' purchases · '+rows.filter(function(t){return t.type!=='debit';}).length+' refunds';
+    renderGamesSelectionBar(rows);
+
     var salesWrap=document.getElementById('sales-list');clear(salesWrap);document.getElementById('sales-hint').textContent=fmt(model.proceeds/100)+' · '+model.sales.length+' sales';
     model.sales.slice().sort(function(a,b){return b.month.localeCompare(a.month);}).forEach(function(s){var row=el('div','games-sale-row');row.appendChild(el('span','',s.game+' · '+monthLabel(s.month)));row.appendChild(el('strong','',fmt(s.amount)));salesWrap.appendChild(row);});
     if(!model.sales.length)salesWrap.appendChild(el('p','hint','No account sales in this selection.'));
+  }
+
+  // Ticking charges builds a batch; "Assign game" stamps one title on all of
+  // them with a single rebuild, as exact-transaction overrides.
+  function renderGamesSelectionBar(rows){
+    var bar=document.getElementById('games-selection-bar'),panel=document.getElementById('games-assign-form');
+    clear(bar);
+    var ids=gamesSelectedIds();
+    bar.classList.toggle('hidden',!editor.available||(!ids.length&&!rows.length));
+    if(!editor.available){panel.classList.add('hidden');return;}
+    if(ids.length){
+      bar.appendChild(el('strong','',ids.length+' selected'));
+      var assign=el('button','history-button','Assign game');assign.type='button';assign.onclick=function(){gamesAssignIds=gamesSelectedIds();renderGamesSelectionBar(rows);document.getElementById('games-assign-title').focus();};bar.appendChild(assign);
+      var none=el('button','history-button','Clear selection');none.type='button';none.onclick=function(){gamesSelection={};gamesAssignIds=null;renderGames();};bar.appendChild(none);
+    } else {
+      bar.appendChild(el('span','hint','Tick charges to assign them a game together'));
+      var allBtn=el('button','history-button','Select all '+rows.length);allBtn.type='button';allBtn.onclick=function(){rows.forEach(function(t){gamesSelection[t.id]=true;});renderGames();};bar.appendChild(allBtn);
+    }
+    var open=!!(gamesAssignIds&&gamesAssignIds.length);
+    panel.classList.toggle('hidden',!open);
+    if(!open)return;
+    document.getElementById('games-assign-count').textContent=gamesAssignIds.length+' charge'+(gamesAssignIds.length===1?'':'s')+' · saved on each transaction; blank fields are left as they are.';
+    var titles=document.getElementById('games-title-options'),platforms=document.getElementById('games-platform-options');clear(titles);clear(platforms);
+    Array.from(new Set(gameTx().map(function(t){return (t.gameDetails||{}).title||'';}).concat(Object.keys(GAME_THUMBNAILS)).filter(Boolean))).sort().forEach(function(name){var o=document.createElement('option');o.value=name;titles.appendChild(o);});
+    Array.from(new Set(gameTx().map(function(t){return (t.gameDetails||{}).platform||t.game||'';}).filter(Boolean))).sort().forEach(function(name){var o=document.createElement('option');o.value=name;platforms.appendChild(o);});
+    var byId={};data.transactions.forEach(function(t){byId[t.id]=t;});
+    var sample=gamesAssignIds.map(function(id){return byId[id];}).filter(Boolean);
+    var titleInput=document.getElementById('games-assign-title');
+    var sharedTitle=Array.from(new Set(sample.map(function(t){return (t.gameDetails||{}).title||'';})));
+    if(!titleInput.value&&sharedTitle.length===1)titleInput.value=sharedTitle[0];
+    document.getElementById('games-assign-status').textContent='';
+  }
+  function bindGamesAssignForm(){
+    var form=document.getElementById('games-assign-form');if(!form)return;
+    var status=document.getElementById('games-assign-status'),save=document.getElementById('games-assign-save');
+    document.getElementById('games-assign-cancel').addEventListener('click',function(){gamesAssignIds=null;form.reset();renderGames();});
+    form.addEventListener('submit',function(e){
+      e.preventDefault();
+      var details={};
+      var title=document.getElementById('games-assign-title').value.trim().replace(/\s+/g,' ');
+      var platform=document.getElementById('games-assign-platform').value.trim().replace(/\s+/g,' ');
+      var type=document.getElementById('games-assign-type').value;
+      if(title)details.title=title;if(platform)details.platform=platform;if(type)details.purchaseType=type;
+      if(!Object.keys(details).length){status.textContent='Enter a game title, store or purchase type.';return;}
+      var ids=gamesAssignIds||[];if(!ids.length){status.textContent='No charges selected.';return;}
+      save.disabled=true;status.textContent='Saving, rebuilding and validating…';
+      fetch('api/game-details',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({ids:ids,gameDetails:details})})
+        .then(function(response){return response.json().catch(function(){return {error:'The local server returned an unreadable response.'};}).then(function(payload){if(!response.ok)throw new Error(payload.error||'Game assignment failed.');return payload;});})
+        .then(function(payload){gamesSelection={};gamesAssignIds=null;form.reset();if(!applySavedRows(payload))return refetchAfterSave();})
+        .then(function(){showToast((details.title||'Game details')+' saved on '+ids.length+' charge'+(ids.length===1?'':'s')+'.','success');})
+        .catch(function(error){status.textContent=error.message;showToast(error.message,'error');})
+        .then(function(){save.disabled=false;});
+    });
   }
 
   // ---------- Split ----------
@@ -5599,8 +5757,55 @@
     if (q && (transactionName(t) + " " + t.description + " " +
       t.category + " " + rowCountry(t) + " " + t.owner + " " +
       (t.card || "") + " " + (t.foreign || "") + " " +
-      (t.remark || "")).toLowerCase().indexOf(q) === -1) return false;
+      (t.remark || "") + " " + t.amount.toFixed(2) + " " + fmt(t.amount)).toLowerCase().indexOf(q) === -1) return false;
     return true;
+  }
+
+  // Column sorting for the card ledger. Ties fall back to the statement
+  // order so a sort by amount keeps same-value rows in date order.
+  var LEDGER_SORT_HEADS = {
+    date: "ledger-date-head", description: "ledger-description-head",
+    category: "ledger-category-head", amount: "ledger-amount-head"
+  };
+  function sortLedgerRows(rows) {
+    var sort = state.ledgerSort, sign = sort.dir === "asc" ? 1 : -1;
+    if (sort.key === "date") return sign < 0 ? rows : rows.slice().reverse();
+    function key(t) {
+      if (sort.key === "amount") return signed(t);
+      if (sort.key === "category") return t.category.toLowerCase();
+      return transactionName(t).toLowerCase();
+    }
+    return rows.slice().sort(function (a, b) {
+      var ka = key(a), kb = key(b);
+      if (ka < kb) return -sign;
+      if (ka > kb) return sign;
+      return (b.date || b.month).localeCompare(a.date || a.month);
+    });
+  }
+  function syncLedgerSortHeads(enabled) {
+    Object.keys(LEDGER_SORT_HEADS).forEach(function (name) {
+      var head = document.getElementById(LEDGER_SORT_HEADS[name]);
+      head.classList.toggle("sortable", enabled);
+      if (enabled && state.ledgerSort.key === name) {
+        head.setAttribute("aria-sort", state.ledgerSort.dir === "asc" ? "ascending" : "descending");
+      } else head.removeAttribute("aria-sort");
+      head.title = enabled ? "Sort by " + name : "";
+    });
+  }
+  function bindLedgerSorting() {
+    Object.keys(LEDGER_SORT_HEADS).forEach(function (name) {
+      var head = document.getElementById(LEDGER_SORT_HEADS[name]);
+      head.addEventListener("click", function () {
+        if (!head.classList.contains("sortable")) return;
+        var sort = state.ledgerSort;
+        // Amount opens with the largest charge first; text columns A to Z.
+        var firstDir = name === "date" || name === "amount" ? "desc" : "asc";
+        state.ledgerSort = sort.key === name
+          ? { key: name, dir: sort.dir === "asc" ? "desc" : "asc" }
+          : { key: name, dir: firstDir };
+        renderLedger();
+      });
+    });
   }
 
   // A wallet payment is travel only when a trip claimed it by date; a Taobao
@@ -5682,7 +5887,7 @@
       return;
     }
     var grid = el("div", "transaction-average-grid");
-    var renderedSpans = [];
+    var renderedSpans = [], averages = {};
     [6, 12].forEach(function (requestedMonths) {
       var priorMonths = allPriorMonths.slice(-requestedMonths);
       // With under 12 months of history both windows hold the same months and
@@ -5696,6 +5901,7 @@
       var average = window.FinanceGrouping.averageForMonths(
         comparisonRows, priorMonths, EXCLUDED
       );
+      averages[requestedMonths] = average;
       var difference = roundMoney(currentCost - average);
       var direction = difference > 0 ? "above" : difference < 0 ? "below" : "in line";
       var tone = difference > 0 ? "higher" : difference < 0 ? "lower" : "even";
@@ -5709,6 +5915,54 @@
       grid.appendChild(item);
     });
     comparison.appendChild(grid);
+    // "36% above the 6M average" beside "30% below the 12M average" reads as
+    // a contradiction until the months themselves are visible: one bar per
+    // statement month, the current one in accent, with the same filters.
+    var spanMonths = allPriorMonths.slice(-12).concat([currentMonth]);
+    var points = spanMonths.map(function (month) {
+      var monthRows = data.transactions.filter(function (transaction) {
+        return transaction.month === month && matchesLedgerFilters(transaction, true);
+      });
+      return { month: month, cost: window.FinanceGrouping.summarize(monthRows, EXCLUDED).netCost };
+    });
+    if (points.length > 2) {
+      var spark = el("div", "transaction-sparkline");
+      var svgNS = "http://www.w3.org/2000/svg";
+      var svg = document.createElementNS(svgNS, "svg");
+      var width = 240, height = 44, gap = 2, slot = width / points.length;
+      svg.setAttribute("viewBox", "0 0 " + width + " " + height);
+      svg.setAttribute("preserveAspectRatio", "none");
+      svg.setAttribute("role", "img");
+      svg.setAttribute("aria-label", "Net cost by statement month: " + points.map(function (point) {
+        return monthLabel(point.month) + " " + fmt0(point.cost);
+      }).join(", "));
+      var peak = points.reduce(function (largest, point) { return Math.max(largest, Math.abs(point.cost)); }, 0.01);
+      points.forEach(function (point, index) {
+        var bar = document.createElementNS(svgNS, "rect");
+        var barHeight = Math.max(1, Math.abs(point.cost) / peak * (height - 2));
+        bar.setAttribute("x", (index * slot + gap / 2).toFixed(1));
+        bar.setAttribute("y", (height - barHeight).toFixed(1));
+        bar.setAttribute("width", (slot - gap).toFixed(1));
+        bar.setAttribute("height", barHeight.toFixed(1));
+        bar.setAttribute("rx", "1.5");
+        if (point.month === currentMonth) bar.setAttribute("class", "current");
+        var tip = document.createElementNS(svgNS, "title");
+        tip.textContent = monthLabel(point.month) + ": " + fmt(point.cost);
+        bar.appendChild(tip);
+        svg.appendChild(bar);
+      });
+      spark.appendChild(svg);
+      spark.appendChild(el("small", "", monthLabel(points[0].month) + " to " + monthLabel(currentMonth) + " · net cost per statement month"));
+      comparison.appendChild(spark);
+    }
+    if (averages[6] !== undefined && averages[12] !== undefined && Math.abs(averages[12]) >= 0.01) {
+      var ratio = averages[6] / averages[12];
+      if (ratio < 0.85 || ratio > 1.15) {
+        comparison.appendChild(el("div", "transaction-average-hint",
+          "The last six months ran " + (ratio < 1 ? "lighter" : "heavier") +
+          " than the year, so this month can sit above one average and below the other."));
+      }
+    }
     headline.appendChild(comparison);
   }
 
@@ -5842,7 +6096,9 @@
     summary.appendChild(section);
   }
 
+  var lastSummaryRows = [];
   function renderTransactionSummary(rows) {
+    lastSummaryRows = rows;
     var summary = document.getElementById("transaction-summary");
     clear(summary);
     summary.classList.remove("bank-summary");
@@ -5889,21 +6145,30 @@
         }
         return b.amount - a.amount;
       });
-      if (limit && entries.length > limit) {
+      var folded = 0, expanded = kind === "category" && state.summaryExpanded;
+      if (limit && entries.length > limit && !expanded) {
         var remainder = entries.slice(limit).reduce(function (total, item) {
           return total + item.amount;
         }, 0);
+        folded = entries.length - limit;
         entries = entries.slice(0, limit);
         if (Math.abs(remainder) >= 0.01) {
-          entries.push({ name: "Other categories", amount: roundMoney(remainder) });
+          entries.push({ name: "Other categories", amount: roundMoney(remainder), folded: folded });
         }
       }
       var maxAmount = entries.reduce(function (largest, item) {
         return Math.max(largest, Math.abs(item.amount));
       }, 0.01);
       entries.forEach(function (item) {
-        var row = el("div", "transaction-breakdown-row");
+        var row = el(item.folded ? "button" : "div", "transaction-breakdown-row" + (item.folded ? " expandable" : ""));
         var name = item.name === "Untagged" ? "Unassigned" : item.name;
+        if (item.folded) {
+          // The fold hid more than it showed some months; one click lists everything.
+          row.type = "button";
+          name = "Other categories (" + item.folded + ")";
+          row.title = "Show all categories";
+          row.addEventListener("click", function () { state.summaryExpanded = true; renderTransactionSummary(lastSummaryRows); });
+        }
         row.appendChild(el("span", "transaction-breakdown-name", name));
         var track = el("span", "transaction-breakdown-track");
         var fill = el("span", "transaction-breakdown-fill" +
@@ -5917,6 +6182,13 @@
         row.appendChild(el("strong", item.amount < 0 ? "credit" : "", fmt(item.amount)));
         section.appendChild(row);
       });
+      if (expanded && limit && entries.length > limit) {
+        var fewer = el("button", "transaction-breakdown-row expandable", "");
+        fewer.type = "button";
+        fewer.appendChild(el("span", "transaction-breakdown-name", "Show top " + limit + " only"));
+        fewer.addEventListener("click", function () { state.summaryExpanded = false; renderTransactionSummary(lastSummaryRows); });
+        section.appendChild(fewer);
+      }
       summary.appendChild(section);
     }
 
@@ -5925,7 +6197,7 @@
       // repeat the total; the country breakdown takes the room instead.
       renderTravelYearCountryBreakdown(summary, rows);
     } else {
-      appendBreakdown("By category", totals.categoryTotals, null, 4, "category");
+      appendBreakdown("By category", totals.categoryTotals, null, 6, "category");
       appendBreakdown("By owner", totals.ownerTotals, OWNER_ORDER, null, "owner");
     }
   }
@@ -6902,6 +7174,12 @@
     });
     document.getElementById('transaction-filter-count').textContent=parts.length?'('+parts.length+')':'';
     document.getElementById('clear-transaction-filters').classList.toggle('hidden',!parts.length);
+    if(!bank&&state.category==='Games'){
+      // The Games sub-tab is the richer view of the same rows.
+      var games=el('button','filter-summary-chip filter-summary-link','Open Games view →');games.type='button';
+      games.title='See these charges by game on the Games sub-tab';
+      games.onclick=function(){setTab('transactions','games');};host.appendChild(games);
+    }
     host.parentElement.classList.toggle('hidden',!parts.length);
     ['transaction-owner-group','transaction-merchant-group','transaction-include-group'].forEach(function(id){document.getElementById(id).classList.toggle('hidden',bank);});
 
@@ -6914,6 +7192,7 @@
     var body = document.getElementById("ledger-body");
     clear(body);
     if (state.transactionSource === "bank") {
+      syncLedgerSortHeads(false);
       renderAccountLedger(body);
       return;
     }
@@ -6930,6 +7209,7 @@
     document.getElementById("ledger-category-head").textContent = "Category";
     document.getElementById("ledger-owner-head").textContent = "Owner";
     if (state.groupPurchases) {
+      syncLedgerSortHeads(false);
       renderGroupedLedger(body, rows, showYear);
       return;
     }
@@ -6937,6 +7217,9 @@
     document.getElementById("ledger-description-head").textContent = "Description";
     document.getElementById("ledger-remark-head").textContent = "Remarks";
     document.getElementById("ledger-amount-head").textContent = "Amount";
+    syncLedgerSortHeads(true);
+    rows = sortLedgerRows(rows);
+    var byDate = state.ledgerSort.key === "date", previousDay = null;
     rows.slice(0, state.ledgerLimit).forEach(function (t) {
       var tr = document.createElement("tr");
       if (t.risk && !t.risk.recognized) {
@@ -6944,6 +7227,10 @@
       }
       var d = t.date ? t.date.slice(8, 10) + " " + MONTH_NAMES[parseInt(t.date.slice(5, 7), 10) - 1] : "—";
       if (showYear && t.date) d += " " + t.date.slice(2, 4);
+      // The date reads once per day when the list is in date order.
+      var day = t.date || t.month;
+      tr.classList.add(byDate && day === previousDay ? "same-day" : "day-start");
+      previousDay = day;
       tr.appendChild(el("td", "col-date", d));
       var rowShopeeOrders = shopeeOrdersFor(t);
       var shopeeItems = [];
@@ -7046,6 +7333,10 @@
           tdDesc.appendChild(el("span", "source-badge cancelled-source", "Cancelled"));
         }
       }
+      // Phones hide the Category column; a dot and label read here instead.
+      var catInline = el("small", "cat-inline phone-only", t.category);
+      catInline.style.setProperty("--dot", categoryColor(t.category));
+      tdDesc.appendChild(catInline);
       if (t.remark) tdDesc.appendChild(el("small", "row-remark-inline", t.remark));
       if (t.paidBy) {
         // Phones hide the Owner column, so who paid also reads here.
@@ -7506,6 +7797,8 @@
         renderLedger();
       });
     });
+    bindGamesAssignForm();
+    bindLedgerSorting();
     document.getElementById("show-excluded").addEventListener("change", function (e) {
       state.showExcluded = e.target.checked;
       state.ledgerLimit = LEDGER_CAP;

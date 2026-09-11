@@ -811,6 +811,37 @@ class SaveWritePathTests(unittest.TestCase):
         serve.save_transaction_detail(self.TX_ID, "Nic", "Games", "", "", game_details={})
         self.assertNotIn("gameDetails", self.read("OVERRIDE_PATH")["overridesById"].get(self.TX_ID, {}))
 
+    def test_save_game_details_batch_merges_and_audits(self):
+        rows = [
+            self.row(category="Games", gameDetails={"platform": "Steam"}),
+            self.row(id=self.SECOND_ID, category="Games"),
+        ]
+        self.write_transactions(rows)
+        self.stage_rebuild_rows([
+            self.row(category="Games", gameDetails={"platform": "Steam", "title": "Example game"}),
+            self.row(id=self.SECOND_ID, category="Games", gameDetails={"title": "Example game"}),
+        ])
+        result = serve.save_game_details([self.TX_ID, self.SECOND_ID], {"title": "Example game"})
+        overrides = self.read("OVERRIDE_PATH")["overridesById"]
+        self.assertEqual(overrides[self.TX_ID]["gameDetails"], {"title": "Example game"})
+        self.assertEqual(overrides[self.SECOND_ID]["gameDetails"], {"title": "Example game"})
+        self.assertEqual([row["id"] for row in result["transactions"]], [self.TX_ID, self.SECOND_ID])
+        entry = self.read("AUDIT_PATH")["entries"][-1]
+        self.assertEqual(entry["action"], "Assigned game for 2 transactions")
+        self.assertEqual(self.script_runs(), ["build", "validate"])
+
+    def test_save_game_details_rejects_non_games_and_rolls_back(self):
+        self.write_transactions([self.row(category="Shopping")])
+        with self.assertRaisesRegex(ValueError, "Only Games"):
+            serve.save_game_details([self.TX_ID], {"title": "Example game"})
+        self.write_transactions([self.row(category="Games")])
+        with self.assertRaisesRegex(ValueError, "required"):
+            serve.save_game_details([self.TX_ID], {"hidden": True})
+        self.stage_rebuild(category="Games", gameDetails={})
+        with self.assertRaisesRegex(RuntimeError, "did not apply"):
+            serve.save_game_details([self.TX_ID], {"title": "Example game"})
+        self.assert_untouched("OVERRIDE_PATH", "AUDIT_PATH")
+
     def test_game_details_reject_invalid_before_writing(self):
         for value in ({"title": []}, {"purchaseType": "invalid"}, {"unexpected": "x"}, {"title": "x" * 101}):
             with self.assertRaises(ValueError):

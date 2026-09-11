@@ -158,10 +158,20 @@ away.
   statements and never inside them, with a **Paid by** filter. Every panel
   opens the Transactions tab already filtered to that trip, country or year.
 - **Games**: year-filtered purchases and refunds grouped by assigned title,
-  with thumbnails, spending comparisons, monthly totals and expandable daily
-  charges. Select a game or month again to clear its filter. Transaction details
-  store title, platform and purchase type on the exact charge; hidden entries
-  remain in the main ledger. **Release timing** shows the game's age at purchase
+  with thumbnails, purchase counts, each game's share of the period, a
+  year-over-year tile (same months of the prior year while a year is in
+  progress, before account sales), gaming as a share of net card cost, and
+  expandable daily charges. The monthly chart stacks each bar by game with a
+  fixed colour per title (eight validated slots, then a neutral "other"), and
+  the legend filters like the library rows. Select a game or month again to
+  clear its filter; a selected game offers **See in Transactions** and the
+  charges column switches to store / platform. Transaction details store
+  title, platform and purchase type on the exact charge; a missing purchase
+  type shows the store's usual kind marked as a guess. Tick charges (or use
+  **Assign game to N charges** on a library row) and **Assign game** saves one
+  title, store or type on all of them through `/api/game-details` under a
+  single rebuild, still as per-transaction overrides. Hidden entries remain in
+  the main ledger and are counted in a note under the KPIs. **Release timing** shows the game's age at purchase
   with sourced launch dates and early-access labels, collapsed by default.
   **Games over time** is a collapsed monthly heatmap with game counts, thumbnails,
   column highlighting and click-to-filter tiles. All years uses annual blocks.
@@ -170,7 +180,15 @@ away.
   `manual/game_sales.json` remain separate from statements.
 - **Split** — the Yx settlement shared with the Overview: opening balances
   carry forward, `Yx share` is half of `Shared` plus rows assigned to `Yx`.
-- **Transactions**: compact source, period and search controls, with additional
+- **Transactions**: compact source, period and search controls (search also
+  matches amounts), sortable Date, Description, Category and Amount headers on
+  the card ledger, the date printed once per day, owner chips and the remark
+  box revealed on hover or focus (always visible on touch screens), a category
+  dot under each description on phones, and a category breakdown that lists
+  six lines with **Other categories** opening the rest in place. Under the 6M
+  and 12M averages a 12-month bar strip shows net cost per statement month,
+  with a note when the two averages disagree. The rules explainer sits below
+  the table. Additional
   filters in an expandable panel grouped by ownership, category, merchant, review
   and inclusion settings. Bank mode shows relevant bank controls. Active filters
   remain visible as removable chips, with a count on the Filters button. Clear

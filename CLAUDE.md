@@ -58,8 +58,8 @@
   Downloads copy of the Singlife PDF has its password in the filename; the
   clean copy is in `manual/documents/`. Never write that password anywhere.
 - DBS home loan (from digibank, 6 Sep 2026): start 1 May 2026, 26 years,
-  S$251,726.63 outstanding, S$990/month all by CPF (Nicholas's OA S$495; the
-  rest presumably Yx's CPF, unverified), lock-in to 1 May 2029, notice 60
+  S$251,726.63 outstanding, S$990/month all by CPF (Nicholas's CPF S$495;
+  Yx's CPF S$495, owner confirmed 7 Sep 2026), lock-in to 1 May 2029, notice 60
   days, review 1 Feb 2029. The balance lives on the Home mortgage record and
   feeds Net worth as a derived liability. No loan debit reaches either
   tracker's statements.
@@ -84,3 +84,40 @@ Drive stalls script injection after the first interaction: use `navigate` +
 `wait` + `screenshot`, retry a timed-out screenshot once, and find files
 with `/drive/search?q=...`. File IDs can be read from `[data-id]` right after
 a navigate.
+
+## Games (7 Sep 2026)
+
+- 2026 purchases only: Perfect World is Neverness to Everness; G2G and
+  HoYoverse are Zenless Zone Zero; Steam is Slay the Spire 2. Older years
+  remain unchanged. These are exact-transaction assignments, not future
+  merchant rules.
+- The four fully refunded ZeusX transactions are hidden from Games, with
+  their original entries retained in the main transaction ledger.
+- Game title, platform, purchase type and visibility are stored as
+  `gameDetails` in stable-ID transaction overrides.
+
+- Do not add playtime, cost-per-hour, or Playing/Finished/Backlog/Dropped tracking.
+  Do not show game-level personal notes; official thumbnails live locally.
+
+- Correction: all three 2026 PlayerMatrix purchases (28 and 31 July) are
+  Chaos Zero Nightmare. The four 2026 NTE* orders are Neverness to Everness,
+  reclassified from Shopping to Games using exact-transaction overrides.
+
+- G2G screenshot correction: 12 Jun 2026 is a Wuthering Waves account
+  purchase; 13 and 21 Jun are Zenless Zone Zero account purchases. Order
+  details and listed prices are in transaction remarks; statement charges
+  remain authoritative. Evidence: manual/documents/g2g-orders-2026-06.png.
+
+- Latest PayPal correction: 24 May 2026, S$13.35, is Neverness to Everness.
+  This supersedes the earlier Wuthering Waves assignment.
+
+- Owner confirmed all existing Kuro Games purchases are Wuthering Waves,
+  including 2024 and 2025. These are assigned by transaction ID.
+
+- Steam purchases on 22 and 28 July 2025 are Morimens (S$6.27 and S$13.19).
+  The 2026 Steam purchases remain Slay the Spire 2.
+
+- All four 2025 Xsolla / STOVEGLOBAL purchases are Chaos Zero Nightmare
+  (S$38.50 total), assigned by transaction ID.
+
+- Owner confirmed all seven existing INT*XD Entertainment purchases (June and September 2025, S$45.28 total) are Etheria Restart, assigned by transaction ID. Generic Xsolla purchases in 2023/2024 remain unassigned pending identification.

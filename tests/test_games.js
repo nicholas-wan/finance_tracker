@@ -52,3 +52,17 @@ assert.equal(timeline[1].cells[0].count,1);
 assert.equal(timeline[0].cells[1].count,0);
 assert.equal(timeline[0].cells[2].count,0);
 console.log('Concurrent purchase timeline preserves other games, excludes refunds and unknown titles, and keeps gaps empty.');
+
+// Library rows carry a purchase count and a share of the period's positive spend.
+assert.equal(current.groups.find(g=>g.info.label==='Example game').purchaseCount,1);
+assert.equal(current.groups.find(g=>g.info.label==='Example game').share,1);
+assert.equal(current.groups.find(g=>g.info.label==='Steam').share,0);
+// Stacked months split each month by game, keep refunds below the baseline, and follow the library order.
+const stack=G.stacked(activityModel.groups,activityModel.months,activityRows.filter(t=>t.date.startsWith('2026')));
+assert.deepEqual(stack[0].segments.map(s=>s.key),activityModel.groups.map(g=>g.key));
+assert.equal(stack[0].segments.find(s=>s.key==='title:Game A').cents,1000);assert.equal(stack[1].refund,-1000);assert.equal(stack[1].segments.length,0);
+// Purchase types come from the saved value first, then the store.
+assert.deepEqual(G.purchaseType(tx('p','2026-01-01',1,'debit','HoYoverse')),{type:'Top-up',guessed:true});
+assert.deepEqual(G.purchaseType(tx('p','2026-01-01',1,'debit','HoYoverse',{purchaseType:'DLC'})),{type:'DLC',guessed:false});
+assert.equal(G.purchaseType(tx('p','2026-01-01',1,'debit','Other games')),null);
+console.log('Library shares, stacked months and purchase-type guesses passed.');
