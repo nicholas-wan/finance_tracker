@@ -6,7 +6,7 @@
   // records a loan balance, the mortgage. Nothing here is a transaction.
   var root = typeof document !== 'undefined' ? document.getElementById('pane-networth') : null;
   if (!root && typeof module === 'undefined') return;
-  if (typeof window !== 'undefined') window.NetWorthSchedule = { topUpDue: function () { return topUpDue.apply(null, arguments); } };
+  if (typeof window !== 'undefined') window.NetWorthSchedule = { topUpDue: function () { return topUpDue.apply(null, arguments); }, topUpNext: function () { return topUpNext.apply(null, arguments); } };
   var GROUPS = [
     ['cash', 'Cash', 'Bank balances from statements and any other cash accounts.'],
     ['cpf', 'CPF', 'Ordinary, Special and MediSave balances read from the CPF portal.'],
@@ -72,21 +72,37 @@
   // the transfer month arrive late). `seen` is the statement date of this
   // year's transfer when the entry names a statement `flow` or a `match`
   // text in the description, so the reminder clears itself.
-  function topUpDue(name, t, now, transactions) {
-    if (!t) return null;
-    var year = +now.slice(0, 4), y = null, m, needle = t.match ? String(t.match).toUpperCase() : '';
-    [year - 1, year].forEach(function (c) {
-      var cm = c + '-' + String(t.month).padStart(2, '0');
-      if (c >= t.since && now >= addMonths(cm, -1) + '-01' && now <= monthEnd(addMonths(cm, 1))) { y = c; m = cm; }
-    });
-    if (y == null) return null;
-    var seen = null;
+  function paidIn(t, y, transactions) {
+    var needle = t.match ? String(t.match).toUpperCase() : '', seen = null;
     (transactions || []).forEach(function (x) {
       if (x.direction !== 'withdrawal' || x.date.slice(0, 4) !== String(y)) return;
       var hit = (t.flow && x.flow === t.flow) || (needle && String(x.description || '').toUpperCase().indexOf(needle) !== -1);
       if (hit && (!seen || x.date > seen)) seen = x.date;
     });
-    return { name: name, amount: t.amount, year: y, dueBy: monthEnd(m), overdue: now > monthEnd(m), seen: seen, tracked: !!(t.flow || needle) };
+    return seen;
+  }
+  function topUpDue(name, t, now, transactions) {
+    if (!t) return null;
+    var year = +now.slice(0, 4), y = null, m;
+    [year - 1, year].forEach(function (c) {
+      var cm = c + '-' + String(t.month).padStart(2, '0');
+      if (c >= t.since && now >= addMonths(cm, -1) + '-01' && now <= monthEnd(addMonths(cm, 1))) { y = c; m = cm; }
+    });
+    if (y == null) return null;
+    return { name: name, amount: t.amount, year: y, dueBy: monthEnd(m), overdue: now > monthEnd(m), seen: paidIn(t, y, transactions), tracked: !!(t.flow || t.match) };
+  }
+  // The next occurrence for the Coming up list: this year's while it is
+  // still unpaid (overdue included), otherwise the first later year.
+  function topUpNext(name, t, now, transactions) {
+    if (!t) return null;
+    var due = topUpDue(name, t, now, transactions);
+    if (due && !due.seen) return due;
+    var year = +now.slice(0, 4);
+    for (var y = Math.max(year, t.since); y <= year + 1; y++) {
+      var m = y + '-' + String(t.month).padStart(2, '0');
+      if (monthEnd(m) >= now && !paidIn(t, y, transactions)) return { name: name, amount: t.amount, year: y, dueBy: monthEnd(m), overdue: false, seen: null, tracked: !!(t.flow || t.match) };
+    }
+    return null;
   }
   function nextTopUp(t, now) {
     var y = +now.slice(0, 4), m = String(t.month).padStart(2, '0');
@@ -489,7 +505,7 @@
     } catch (error) { root.innerHTML = '<section class="nw-panel"><h2>Net worth unavailable</h2><p>' + esc(error.message) + '</p><button class="nw-button" id="nw-retry">Retry</button></section>'; root.querySelector('#nw-retry').onclick = load; }
   }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries, contributionSeries: contributionSeries, changeBetween: changeBetween, scheduledPoints: scheduledPoints, nextTopUp: nextTopUp, topUpDue: topUpDue };
+    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries, contributionSeries: contributionSeries, changeBetween: changeBetween, scheduledPoints: scheduledPoints, nextTopUp: nextTopUp, topUpDue: topUpDue, topUpNext: topUpNext };
     return;
   }
   var latestHome = null;

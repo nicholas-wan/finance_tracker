@@ -399,6 +399,32 @@ main { max-width: 1060px; margin: 0 auto; padding: 20px 20px 48px; display: flex
 .card-fee-alert .quality-action { flex: 0 0 auto; }
 @media (max-width: 560px) { .card-fee-alert { align-items: flex-start; flex-direction: column; gap: 8px; } }
 
+/* Coming up: one folded line when nothing is due, compact rows when it is. */
+.upcoming-panel { padding: 0; }
+.upcoming-panel.has-due { border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); }
+.upcoming-summary { list-style: none; display: flex; align-items: center; gap: 10px; padding: 10px 18px; cursor: pointer; font-size: var(--fs-small); }
+.upcoming-summary::-webkit-details-marker { display: none; }
+.upcoming-title { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.upcoming-summary .hint { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upcoming-chevron { width: 14px; height: 14px; flex: 0 0 auto; color: var(--text-3); transition: transform 160ms ease; }
+.upcoming-panel[open] .upcoming-chevron { transform: rotate(90deg); }
+.upcoming-list { display: grid; padding: 0 18px; }
+.upcoming-list:last-child { padding-bottom: 8px; }
+.upcoming-row { display: grid; grid-template-columns: 84px minmax(0, 1fr) auto auto; gap: 12px; align-items: center; padding: 7px 0; border-top: 1px solid var(--border); font-size: var(--fs-small); }
+.upcoming-date { display: grid; line-height: 1.25; }
+.upcoming-date strong { font-variant-numeric: tabular-nums; }
+.upcoming-date small { color: var(--text-3); font-size: var(--fs-caption); }
+.upcoming-row.overdue .upcoming-date strong, .upcoming-row.overdue .upcoming-date small { color: var(--red); }
+.upcoming-copy { display: grid; min-width: 0; }
+.upcoming-copy strong { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upcoming-copy span { color: var(--text-2); font-size: var(--fs-caption); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.upcoming-amount { font-variant-numeric: tabular-nums; color: var(--text-2); white-space: nowrap; }
+.upcoming-more { margin: 4px 18px 10px; }
+@media (max-width: 560px) {
+  .upcoming-row { grid-template-columns: 70px minmax(0, 1fr) auto; }
+  .upcoming-amount { display: none; }
+}
+
 .two-col { display: grid; grid-template-columns: 3fr 2fr; gap: 16px; }
 .two-col.income-history-single { grid-template-columns: 1fr; }
 /* Overview: Categories and Outflows differ in length; stretching the shorter
@@ -2440,7 +2466,7 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 @media print {
   :root { --bg: #fff; --surface: #fff; --surface-2: #fff; --text: #111; --text-2: #333; --text-3: #555; --border: #bbb; --shadow-soft: none; }
   body { background: #fff; color: #111; }
-  .topbar, .tabs, #month-nav, .filters, .panel-head-actions, .home-filters, .home-sections, .nw-actions, .theme-toggle, #theme-toggle, button, dialog, .server-stale, .freshness-strip, .card-fee-alert-panel { display: none !important; }
+  .topbar, .tabs, #month-nav, .filters, .panel-head-actions, .home-filters, .home-sections, .nw-actions, .theme-toggle, #theme-toggle, button, dialog, .server-stale, .freshness-strip, .card-fee-alert-panel, .upcoming-panel { display: none !important; }
   .pane.hidden { display: none !important; }
   .pane { gap: 10px; }
   .panel, .kpi, .nw-panel, .nw-kpi, .home-panel, .nw-group { break-inside: avoid; box-shadow: none; border-color: #bbb; }

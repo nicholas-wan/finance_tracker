@@ -65,6 +65,8 @@
     return {years:years,missing:missing};
   }
   if (typeof module !== 'undefined' && module.exports) { module.exports = { paymentSummary: paymentSummary, days: days, actions: actions, nextService: nextService, warrantyState: warrantyState, needsInformation: needsInformation }; return; }
+  // The Overview's Coming up list reads the same dated actions.
+  window.HomeReminders = { actions: actions };
 
   var root = document.getElementById('pane-home'), store = { revision: 0, records: [] }, editable = false;
   var category = 'All';

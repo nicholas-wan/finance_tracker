@@ -86,11 +86,14 @@
   December begins and never flags the account as stale. The statements show
   the Dec 2025 top-up only, so `since` is 2025; move it earlier only if the
   owner names an earlier first year (paid from another account).
-- Top-up reminders (owner, 12 Sep 2026): the Overview shows a "Top-up due"
-  panel from 1 Nov to 31 Jan for each scheduled top-up until the statements
-  show that year's transfer (`topUp.flow` names the statement flow, here
-  `Retirement (SRS)`). A yearly Claude scheduled task `srs-top-up-reminder`
-  also fires on 1 Nov.
+- Reminders (owner, 12 Sep 2026): everything with a date lives in one
+  "Coming up" panel on the Overview, folded to a single line unless something
+  is due within 60 days. Sources: `topUp` schedules and `reminders` in the
+  net-worth register (a transfer clears once the statements show it, by
+  `flow` or `match`), Home register dates, annual premium anniversaries, and
+  card fee waivers. Do not add a separate alert panel for a new reminder;
+  add a source to `comingUpItems` in app.js. A yearly Claude scheduled task
+  `srs-top-up-reminder` also fires on 1 Nov for the December top-ups.
 - Mum's CPF top-up (owner, 12 Sep 2026): S$2,000 cash top-up every December
   to Mum's CPF retirement account. A gift, never an asset: it lives in
   `reminders` in `manual/net_worth.json` (matched on "CENTRAL PROVIDENT" in

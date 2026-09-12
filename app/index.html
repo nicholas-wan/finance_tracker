@@ -127,21 +127,16 @@
     <section class="server-stale hidden" id="server-stale" role="status"><svg class="icon"><use href="#i-repeat"/></svg><span><strong>The dashboard code changed after this server started.</strong> Close the dashboard tabs and relaunch <code>Finances</code> (or restart <code>python scripts/serve.py</code>) so saves and new tabs work.</span></section>
     <section class="freshness-strip" id="statement-freshness" aria-live="polite"></section>
 
-    <section class="panel card-fee-alert-panel hidden" id="card-fee-alerts" aria-labelledby="card-fee-alert-title">
-      <div class="panel-head">
-        <h2 id="card-fee-alert-title"><svg class="icon"><use href="#i-percent"/></svg>Card fee waiver</h2>
-        <span class="hint">apply before resolving</span>
-      </div>
-      <div id="card-fee-alert-list" aria-live="polite"></div>
-    </section>
-
-    <section class="panel card-fee-alert-panel hidden" id="top-up-alerts" aria-labelledby="top-up-alert-title">
-      <div class="panel-head">
-        <h2 id="top-up-alert-title"><svg class="icon"><use href="#i-calendar"/></svg>Top-up due</h2>
-        <span class="hint">before the year ends</span>
-      </div>
-      <div id="top-up-alert-list" aria-live="polite"></div>
-    </section>
+    <details class="panel upcoming-panel hidden" id="coming-up">
+      <summary class="upcoming-summary">
+        <span class="upcoming-title"><svg class="icon"><use href="#i-calendar"/></svg>Coming up</span>
+        <span class="hint" id="coming-up-summary"></span>
+        <svg class="icon upcoming-chevron" aria-hidden="true"><use href="#i-right"/></svg>
+      </summary>
+      <div class="upcoming-list" id="coming-up-list" aria-live="polite"></div>
+      <button type="button" class="quality-action upcoming-more hidden" id="coming-up-more"></button>
+      <div class="upcoming-list hidden" id="coming-up-later"></div>
+    </details>
 
     <div class="kpis-head"><strong id="kpis-scope"></strong><span class="hint" id="kpis-year-hint"></span></div>
     <div class="kpis" id="kpis"></div>
@@ -672,8 +667,8 @@
 <script defer src="js/insights.js?v=20260905-4"></script>
 <script defer src="js/transaction-grouping.js?v=20260904-1"></script>
 <script defer src="js/games.js?v=4"></script>
-<script defer src="js/app.js?v=20260912-wealth-12"></script>
-<script defer src="js/home.js?v=30"></script>
-<script defer src="js/networth.js?v=16"></script>
+<script defer src="js/app.js?v=20260912-wealth-14"></script>
+<script defer src="js/home.js?v=31"></script>
+<script defer src="js/networth.js?v=17"></script>
 </body>
 </html>

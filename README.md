@@ -112,6 +112,11 @@ away.
   its basis, plus findings and assumptions) draws **Where the cover falls
   short**: in-force cover against the recommended amount, with cover someone
   else pays for shown as a lighter segment.
+- **Coming up** — one folded line on the Overview that opens when something
+  is due within 60 days: yearly transfers from the net-worth register (an
+  account's `topUp`, or a `reminders` entry for a transfer that is not an
+  asset), warranty, service and mortgage dates from the Home register,
+  annual premium anniversaries, and card membership fees awaiting a waiver.
 - **Home** — the household register in Git-ignored `manual/home.json`:
   appliances, fixtures, furniture and pet items with costs, key dates,
   warranty cover and documents; home and fire policies; the mortgage; and

@@ -21,7 +21,7 @@
 
   var data = null;
   var account = { transactions: [], months: [] };
-  var netWorthRegister = { accounts: [] };
+  var netWorthRegister = { accounts: [] }, homeRegister = { records: [] };
   var cardFeeReviews = { resolvedIds: [] };
   var accountReviewedSignals = {};
   // Handle returned by bindToggle, so a drill-down can reset the grouping
@@ -2695,40 +2695,10 @@
     wrap.appendChild(el("span", "freshness-meta", meta));
   }
 
-  // Scheduled top-ups (net-worth register, `topUp` on an account) surface
-  // here from the month before they fall due until the statements show the
-  // transfer for that year.
-  function renderTopUpAlerts() {
-    var panel = document.getElementById("top-up-alerts");
-    var wrap = document.getElementById("top-up-alert-list");
-    if (!panel || !wrap || !window.NetWorthSchedule) return;
-    clear(wrap);
-    var today = new Date(), now = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
-    var through = data.freshness && data.freshness.sourceThrough;
-    var items = (netWorthRegister.accounts || []).filter(function (a) { return a.topUp && !a.archived; }).map(function (a) { return [a.name, a.topUp]; })
-      .concat((netWorthRegister.reminders || []).map(function (r) { return [r.name, r]; }));
-    var due = items.map(function (pair) {
-      return window.NetWorthSchedule.topUpDue(pair[0], pair[1], now, account.transactions);
-    }).filter(function (d) { return d && !d.seen; });
-    panel.classList.toggle("hidden", !due.length);
-    if (!due.length) return;
-    panel.querySelector(".hint").textContent = due.length === 1 ? "before the year ends" : due.length + " due";
-    due.forEach(function (d) {
-      var item = el("div", "card-fee-alert");
-      var copy = el("div", "card-fee-alert-copy");
-      copy.appendChild(el("strong", "", fmt(d.amount) + " " + d.name + " top-up for " + d.year));
-      copy.appendChild(el("span", "", (d.overdue ? "Was due by " : "Due by ") + dateLabel(d.dueBy) + " · " +
-        (d.tracked ? "not yet in the statements" + (through ? " (through " + dateLabel(through) + ")" : "") : "clears when this year's balance is recorded")));
-      item.appendChild(copy);
-      wrap.appendChild(item);
-    });
-  }
-
-  function renderCardFeeAlerts() {
-    var panel = document.getElementById("card-fee-alerts");
-    var wrap = document.getElementById("card-fee-alert-list");
-    if (!panel || !wrap) return;
-    clear(wrap);
+  // Card membership fees charged in the last year that have not been marked
+  // resolved: rows on the Coming up list, and a note on the freshness strip
+  // once every one of them is resolved.
+  function cardFeeState() {
     var resolved = {};
     (cardFeeReviews.resolvedIds || []).forEach(function (id) { resolved[id] = true; });
     var feeAnchor = data.freshness && data.freshness.sourceThrough
@@ -2740,9 +2710,10 @@
         chargeDate && chargeDate >= feeCutoff && chargeDate <= feeAnchor;
     });
     allFees.sort(function (a, b) { return (b.date || "").localeCompare(a.date || ""); });
-    var fees = allFees.filter(function (fee) { return !resolved[fee.id]; });
-    // A resolved fee needs nothing from you: it becomes one item on the
-    // status line instead of a panel of its own.
+    return { allFees: allFees, fees: allFees.filter(function (fee) { return !resolved[fee.id]; }) };
+  }
+  function renderCardFeeAlerts() {
+    var feeState = cardFeeState(), allFees = feeState.allFees, fees = feeState.fees;
     var stripItems = document.querySelector("#statement-freshness .freshness-items");
     var stale = document.getElementById("freshness-fee");
     if (stale) stale.remove();
@@ -2753,44 +2724,137 @@
         " in the last year, all resolved (" + statementLabel(allFees[0].month) + " statement)";
       stripItems.appendChild(done);
     }
-    panel.classList.toggle("hidden", !fees.length);
-    if (!fees.length) return;
-    panel.querySelector(".hint").textContent = fees.length + " active fee" + (fees.length === 1 ? "" : "s");
-    wrap.appendChild(el("p", "card-fee-alert-summary", allFees.length +
-      " card membership fee" + (allFees.length === 1 ? "" : "s") + " recorded · Last charged " +
-      dateLabel(allFees[0].date) + " (" + statementLabel(allFees[0].month) + ")"));
-    fees.forEach(function (fee) {
-      var item = el("div", "card-fee-alert");
-      var copy = el("div", "card-fee-alert-copy");
-      copy.appendChild(el("strong", "", fmt(fee.amount) + " card membership fee"));
-      copy.appendChild(el("span", "", dateLabel(fee.date) + " · " + statementLabel(fee.month) +
-        " · Apply for a waiver, then resolve this alert."));
-      item.appendChild(copy);
-      var button = el("button", "quality-action", "Resolve");
-      button.disabled = !editor.available;
-      button.title = editor.available ? "Mark this fee alert resolved" : "Start the local editor to resolve alerts";
-      button.addEventListener("click", function () {
-        button.disabled = true;
-        fetch("api/card-fee-review", {
-          method: "POST", headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: fee.id, resolved: true })
-        }).then(function (response) {
-          return response.json().then(function (payload) {
-            if (!response.ok) throw new Error(payload.error || "Could not resolve fee alert.");
-            return payload;
-          });
-        }).then(function (payload) {
-          cardFeeReviews.resolvedIds = payload.resolvedIds || cardFeeReviews.resolvedIds.concat([fee.id]);
-          renderCardFeeAlerts();
-          showToast("Card fee alert resolved.", "success");
-        }).catch(function (error) {
-          button.disabled = false;
-          showToast(error.message, "error");
-        });
+  }
+  function resolveCardFee(fee, button) {
+    button.disabled = true;
+    fetch("api/card-fee-review", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id: fee.id, resolved: true })
+    }).then(function (response) {
+      return response.json().then(function (payload) {
+        if (!response.ok) throw new Error(payload.error || "Could not resolve fee alert.");
+        return payload;
       });
-      item.appendChild(button);
-      wrap.appendChild(item);
+    }).then(function (payload) {
+      cardFeeReviews.resolvedIds = payload.resolvedIds || cardFeeReviews.resolvedIds.concat([fee.id]);
+      renderCardFeeAlerts(); renderComingUp();
+      showToast("Card fee alert resolved.", "success");
+    }).catch(function (error) {
+      button.disabled = false;
+      showToast(error.message, "error");
     });
+  }
+
+  // ---------- Coming up ----------
+  // One list for everything with a date: yearly transfers from the net-worth
+  // register, warranty, service and mortgage dates from the Home register,
+  // annual premium anniversaries, and card fees awaiting a waiver. Items due
+  // within UPCOMING_SOON_DAYS keep the panel open; otherwise it folds to one
+  // line that names the next item.
+  var UPCOMING_SOON_DAYS = 60, UPCOMING_HORIZON_DAYS = 400;
+  function isoToday() { var d = new Date(); return d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0"); }
+  function daysUntil(date, now) { return Math.round((Date.parse(date + "T00:00:00Z") - Date.parse(now + "T00:00:00Z")) / 86400000); }
+  function nextAnniversary(startDate, now) {
+    if (!startDate) return "";
+    var month = parseInt(startDate.slice(5, 7), 10), day = parseInt(startDate.slice(8, 10), 10), thisYear = parseInt(now.slice(0, 4), 10);
+    for (var year = thisYear; year <= thisYear + 1; year++) {
+      var last = new Date(year, month, 0).getDate();
+      var date = year + "-" + String(month).padStart(2, "0") + "-" + String(Math.min(day, last)).padStart(2, "0");
+      if (date >= now && date > startDate) return date;
+    }
+    return "";
+  }
+  function comingUpItems(now) {
+    var items = [];
+    if (window.NetWorthSchedule) {
+      (netWorthRegister.accounts || []).filter(function (a) { return a.topUp && !a.archived; }).map(function (a) { return [a.name, a.topUp]; })
+        .concat((netWorthRegister.reminders || []).map(function (r) { return [r.name, r]; }))
+        .forEach(function (pair) {
+          var d = window.NetWorthSchedule.topUpNext(pair[0], pair[1], now, account.transactions);
+          if (d) items.push({ date: d.dueBy, title: /top-up$/i.test(pair[0]) ? pair[0] : pair[0] + " top-up", detail: "For " + d.year + (d.tracked ? " · clears when the statements show it" : ""), amount: d.amount, tab: "networth" });
+        });
+    }
+    if (window.HomeReminders) {
+      var checks = 0;
+      window.HomeReminders.actions(homeRegister.records || [], now).forEach(function (a) {
+        if (a.date) items.push({ date: a.date, title: a.label, detail: a.record.name || "", tab: "home" });
+        else checks++;
+      });
+      if (checks) items.push({ date: "", title: checks + " home record" + (checks === 1 ? " needs" : "s need") + " information", detail: "Open the Home register", tab: "home" });
+    }
+    // Only the clone owner's premiums: the single owner where identity names
+    // one, otherwise the first person in the insurance file. Anyone else's
+    // policies are on their own dashboard.
+    var single = data.identity && data.identity.singleOwner;
+    insurancePeople().filter(function (person, index) { return single ? person.owner === single : index === 0; }).forEach(function (person) {
+      (person.policies || []).forEach(function (policy) {
+        if (String(policy.status || "In Force") !== "In Force" || policy.coverageOnly || policy.premiumPaidBy || policy.reconcileWithImportedStatements === false) return;
+        if (String(policy.premiums && policy.premiums.frequency || "") !== "Annual" || !(policyPaymentAmount(policy) > 0)) return;
+        var next = nextAnniversary(policy.startDate, now);
+        if (!next || (policy.premiumEndDate && next > policy.premiumEndDate)) return;
+        items.push({ date: next, title: policy.plan + " premium", detail: person.name + " · " + policy.company + " · yearly", amount: policyPaymentAmount(policy), tab: "insurance" });
+      });
+    });
+    cardFeeState().fees.forEach(function (fee) {
+      items.push({ date: fee.date, title: fmt(fee.amount) + " card membership fee", detail: "Apply for a waiver, then resolve", tab: "transactions", fee: fee });
+    });
+    return items;
+  }
+  function comingUpRow(item) {
+    var row = el("div", "upcoming-row" + (item.days != null && item.days < 0 ? " overdue" : ""));
+    var when = el("span", "upcoming-date");
+    if (item.date) {
+      when.appendChild(el("strong", "", shortDate(item.date, item.days > 300 || item.days < -300)));
+      when.appendChild(el("small", "", item.days < 0 ? Math.abs(item.days) + " day" + (item.days === -1 ? "" : "s") + " ago"
+        : item.days === 0 ? "today" : "in " + item.days + " day" + (item.days === 1 ? "" : "s")));
+    } else when.appendChild(el("strong", "", "Now"));
+    row.appendChild(when);
+    var copy = el("span", "upcoming-copy");
+    copy.appendChild(el("strong", "", item.title));
+    if (item.detail) copy.appendChild(el("span", "", item.detail));
+    row.appendChild(copy);
+    row.appendChild(el("span", "upcoming-amount", item.amount ? fmt(item.amount) : ""));
+    var action = el("button", "quality-action", item.fee ? "Resolve" : "Open");
+    action.type = "button";
+    if (item.fee) {
+      action.disabled = !editor.available;
+      action.title = editor.available ? "Mark this fee alert resolved" : "Start the local editor to resolve alerts";
+      action.addEventListener("click", function () { resolveCardFee(item.fee, action); });
+    } else action.addEventListener("click", function () { setTab(item.tab); });
+    row.appendChild(action);
+    return row;
+  }
+  function renderComingUp() {
+    var panel = document.getElementById("coming-up");
+    if (!panel) return;
+    var list = document.getElementById("coming-up-list"), later = document.getElementById("coming-up-later");
+    var summary = document.getElementById("coming-up-summary"), more = document.getElementById("coming-up-more");
+    clear(list); clear(later);
+    var now = isoToday();
+    var items = comingUpItems(now).map(function (item) { item.days = item.date ? daysUntil(item.date, now) : null; return item; })
+      .filter(function (item) { return item.days == null || item.days <= UPCOMING_HORIZON_DAYS; })
+      .sort(function (a, b) { return (a.days == null ? -1e9 : a.days) - (b.days == null ? -1e9 : b.days); });
+    var soon = items.filter(function (item) { return item.days == null || item.days <= UPCOMING_SOON_DAYS; });
+    var rest = items.filter(function (item) { return soon.indexOf(item) === -1; });
+    var overdue = soon.filter(function (item) { return item.days != null && item.days < 0; }).length;
+    summary.textContent = soon.length
+      ? (overdue ? overdue + " overdue · " : "") + soon.length + " in the next " + UPCOMING_SOON_DAYS + " days"
+      : "Nothing due in the next " + UPCOMING_SOON_DAYS + " days" + (rest.length ? " · next: " + rest[0].title + ", " + shortDate(rest[0].date, true) : "");
+    panel.classList.toggle("has-due", soon.length > 0);
+    panel.classList.toggle("hidden", !items.length);
+    panel.open = soon.length > 0;
+    soon.forEach(function (item) { list.appendChild(comingUpRow(item)); });
+    rest.forEach(function (item) { later.appendChild(comingUpRow(item)); });
+    // With something due, later items sit behind a toggle; with nothing due,
+    // opening the panel shows them straight away.
+    var tucked = !!(soon.length && rest.length);
+    more.classList.toggle("hidden", !tucked);
+    more.textContent = "Show " + rest.length + " later";
+    later.classList.toggle("hidden", tucked);
+    more.onclick = function () {
+      var nowHidden = later.classList.toggle("hidden");
+      more.textContent = (nowHidden ? "Show " : "Hide ") + rest.length + " later";
+    };
   }
 
   function renderDataQuality() {
@@ -7742,7 +7806,7 @@
   var PANEL_TAB = { overview: 'overview', ledger: 'transactions', games: 'transactions', income: 'wealth', insurance: 'insurance', split: 'split', travel: 'travel' };
   function renderPanel(key) {
     if (key === 'overview') {
-      renderFreshness(); renderCardFeeAlerts(); renderTopUpAlerts(); renderKpis();
+      renderFreshness(); renderCardFeeAlerts(); renderComingUp(); renderKpis();
       renderRecurring(); renderDataQuality(); renderStacked(); renderKeyMetrics();
       renderInsights(); renderSpendingSummary(); renderCategories(); renderOutflows();
     } else if (key === 'ledger') {
@@ -8294,10 +8358,15 @@
     loadJson("api/status").catch(function () { return { editable: false }; }),
     loadJson("api/account-reviews").catch(function () { return { recognizedSignals: [] }; }),
     loadJson("api/card-fee-reviews").catch(function () { return { resolvedIds: [] }; }),
-    loadJson("data/net_worth.json").catch(function () { return { accounts: [] }; })
+    loadJson("data/net_worth.json").catch(function () { return { accounts: [] }; }),
+    loadJson("data/home.json").catch(function () { return { records: [] }; })
   ]).then(function (results) {
     applyBranding(results[0]); data = results[1]; applyIdentity(); account = results[2];
     netWorthRegister = results[6] && Array.isArray(results[6].accounts) ? results[6] : { accounts: [] };
+    homeRegister = results[7] && Array.isArray(results[7].records) ? results[7] : { records: [] };
+    window.addEventListener("finance:home-updated", function (e) {
+      if (e.detail && Array.isArray(e.detail.records)) { homeRegister = e.detail; renderComingUp(); }
+    });
     if ((data.generationId || account.generationId) && data.generationId !== account.generationId) throw new Error("card and account data belong to different import generations");
     return results.slice(3);
   })

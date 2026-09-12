@@ -99,3 +99,17 @@ console.log('Contribution series accumulate net transfers by month.');
   assert.equal(N.topUpDue('Mum', mum, '2026-12-20', [{flow:'Transfer', direction:'deposit', date:'2026-12-04', amount:2000, description:'CENTRAL PROVIDENT'}]).seen, null, 'a deposit is not a top-up');
   console.log('Net worth: top-up reminder window and clearing.');
 }
+
+// The Coming up list wants the next occurrence: this year's while unpaid
+// (overdue included), otherwise the first later year.
+{
+  const srs = {month:12, amount:15300, since:2025, flow:'Retirement (SRS)'};
+  const paid2025 = [{flow:'Retirement (SRS)', direction:'withdrawal', date:'2025-12-23', amount:15300}];
+  assert.deepEqual([N.topUpNext('SRS', srs, '2026-09-12', paid2025).dueBy, N.topUpNext('SRS', srs, '2026-09-12', paid2025).overdue], ['2026-12-31', false]);
+  assert.equal(N.topUpNext('SRS', srs, '2027-01-10', paid2025).overdue, true, 'January still shows last year overdue');
+  const paid2026 = paid2025.concat([{flow:'Retirement (SRS)', direction:'withdrawal', date:'2026-12-02', amount:15300}]);
+  assert.equal(N.topUpNext('SRS', srs, '2026-12-20', paid2026).dueBy, '2027-12-31', 'paid this year, so next year');
+  assert.equal(N.topUpNext('SRS', srs, '2027-01-10', paid2026).dueBy, '2027-12-31');
+  assert.equal(N.topUpNext('x', {month:12, amount:1, since:2029}, '2026-09-12', []), null, 'nothing within the next two years');
+  console.log('Net worth: next top-up occurrence for the Coming up list.');
+}
