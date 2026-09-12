@@ -142,7 +142,9 @@ away.
   insurance, property, liabilities); derived series come from data already
   present: the UOB ONE closing balance on every statement and the mortgage
   balance on the Home register, which updates its liability without
-  reloading. A value carries forward until the next snapshot, so each
+  reloading. The loan counts from its start date (its first recorded balance
+  carried back), and a property linked to a loan enters the history with
+  the loan rather than at its sales order, so asset and debt move together. A value carries forward until the next snapshot, so each
   account shows its as-at date and anything over three months old is
   marked; the change counts only accounts recorded at both dates. Insurance
   counts at net surrender value, not premiums paid; property at acquisition
