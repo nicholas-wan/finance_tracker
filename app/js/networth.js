@@ -208,7 +208,9 @@
   function drawChart(host, history) {
     if (history.length < 2) { host.innerHTML = '<p class="nw-chart-empty nw-muted">Record balances on at least two dates to see a history.</p>'; return; }
     var W = 900, H = 300, L = 64, R = 12, T = 14, B = 30, w = W - L - R, h = H - T - B;
-    var order = ['cash', 'cpf', 'investments', 'insurance', 'property'];
+    // The steadiest, largest band sits at the base so its edge reads flat and
+    // the moving bands above it stay readable.
+    var order = ['property', 'cpf', 'cash', 'investments', 'insurance'];
     var maxA = Math.max.apply(null, history.map(function (r) { return r.assets; }).concat([1]));
     var maxL = Math.max.apply(null, history.map(function (r) { return r.liabilities; }).concat([0]));
     var step = niceStep((maxA + maxL) / 5), top = Math.ceil(maxA / step) * step, bottom = Math.ceil(maxL / step) * step;
@@ -333,12 +335,22 @@
     var loans = (home.records || []).filter(function (r) { return r.kind === 'mortgage' && r.status !== 'Archived' && typeof r.balance === 'number' && r.balanceDate; });
     return loans.map(function (r) {
       var points = [{ date: r.balanceDate, value: r.balance, source: r.provider || 'Home register' }];
-      // A loan exists from its first disbursement. Its first recorded balance
-      // is carried back to the start date so the history does not show the
-      // property for months on end with no debt against it, then a cliff on
-      // the day the balance was first read. A few instalments of principal
-      // is the size of the approximation.
-      if (r.starts && r.starts < r.balanceDate) points.unshift({ date: r.starts, value: r.balance, source: 'carried back from the ' + date(r.balanceDate) + ' balance', carried: true });
+      // A loan exists from its first disbursement, and it shrinks by the
+      // principal in every instalment. Working back from the recorded balance
+      // with the instalment and rate on the record gives each earlier month's
+      // balance; without those the balance is simply carried back.
+      if (r.starts && r.starts < r.balanceDate) {
+        var monthly = typeof r.rate === 'number' ? r.rate / 100 / 12 : 0;
+        var instalment = typeof r.instalment === 'number' ? r.instalment : 0;
+        var how = instalment ? 'amortised back from the ' + date(r.balanceDate) + ' balance at ' + money0(instalment) + ' a month' + (r.rate ? ' and ' + r.rate + '%' : '') : 'carried back from the ' + date(r.balanceDate) + ' balance';
+        var m = monthOf(r.balanceDate), startMonth = monthOf(r.starts), value = r.balance;
+        function stepBack() { value = instalment ? (value + instalment) / (1 + monthly) : value; return Math.round(value * 100) / 100; }
+        while (m > startMonth) {
+          m = addMonths(m, -1);
+          points.unshift({ date: m === startMonth ? r.starts : monthEnd(m), value: stepBack(), source: how, carried: true });
+        }
+        if (points[0].date !== r.starts) points.unshift({ date: r.starts, value: stepBack(), source: how, carried: true });
+      }
       return { account: { id: 'home_' + r.id, name: r.name, group: 'liabilities', note: 'Balance from the Home register.' }, points: points, sourceType: 'home', manual: false }; });
   }
   function deriveFlows(bank) {
