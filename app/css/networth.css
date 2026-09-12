@@ -78,7 +78,8 @@
 .nw-chart svg { width: 100%; height: auto; display: block; overflow: visible; }
 .nw-chart .axis text { fill: var(--text-3); font-size: 11px; }
 .nw-chart .axis line { stroke: var(--nw-line); }
-.nw-chart .net { fill: none; stroke: var(--text); stroke-width: 2; }
+.nw-chart .net { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.nw-chart .net-halo { fill: none; stroke: var(--surface); stroke-width: 6; stroke-linejoin: round; opacity: .9; }
 .nw-chart .hover { fill: none; stroke: var(--text-3); stroke-dasharray: 3 3; }
 .nw-area[data-group="cash"] { fill: var(--nw-cash); }
 .nw-area[data-group="cpf"] { fill: var(--nw-cpf); }
@@ -86,11 +87,11 @@
 .nw-area[data-group="insurance"] { fill: var(--nw-insurance); }
 .nw-area[data-group="property"] { fill: var(--nw-property); }
 .nw-area[data-group="liabilities"] { fill: var(--nw-liabilities); }
-.nw-area { fill-opacity: .55; }
+.nw-area { fill-opacity: .34; }
 .nw-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: var(--fs-small); color: var(--text-2); }
 .nw-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .nw-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
-.nw-legend i.net { width: 14px; height: 2px; border-radius: 0; background: var(--text); }
+.nw-legend i.net { width: 14px; height: 3px; border-radius: 2px; background: var(--accent); }
 .nw-dot-cash { background: var(--nw-cash); } .nw-dot-cpf { background: var(--nw-cpf); } .nw-dot-investments { background: var(--nw-investments); }
 .nw-dot-insurance { background: var(--nw-insurance); } .nw-dot-property { background: var(--nw-property); } .nw-dot-liabilities { background: var(--nw-liabilities); }
 .nw-tip { position: absolute; pointer-events: none; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 10px; font-size: var(--fs-small); box-shadow: var(--shadow-soft); min-width: 150px; z-index: 2; }

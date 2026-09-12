@@ -51,10 +51,24 @@
   // Every account becomes {account, points:[{date,value,source}]}; a value
   // carries forward from its snapshot date until the next snapshot.
   function allAccounts() {
-    return derived.concat(store.accounts.filter(function (a) { return !a.archived; }).map(function (a) {
+    var manual = store.accounts.filter(function (a) { return !a.archived; }).map(function (a) {
       var points = store.snapshots.filter(function (s) { return s.accountId === a.id; }).slice().sort(function (x, y) { return x.date.localeCompare(y.date); });
       return { account: a, points: points, manual: true };
-    }));
+    });
+    // A property recorded at its sales order sits in the books two years
+    // before the keys and the loan. Counting it from the loan's start keeps
+    // the asset and its debt together in the history; the register still
+    // shows the original as-at date.
+    manual.forEach(function (s) {
+      var link = s.account.linkedRecord && derived.find(function (d) { return d.account.id === 'home_' + s.account.linkedRecord; });
+      if (!link || !link.points.length || !s.points.length) return;
+      var from = link.points[0].date;
+      if (s.points[0].date >= from) return;
+      var before = s.points.filter(function (p) { return p.date <= from; }), after = s.points.filter(function (p) { return p.date > from; });
+      var basis = before[before.length - 1];
+      s.points = [{ date: from, value: basis.value, source: basis.source, note: basis.note, recorded: basis.date }].concat(after);
+    });
+    return derived.concat(manual);
   }
   function valueAt(series, month) {
     var end = monthEnd(month), hit = null;
@@ -216,7 +230,7 @@
     for (var v = -bottom; v <= top; v += step) ticks += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '"/><text x="' + (L - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + compact(v) + '</text>';
     var labels = '', every = history.length > 30 ? 12 : history.length > 14 ? 6 : 3;
     history.forEach(function (r, i) { if (i % every === 0 || i === history.length - 1) labels += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle">' + monthLabel(r.month) + '</text>'; });
-    host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Net worth by month"><g class="axis">' + ticks + labels + '</g>' + areas + '<path class="net" d="' + net + '"/><line class="hover" id="nw-hover" x1="0" x2="0" y1="' + T + '" y2="' + (T + h) + '" visibility="hidden"/></svg><div class="nw-tip" id="nw-tip" hidden></div>' +
+    host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Net worth by month"><g class="axis">' + ticks + labels + '</g>' + areas + '<path class="net-halo" d="' + net + '"/><path class="net" d="' + net + '"/><line class="hover" id="nw-hover" x1="0" x2="0" y1="' + T + '" y2="' + (T + h) + '" visibility="hidden"/></svg><div class="nw-tip" id="nw-tip" hidden></div>' +
       '<div class="nw-legend">' + order.concat(['liabilities']).filter(function (g) { return history.some(function (r) { return r.byGroup[g]; }); }).map(function (g) { return '<span><i class="nw-dot-' + g + '"></i>' + GROUP_NAME[g] + '</span>'; }).join('') + '<span><i class="net"></i>Net worth</span></div>';
     var svg = host.querySelector('svg'), tip = host.querySelector('#nw-tip'), line = host.querySelector('#nw-hover');
     svg.addEventListener('mousemove', function (e) {
@@ -306,7 +320,15 @@
   }
   function deriveMortgage(home) {
     var loans = (home.records || []).filter(function (r) { return r.kind === 'mortgage' && r.status !== 'Archived' && typeof r.balance === 'number' && r.balanceDate; });
-    return loans.map(function (r) { return { account: { id: 'home_' + r.id, name: r.name, group: 'liabilities', note: 'Balance from the Home register.' }, points: [{ date: r.balanceDate, value: r.balance, source: r.provider || 'Home register' }], sourceType: 'home', manual: false }; });
+    return loans.map(function (r) {
+      var points = [{ date: r.balanceDate, value: r.balance, source: r.provider || 'Home register' }];
+      // A loan exists from its first disbursement. Its first recorded balance
+      // is carried back to the start date so the history does not show the
+      // property for months on end with no debt against it, then a cliff on
+      // the day the balance was first read. A few instalments of principal
+      // is the size of the approximation.
+      if (r.starts && r.starts < r.balanceDate) points.unshift({ date: r.starts, value: r.balance, source: 'carried back from the ' + date(r.balanceDate) + ' balance', carried: true });
+      return { account: { id: 'home_' + r.id, name: r.name, group: 'liabilities', note: 'Balance from the Home register.' }, points: points, sourceType: 'home', manual: false }; });
   }
   function deriveFlows(bank) {
     var buckets = {};
