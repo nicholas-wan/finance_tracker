@@ -74,8 +74,11 @@
   of Account = 31 Dec balances per year; Transaction history (12-month range,
   "See balances") = balance at the window start. Record snapshots on their
   as-at date with the page as source.
-- Broker, SRS and fixed-deposit values must come from their portals. The
-  statement flows are contributions, never values.
+- Broker, SRS and fixed-deposit values come from their portals. Exception
+  (owner decision, 12 Sep 2026): an account with no portal balance recorded
+  is carried at its net contributions from the statements (cost basis) and
+  marked as such in the register; Interactive Brokers is in that state. A
+  recorded portal balance takes over from its own date.
 - Insurance counts at net surrender value from `manual/insurance.json`.
 
 ## Google Drive through Chrome

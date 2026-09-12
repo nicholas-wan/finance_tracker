@@ -15,7 +15,7 @@
     ['liabilities', 'Liabilities', 'Loans and other amounts owed, subtracted from the total.']
   ];
   var GROUP_NAME = {}; GROUPS.forEach(function (g) { GROUP_NAME[g[0]] = g[1]; });
-  var store = { revision: 0, accounts: [], snapshots: [] }, editable = false, busy = false, derived = [], flows = [], openHistory = {};
+  var store = { revision: 0, accounts: [], snapshots: [] }, editable = false, busy = false, derived = [], flows = [], contributions = {}, openHistory = {};
 
   function esc(v) { return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
   function money(v, dp) { return v == null ? '—' : (v < 0 ? '-' : '') + 'S$' + Math.abs(v).toLocaleString('en-SG', { minimumFractionDigits: dp == null ? 2 : dp, maximumFractionDigits: dp == null ? 2 : dp }); }
@@ -54,6 +54,20 @@
     var manual = store.accounts.filter(function (a) { return !a.archived; }).map(function (a) {
       var points = store.snapshots.filter(function (s) { return s.accountId === a.id; }).slice().sort(function (x, y) { return x.date.localeCompare(y.date); });
       return { account: a, points: points, manual: true };
+    });
+    // An account with no balance ever recorded is carried at its net
+    // contributions from the statements, labelled as such in the register,
+    // until the first portal value is entered.
+    manual.forEach(function (s) {
+      if (s.points.length) return;
+      var name = (s.account.name || '').toLowerCase(), hit = null;
+      Object.keys(contributions).forEach(function (k) {
+        var first = k.toLowerCase().split(' ')[0];
+        if (name.indexOf(first) !== -1 || k.toLowerCase().indexOf(name) !== -1) hit = contributions[k];
+      });
+      if (!hit || hit.total <= 0) return;
+      s.points = hit.points.map(function (p) { return { date: p.date, value: p.value, source: p.source }; });
+      s.estimated = true;
     });
     // A property recorded at its sales order sits in the books two years
     // before the keys and the loan. Counting it from the loan's start keeps
@@ -163,7 +177,7 @@
           }).join('') : '<p class="nw-empty">' + (view.scope === 'personal' && hasHome ? 'The home loan is set aside with the property.' : 'No liabilities recorded.') + '</p>') +
         '</section>' +
       '</div>' +
-      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (hasHome ? ' "Personal only" sets aside the property and the home loan but keeps other debts; the property is carried at acquisition cost, not a market valuation, with no ownership share applied.' : '') + ' The change compares only accounts recorded at both dates.</p></details>' +
+      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (hasHome ? ' "Personal only" sets aside the property and the home loan but keeps other debts; the property is carried at acquisition cost, not a market valuation, with no ownership share applied.' : '') + ' The change compares only accounts recorded at both dates. An account with no balance recorded yet is carried at its net contributions from the statements (cost basis, marked in the register) until a portal value is entered.</p></details>' +
       flowsHTML() +
       '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, everything.filter(function (s) { return s.account.group === g[0]; }), totalsFor(everything, now.month || monthOf(today())).byGroup[g[0]]); }).join('') + '</div></section>';
     drawChart(document.getElementById('nw-chart'), shown);
@@ -192,7 +206,7 @@
       return '<tr data-account="' + esc(id) + '"><td><span class="nw-name">' + esc(s.account.name) + '</span>' + accountNote(s.account) + '</td>' +
         '<td class="num">' + (p ? money(p.value) : '<span class="nw-none">No balance recorded</span>') + '</td>' +
         '<td>' + (p ? '<span class="' + (stale ? 'nw-stale' : 'nw-fresh') + '">' + date(p.date) + (age > 0 ? ' · ' + age + ' day' + (age === 1 ? '' : 's') + ' old' : '') + '</span>' + sourceHTML(p.source) : '<span class="nw-note">' + esc(s.account.source || '') + '</span>') + '</td>' +
-        '<td class="act">' + (s.manual ? (editable ? '<button class="nw-button link" data-record="' + esc(id) + '">Record</button>' : '') + (s.points.length ? '<button class="nw-button link" data-history="' + esc(id) + '" aria-expanded="' + open + '">' + s.points.length + ' dated' + icon(open ? 'up' : 'down') + '</button>' : '') : '<span class="nw-muted">' + (s.sourceType === 'home' ? 'from Home register' : 'from statements') + '</span>') + '</td></tr>' +
+        '<td class="act">' + (s.manual ? (editable ? '<button class="nw-button link" data-record="' + esc(id) + '">Record</button>' : '') + (s.estimated ? '<span class="nw-muted" title="Cost basis: what has been transferred in from UOB ONE, net of withdrawals. Record a portal value to replace it.">cost basis</span>' : s.points.length ? '<button class="nw-button link" data-history="' + esc(id) + '" aria-expanded="' + open + '">' + s.points.length + ' dated' + icon(open ? 'up' : 'down') + '</button>' : '') : '<span class="nw-muted">' + (s.sourceType === 'home' ? 'from Home register' : 'from statements') + '</span>') + '</td></tr>' +
         (open ? '<tr class="nw-history"><td colspan="4"><table>' + s.points.slice().reverse().map(function (q) { return '<tr><td>' + date(q.date) + '</td><td class="num">' + money(q.value) + '</td><td>' + esc(q.source || '') + (q.note ? ' · ' + esc(q.note) : '') + '</td><td class="act">' + (editable ? '<button class="nw-button link danger" data-delete="' + esc(id) + '" data-date="' + esc(q.date) + '">Remove</button>' : '') + '</td></tr>'; }).join('') + '</table></td></tr>' : '');
     }).join('');
     return '<section class="nw-group" id="nw-group-' + esc(g[0]) + '"><div class="nw-group-head"><h4><i class="nw-dot-' + g[0] + '"></i>' + esc(g[1]) + '</h4><strong>' + (subtotal == null ? '—' : money0(subtotal)) + '</strong></div>' +
@@ -353,11 +367,32 @@
       }
       return { account: { id: 'home_' + r.id, name: r.name, group: 'liabilities', note: 'Balance from the Home register.' }, points: points, sourceType: 'home', manual: false }; });
   }
+  function flowBucket(t) {
+    if (t.flow !== 'Investment' && t.flow !== 'Retirement (SRS)' && t.flow !== 'Fixed deposit') return null;
+    var d = (t.description || '').toUpperCase();
+    return t.flow === 'Retirement (SRS)' ? 'SRS contributions' : t.flow === 'Fixed deposit' ? 'Fixed deposits' : /INTERACTIVE|IBKR/.test(d) ? 'Interactive Brokers' : /TIGER/.test(d) ? 'Tiger Brokers' : /PHILLIP/.test(d) ? 'Phillip Securities' : 'Other investments';
+  }
+  // Cumulative net transfers per destination, one point per month with a
+  // transfer: the cost basis of an account whose portal value has not been
+  // recorded. Owner decision 12 Sep 2026: Interactive Brokers is carried at
+  // this basis until a portal balance is entered, which then takes over.
+  function contributionSeries(bank) {
+    var byName = {};
+    (bank.transactions || []).slice().sort(function (a, b) { return a.date.localeCompare(b.date); }).forEach(function (t) {
+      var name = flowBucket(t); if (!name) return;
+      var run = byName[name] || (byName[name] = { name: name, total: 0, points: [] });
+      run.total += t.direction === 'withdrawal' ? t.amount : -t.amount;
+      var m = monthOf(t.date), last = run.points[run.points.length - 1];
+      var value = Math.round(run.total * 100) / 100;
+      if (last && monthOf(last.date) === m) last.value = value;
+      else run.points.push({ date: monthEnd(m), value: value, source: 'net contributions from UOB ONE statements' });
+    });
+    return byName;
+  }
   function deriveFlows(bank) {
     var buckets = {};
     (bank.transactions || []).forEach(function (t) {
-      if (t.flow !== 'Investment' && t.flow !== 'Retirement (SRS)' && t.flow !== 'Fixed deposit') return;
-      var d = (t.description || '').toUpperCase(), name = t.flow === 'Retirement (SRS)' ? 'SRS contributions' : t.flow === 'Fixed deposit' ? 'Fixed deposits' : /INTERACTIVE|IBKR/.test(d) ? 'Interactive Brokers' : /TIGER/.test(d) ? 'Tiger Brokers' : /PHILLIP/.test(d) ? 'Phillip Securities' : 'Other investments';
+      var name = flowBucket(t); if (!name) return;
       var b = buckets[name] || (buckets[name] = { name: name, out: 0, back: 0, last: '' });
       if (t.direction === 'withdrawal') b.out += t.amount; else b.back += t.amount;
       if (t.date > b.last) b.last = t.date;
@@ -377,11 +412,12 @@
       store = results[0]; if (!Array.isArray(store.accounts) || !Array.isArray(store.snapshots)) throw new Error('Invalid net-worth records.');
       derived = [deriveBank(results[1])].filter(Boolean).concat(deriveMortgage(latestHome || results[2]));
       flows = deriveFlows(results[1]);
+      contributions = contributionSeries(results[1]);
       render();
     } catch (error) { root.innerHTML = '<section class="nw-panel"><h2>Net worth unavailable</h2><p>' + esc(error.message) + '</p><button class="nw-button" id="nw-retry">Retry</button></section>'; root.querySelector('#nw-retry').onclick = load; }
   }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries };
+    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries, contributionSeries: contributionSeries };
     return;
   }
   var latestHome = null;

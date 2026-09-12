@@ -34,3 +34,16 @@ for (let i=1;i<amortised.points.length;i++) assert.ok(amortised.points[i-1].valu
 const principal = amortised.points[amortised.points.length-2].value - 251726.63;
 assert.ok(principal > 600 && principal < 700, 'one month of principal at S$990 and 1.55% is about S$665, got '+principal);
 console.log('Mortgage amortises back to its start date.');
+
+// Net contributions per destination, cumulative, one point per month.
+const contrib = N.contributionSeries({transactions:[
+  {date:'2025-04-21',flow:'Investment',direction:'withdrawal',amount:1000,description:'INTERACTIVE BROKERS'},
+  {date:'2025-04-28',flow:'Investment',direction:'withdrawal',amount:500,description:'IBKR LLC'},
+  {date:'2025-06-02',flow:'Investment',direction:'deposit',amount:200,description:'INTERACTIVE BROKERS'},
+  {date:'2025-06-05',flow:'Investment',direction:'withdrawal',amount:300,description:'TIGER BROKERS'},
+  {date:'2025-07-01',flow:'Other',direction:'withdrawal',amount:99,description:'RENT'}
+]});
+assert.deepEqual(Object.keys(contrib).sort(),['Interactive Brokers','Tiger Brokers']);
+assert.deepEqual(contrib['Interactive Brokers'].points,[{date:'2025-04-30',value:1500,source:'net contributions from UOB ONE statements'},{date:'2025-06-30',value:1300,source:'net contributions from UOB ONE statements'}]);
+assert.equal(contrib['Interactive Brokers'].total,1300);
+console.log('Contribution series accumulate net transfers by month.');

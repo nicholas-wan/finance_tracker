@@ -146,7 +146,10 @@ away.
   carried back), and a property linked to a loan enters the history with
   the loan rather than at its sales order, so asset and debt move together. A value carries forward until the next snapshot, so each
   account shows its as-at date and anything over three months old is
-  marked; the change counts only accounts recorded at both dates. Insurance
+  marked; the change counts only accounts recorded at both dates. An
+  account with no balance recorded is carried at its net contributions from
+  the statements (cost basis, marked in the register) until a portal value
+  is entered. Insurance
   counts at net surrender value, not premiums paid; property at acquisition
   cost. `/api/net-worth` saves one account, snapshot or deletion per request
   with the same guarantees as Home; `app/data/net_worth.json` is the
