@@ -90,8 +90,9 @@
   "Coming up" panel on the Overview, folded to a single line unless something
   is due within 60 days. Sources: `topUp` schedules and `reminders` in the
   net-worth register (a transfer clears once the statements show it, by
-  `flow` or `match`), Home register dates, annual premium anniversaries, and
-  card fee waivers. Do not add a separate alert panel for a new reminder;
+  `flow` or `match`), Home register dates that need an action (renewals,
+  mortgage review, services; never warranty expiries, owner decision 12 Sep
+  2026), annual premium anniversaries, and card fee waivers. Do not add a separate alert panel for a new reminder;
   add a source to `comingUpItems` in app.js. A yearly Claude scheduled task
   `srs-top-up-reminder` also fires on 1 Nov for the December top-ups.
 - Mum's CPF top-up (owner, 12 Sep 2026): S$2,000 cash top-up every December

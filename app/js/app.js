@@ -2777,8 +2777,10 @@
     if (window.HomeReminders) {
       var checks = 0;
       window.HomeReminders.actions(homeRegister.records || [], now).forEach(function (a) {
-        if (a.date) items.push({ date: a.date, title: a.label, detail: a.record.name || "", tab: "home" });
-        else checks++;
+        // A warranty running out asks nothing of you, so appliance dates stay
+        // on the Home tab; renewals, reviews and services are things to do.
+        if (!a.date) checks++;
+        else if (a.record.kind !== "appliance") items.push({ date: a.date, title: a.label, detail: a.record.name || "", tab: "home" });
       });
       if (checks) items.push({ date: "", title: checks + " home record" + (checks === 1 ? " needs" : "s need") + " information", detail: "Open the Home register", tab: "home" });
     }
