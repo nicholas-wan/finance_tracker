@@ -165,7 +165,7 @@ window.Charts = (function () {
       if (on("income") && r.income > 0) {
         var hI = r.income * scale;
         col.appendChild(node("rect", {
-          class: "chart-bar chart-bar-up",
+          class: "chart-bar chart-bar-up", "data-series": "income",
           x: cx - pairW - 1, y: axisY - Math.max(1, hI), width: pairW, height: Math.max(1, hI),
           rx: 2, fill: "var(--series-income)"
         }));
@@ -174,7 +174,7 @@ window.Charts = (function () {
       if (on("spent") && r.spent > 0) {
         var hS = r.spent * scale;
         col.appendChild(node("rect", {
-          class: "chart-bar chart-bar-up",
+          class: "chart-bar chart-bar-up", "data-series": "spent",
           x: cx + 1, y: axisY - Math.max(1, hS), width: pairW, height: Math.max(1, hS),
           rx: 2, fill: "var(--series-spent)"
         }));
@@ -183,7 +183,7 @@ window.Charts = (function () {
       if (on("invested") && r.invested > 0) {
         var hV = r.invested * scale;
         col.appendChild(node("rect", {
-          class: "chart-bar chart-bar-down",
+          class: "chart-bar chart-bar-down", "data-series": "invested",
           x: cx - pairW / 2, y: axisY, width: pairW, height: Math.max(1, hV),
           rx: 2, fill: "var(--series-invested)"
         }));
@@ -262,6 +262,15 @@ window.Charts = (function () {
       b.appendChild(sw);
       b.appendChild(document.createTextNode(item.label));
       b.addEventListener("click", function () { onToggle(item.key); });
+      // Hovering or focusing a legend entry lifts that series and dims the rest.
+      function focusSeries(key) {
+        container.querySelectorAll(".chart-bar").forEach(function (bar) {
+          bar.classList.toggle("is-dim", !!key && bar.getAttribute("data-series") !== key);
+        });
+      }
+      var on = function () { if (isOn) focusSeries(item.key); }, off = function () { focusSeries(null); };
+      b.addEventListener("mouseenter", on); b.addEventListener("focus", on);
+      b.addEventListener("mouseleave", off); b.addEventListener("blur", off);
       legend.appendChild(b);
     });
     container.appendChild(legend);

@@ -231,7 +231,7 @@
     var labels = '', every = history.length > 30 ? 12 : history.length > 14 ? 6 : 3;
     history.forEach(function (r, i) { if (i % every === 0 || i === history.length - 1) labels += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle">' + monthLabel(r.month) + '</text>'; });
     host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Net worth by month"><g class="axis">' + ticks + labels + '</g>' + areas + '<path class="net-halo" d="' + net + '"/><path class="net" d="' + net + '"/><line class="hover" id="nw-hover" x1="0" x2="0" y1="' + T + '" y2="' + (T + h) + '" visibility="hidden"/></svg><div class="nw-tip" id="nw-tip" hidden></div>' +
-      '<div class="nw-legend">' + order.concat(['liabilities']).filter(function (g) { return history.some(function (r) { return r.byGroup[g]; }); }).map(function (g) { return '<span><i class="nw-dot-' + g + '"></i>' + GROUP_NAME[g] + '</span>'; }).join('') + '<span><i class="net"></i>Net worth</span></div>';
+      '<div class="nw-legend">' + order.concat(['liabilities']).filter(function (g) { return history.some(function (r) { return r.byGroup[g]; }); }).map(function (g) { return '<span class="nw-legend-item" tabindex="0" data-group="' + g + '"><i class="nw-dot-' + g + '"></i>' + GROUP_NAME[g] + '</span>'; }).join('') + '<span class="nw-legend-item" tabindex="0" data-group="net"><i class="net"></i>Net worth</span></div>';
     var svg = host.querySelector('svg'), tip = host.querySelector('#nw-tip'), line = host.querySelector('#nw-hover');
     svg.addEventListener('mousemove', function (e) {
       var rect = svg.getBoundingClientRect(), px = (e.clientX - rect.left) / rect.width * W;
@@ -243,6 +243,17 @@
       tip.style.left = Math.min(left + 12, host.clientWidth - tip.offsetWidth - 4) + 'px'; tip.style.top = Math.max(0, (e.clientY - rect.top) - 10) + 'px';
     });
     svg.addEventListener('mouseleave', function () { tip.hidden = true; line.setAttribute('visibility', 'hidden'); });
+    // Hovering or focusing a legend entry lifts that series and dims the rest.
+    var areas = host.querySelectorAll('.nw-area'), netPath = host.querySelector('.net');
+    function focusGroup(g) {
+      areas.forEach(function (a) { a.classList.toggle('is-dim', !!g && a.dataset.group !== g); a.classList.toggle('is-focus', a.dataset.group === g); });
+      netPath.classList.toggle('is-dim', !!g && g !== 'net'); netPath.classList.toggle('is-focus', g === 'net');
+    }
+    host.querySelectorAll('.nw-legend-item').forEach(function (item) {
+      var on = function () { focusGroup(item.dataset.group); }, off = function () { focusGroup(null); };
+      item.addEventListener('mouseenter', on); item.addEventListener('focus', on);
+      item.addEventListener('mouseleave', off); item.addEventListener('blur', off);
+    });
   }
   function niceStep(raw) { var p = Math.pow(10, Math.floor(Math.log10(raw || 1))), n = raw / p; return (n <= 1 ? 1 : n <= 2 ? 2 : n <= 5 ? 5 : 10) * p; }
   function compact(v) { var a = Math.abs(v); return (v < 0 ? '-' : '') + (a >= 1e6 ? (a / 1e6).toFixed(a % 1e6 ? 1 : 0) + 'M' : a >= 1e3 ? Math.round(a / 1e3) + 'k' : String(a)); }

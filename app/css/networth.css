@@ -87,7 +87,14 @@
 .nw-area[data-group="insurance"] { fill: var(--nw-insurance); }
 .nw-area[data-group="property"] { fill: var(--nw-property); }
 .nw-area[data-group="liabilities"] { fill: var(--nw-liabilities); }
-.nw-area { fill-opacity: .34; }
+.nw-area { fill-opacity: .34; transition: fill-opacity 160ms ease; }
+.nw-area.is-dim { fill-opacity: .08; }
+.nw-area.is-focus { fill-opacity: .78; }
+.nw-chart .net { transition: opacity 160ms ease, stroke-width 160ms ease; }
+.nw-chart .net.is-dim { opacity: .25; }
+.nw-chart .net.is-focus { stroke-width: 3.5; }
+.nw-legend-item { cursor: default; border-radius: 6px; padding: 2px 6px; margin: -2px -6px; }
+.nw-legend-item:hover, .nw-legend-item:focus-visible { color: var(--text); background: var(--surface-2); outline: none; }
 .nw-legend { display: flex; gap: 14px; flex-wrap: wrap; margin-top: 10px; font-size: var(--fs-small); color: var(--text-2); }
 .nw-legend span { display: inline-flex; align-items: center; gap: 6px; }
 .nw-legend i { width: 10px; height: 10px; border-radius: 3px; display: inline-block; }
