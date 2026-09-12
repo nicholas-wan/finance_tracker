@@ -24,19 +24,39 @@
 }
 :root[data-theme="dark"] .nw-dialog { --nw-shadow-modal: 0 24px 60px rgba(0, 0, 0, .55); }
 
-/* ---------- Heading ---------- */
-.nw-heading { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 4px 2px 0; margin: 0 0 10px; }
-.nw-heading h2 { font-size: var(--fs-xl); font-weight: 600; margin: 0 0 2px; }
-.nw-heading p { margin: 0; }
-.nw-total { text-align: right; flex-shrink: 0; }
-.nw-total span, .nw-total small { display: block; color: var(--text-2); font-size: var(--fs-small); }
-.nw-total strong { display: block; font-size: 30px; font-weight: 500; letter-spacing: -.03em; font-variant-numeric: tabular-nums; margin: 4px 0; }
+/* ---------- Hero: headline, change, controls, chart as one unit ---------- */
+.nw-hero { padding: 18px 20px 14px; }
+.nw-hero-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
+.nw-hero-copy { min-width: 0; }
+.nw-eyebrow { margin: 0 0 2px; font-size: var(--fs-small); color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
+.nw-hero-value { display: block; font-size: 34px; font-weight: 650; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.1; }
+.nw-hero-change { margin: 6px 0 2px; font-size: var(--fs-body); color: var(--text-2); }
+.nw-hero-change .good { color: var(--green); font-weight: 600; }
+.nw-hero-change .bad { color: var(--red); font-weight: 600; }
+.nw-hero-copy .nw-muted { margin: 0; }
+.nw-hero-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.nw-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; background: var(--surface); }
+.nw-seg-btn { border: 0; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-small); padding: 4px 11px; border-radius: 999px; cursor: pointer; }
+.nw-seg-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+.nw-seg-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+/* ---------- Assets and liabilities side by side ---------- */
+.nw-split { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; margin-bottom: 10px; }
+.nw-side { padding: 14px 16px; margin: 0; }
+.nw-side-head { display: flex; justify-content: space-between; align-items: baseline; margin-bottom: 8px; }
+.nw-side-head h3 { margin: 0; font-size: var(--fs-md); font-weight: 600; }
+.nw-side-head strong { font-size: var(--fs-lg); font-variant-numeric: tabular-nums; font-weight: 650; letter-spacing: -.01em; }
+.nw-side-row { display: grid; grid-template-columns: minmax(90px, 130px) minmax(40px, 1fr) 96px; align-items: center; gap: 10px; padding: 6px 0; color: inherit; text-decoration: none; border-top: 1px solid var(--nw-line); font-size: var(--fs-small); }
+.nw-side-row:hover .nw-side-name { color: var(--accent); }
+.nw-side-name { display: flex; align-items: center; gap: 8px; color: var(--text); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.nw-side-name i { width: 10px; height: 10px; border-radius: 3px; flex-shrink: 0; display: inline-block; }
+.nw-side-bar { height: 6px; border-radius: 999px; background: color-mix(in srgb, var(--border) 76%, transparent); overflow: hidden; }
+.nw-side-fill { display: block; height: 100%; border-radius: 999px; }
+.nw-side-value { text-align: right; font-variant-numeric: tabular-nums; font-weight: 600; }
+@media (max-width: 700px) { .nw-split { grid-template-columns: 1fr; } .nw-hero-value { font-size: 28px; } }
 .nw-muted { color: var(--text-2); font-size: var(--fs-small); }
 .nw-icon { width: 1em; height: 1em; flex: 0 0 auto; vertical-align: -0.12em; }
 
-/* ---------- KPI row ---------- */
-.nw-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin-bottom: 10px; }
-.nw-about { margin: 0 0 16px; color: var(--text-2); font-size: var(--fs-small); }
+.nw-about { margin: 6px 0 16px; color: var(--text-2); font-size: var(--fs-small); }
 .nw-about summary { cursor: pointer; width: fit-content; }
 .nw-about p { margin: 8px 0 0; max-width: 92ch; line-height: 1.5; }
 .nw-kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; box-shadow: var(--shadow-soft); }

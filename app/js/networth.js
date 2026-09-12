@@ -84,57 +84,83 @@
   // that first appears in between (a loan balance read for the first time, a
   // new broker) would otherwise read as money gained or lost.
   function changeBetween(all, then, now) {
-    var delta = 0, excluded = [];
+    var delta = 0, base = 0, excluded = [];
     all.forEach(function (s) {
       var id = s.account.id, a = then.values[id], b = now.values[id];
-      if (a != null && b != null) delta += b - a;
+      if (a != null && b != null) { delta += b - a; base += a; }
       else if (a != null || b != null) excluded.push(s.account.name);
     });
-    return { delta: delta, excluded: excluded };
+    return { delta: delta, base: base, excluded: excluded };
   }
 
   // ---------- Rendering ----------
+  // Layout follows the net-worth trackers people know (Monarch, Copilot,
+  // Empower): one headline number with its change and the history chart as
+  // a single unit, then assets and liabilities side by side as grouped
+  // lists, then the account register. Scope and range are view settings.
+  var view = { scope: 'all', range: 12 };
+  function isHome(s) { return s.account.group === 'property' || s.sourceType === 'home'; }
   function render() {
-    var all = allAccounts(), months = monthRange(all), history = months.map(function (m) { return totalsFor(all, m); });
-    var now = history.length ? history[history.length - 1] : { assets: 0, liabilities: 0, net: 0, byGroup: {} };
+    var everything = allAccounts();
+    var hasHome = everything.some(isHome);
+    if (!hasHome) view.scope = 'all';
+    var all = view.scope === 'personal' ? everything.filter(function (s) { return !isHome(s); }) : everything;
+    var months = monthRange(all), history = months.map(function (m) { return totalsFor(all, m); });
+    var now = history.length ? history[history.length - 1] : { assets: 0, liabilities: 0, net: 0, byGroup: {}, values: {} };
     var oldest = null, newest = null;
-    all.forEach(function (s) { var p = latest(s); if (p) { if (!oldest || p.date < oldest) oldest = p.date; if (!newest || p.date > newest) newest = p.date; } });
-    var back = history.length > 12 ? history[history.length - 13] : history[0];
-    var change = back && history.length > 1 ? changeBetween(all, back, now) : null;
+    everything.forEach(function (s) { var p = latest(s); if (p) { if (!oldest || p.date < oldest) oldest = p.date; if (!newest || p.date > newest) newest = p.date; } });
+    var shown = view.range && history.length > view.range ? history.slice(history.length - view.range - 1) : history;
+    var back = shown.length > 1 ? shown[0] : null;
+    var change = back ? changeBetween(all, back, now) : null;
     var span = back ? monthsBetween(back.month, now.month) : 0;
-    var homeOnly = homeEquity(all, now.values || {}), showExcl = all.some(function (s) { return s.account.group === 'property' || s.sourceType === 'home'; });
+    var pct = change && change.base ? change.delta / Math.abs(change.base) * 100 : null;
     var latestNote = newest ? 'Latest balance ' + date(newest) + (oldest && oldest !== newest ? ' \u00b7 oldest ' + date(oldest) : '') : 'No balances recorded yet';
-    var assetNote = Object.keys(now.byGroup).filter(function (g) { return g !== 'liabilities' && now.byGroup[g]; }).map(function (g) { return GROUP_NAME[g] + ' ' + money0(now.byGroup[g]); }).join(' \u00b7 ') || 'nothing recorded';
-    var changeTile = kpi(span ? 'Change over ' + span + ' month' + (span === 1 ? '' : 's') : 'Change', change == null ? '\u2014' : signed(change.delta), back && span ? 'since ' + monthLabel(back.month) + (change && change.excluded.length ? ' \u00b7 excludes ' + change.excluded.join(', ') + ' (not recorded at both dates)' : '') : 'needs two dated balances', change == null ? null : change.delta >= 0 ? 'good' : 'bad', 'trend');
-    // One row of tiles carries every headline figure; the explanations sit
-    // in a collapsed note beneath instead of a sentence on every block.
+    var stale = staleAccounts(everything);
+    var assetGroups = ['cash', 'cpf', 'investments', 'insurance', 'property'].filter(function (g) { return now.byGroup[g]; });
+    var liabilityRows = all.filter(function (s) { return s.account.group === 'liabilities' && valueAt(s, now.month); });
+    function seg(name, options) {
+      return '<div class="nw-seg" role="group" aria-label="' + name + '">' + options.map(function (o) {
+        return '<button type="button" class="nw-seg-btn' + (o.on ? ' active' : '') + '" aria-pressed="' + o.on + '" data-' + o.key + '="' + o.value + '">' + o.label + '</button>';
+      }).join('') + '</div>';
+    }
     root.innerHTML =
-      '<header class="nw-heading"><div><h2>Net worth</h2><p class="nw-muted">' + latestNote + (staleAccounts(all).length ? ' \u00b7 <span class="nw-stale">over 90 days old: ' + esc(staleAccounts(all).join(', ')) + '</span>' : '') + '</p></div></header>' +
-      '<div class="nw-kpis">' +
-        kpi(showExcl ? 'Net worth incl. property' : 'Net worth', money0(history.length ? now.net : null), showExcl ? 'personal accounts plus whole-property equity' : 'assets minus liabilities', null, 'scale') +
-        (showExcl ? kpi('Personal accounts', money0(now.net - homeOnly), 'excludes property and the home loan', null, 'up') +
-                    kpi('Property equity', money0(homeOnly), 'recorded value less the full home loan', null, 'home') : '') +
-        kpi('Assets', money0(now.assets), (now.liabilities ? 'less ' + money0(now.liabilities) + ' liabilities \u00b7 ' : '') + assetNote, null, 'up') +
-        changeTile +
-        (showExcl ? '' : kpi('CPF', money0(now.byGroup.cpf == null ? null : now.byGroup.cpf), cpfNote(all), null, 'scale')) +
+      '<section class="nw-panel nw-hero">' +
+        '<div class="nw-hero-head"><div class="nw-hero-copy">' +
+          '<p class="nw-eyebrow">Net worth' + (hasHome ? (view.scope === 'personal' ? ' \u00b7 personal accounts' : ' \u00b7 including property') : '') + '</p>' +
+          '<strong class="nw-hero-value">' + money0(history.length ? now.net : null) + '</strong>' +
+          '<p class="nw-hero-change">' + (change ? '<span class="' + (change.delta >= 0 ? 'good' : 'bad') + '">' + signed(change.delta) + (pct != null ? ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)' : '') + '</span> over ' + span + ' month' + (span === 1 ? '' : 's') + ' \u00b7 since ' + monthLabel(back.month) + (change.excluded.length ? ' \u00b7 <span class="nw-muted" title="Not recorded at both dates">excludes ' + esc(change.excluded.join(', ')) + '</span>' : '') : '<span class="nw-muted">Record balances on two dates to see the change</span>') + '</p>' +
+          '<p class="nw-muted">' + latestNote + (stale.length ? ' \u00b7 <span class="nw-stale">over 90 days old: ' + esc(stale.join(', ')) + '</span>' : '') + '</p>' +
+        '</div><div class="nw-hero-controls">' +
+          (hasHome ? seg('Scope', [{ key: 'scope', value: 'all', label: 'With property', on: view.scope === 'all' }, { key: 'scope', value: 'personal', label: 'Personal only', on: view.scope === 'personal' }]) : '') +
+          seg('Range', [{ key: 'range', value: 12, label: '1Y', on: view.range === 12 }, { key: 'range', value: 36, label: '3Y', on: view.range === 36 }, { key: 'range', value: 0, label: 'All', on: !view.range }]) +
+        '</div></div>' +
+        '<div class="nw-chart" id="nw-chart"></div>' +
+      '</section>' +
+      '<div class="nw-split">' +
+        '<section class="nw-panel nw-side"><div class="nw-side-head"><h3>Assets</h3><strong>' + money0(now.assets) + '</strong></div>' +
+          (assetGroups.length ? assetGroups.map(function (g) {
+            return '<a class="nw-side-row" href="#nw-group-' + g + '"><span class="nw-side-name"><i class="nw-dot-' + g + '"></i>' + GROUP_NAME[g] + '</span><span class="nw-side-bar"><span class="nw-side-fill" style="width:' + (now.assets ? (now.byGroup[g] / now.assets * 100).toFixed(1) : 0) + '%;background:var(--nw-' + g + ')"></span></span><span class="nw-side-value">' + money0(now.byGroup[g]) + '</span></a>';
+          }).join('') : '<p class="nw-empty">No asset balances recorded.</p>') +
+        '</section>' +
+        '<section class="nw-panel nw-side"><div class="nw-side-head"><h3>Liabilities</h3><strong>' + money0(now.liabilities) + '</strong></div>' +
+          (liabilityRows.length ? liabilityRows.map(function (s) {
+            var v = valueAt(s, now.month).value;
+            return '<a class="nw-side-row" href="#nw-group-liabilities"><span class="nw-side-name"><i class="nw-dot-liabilities"></i>' + esc(s.account.name) + '</span><span class="nw-side-bar"><span class="nw-side-fill" style="width:' + (now.liabilities ? (v / now.liabilities * 100).toFixed(1) : 0) + '%;background:var(--nw-liabilities)"></span></span><span class="nw-side-value">' + money0(v) + '</span></a>';
+          }).join('') : '<p class="nw-empty">' + (view.scope === 'personal' && hasHome ? 'The home loan is set aside with the property.' : 'No liabilities recorded.') + '</p>') +
+        '</section>' +
       '</div>' +
-      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (showExcl ? ' Personal accounts exclude property and the home loan but keep other debts; property equity is the recorded value less the full loan, with no ownership share applied, and the recorded value is acquisition cost, not a market valuation.' : '') + ' The 12-month change compares only accounts recorded at both dates.</p></details>' +
-      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>History</h3><p class="nw-muted">Month-end view</p></div></div><div class="nw-chart" id="nw-chart"></div></section>' +
+      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (hasHome ? ' "Personal only" sets aside the property and the home loan but keeps other debts; the property is carried at acquisition cost, not a market valuation, with no ownership share applied.' : '') + ' The change compares only accounts recorded at both dates.</p></details>' +
       flowsHTML() +
-      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, all.filter(function (s) { return s.account.group === g[0]; }), now.byGroup[g[0]]); }).join('') + '</div></section>';
-    drawChart(document.getElementById('nw-chart'), history);
-    bind(all);
+      '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, everything.filter(function (s) { return s.account.group === g[0]; }), totalsFor(everything, now.month || monthOf(today())).byGroup[g[0]]); }).join('') + '</div></section>';
+    drawChart(document.getElementById('nw-chart'), shown);
+    root.querySelectorAll('[data-scope]').forEach(function (b) { b.onclick = function () { view.scope = b.dataset.scope; render(); }; });
+    root.querySelectorAll('[data-range]').forEach(function (b) { b.onclick = function () { view.range = parseInt(b.dataset.range, 10) || 0; render(); }; });
+    bind(everything);
   }
-  function kpi(label, value, note, tone, ic) { return '<div class="nw-kpi"><p class="label">' + icon(ic) + esc(label) + '</p><p class="value' + (tone ? ' ' + tone : '') + '">' + esc(value) + '</p><p class="delta">' + esc(note) + '</p></div>'; }
   // Manual accounts whose newest balance is more than a quarter old; derived
   // series refresh with the statements and are not the owner's job.
   function staleAccounts(all) {
     return all.filter(function (s) { var p = latest(s); return s.manual && p && ageDays(p.date) > 90; }).map(function (s) { return s.account.name; });
-  }
-  function cpfNote(all) {
-    var cpf = all.filter(function (s) { return s.account.group === 'cpf'; }), dates = cpf.map(latest).filter(Boolean).map(function (p) { return p.date; }).sort();
-    if (!dates.length) return 'no CPF balance recorded';
-    return 'as at ' + date(dates[dates.length - 1]) + (dates[0] !== dates[dates.length - 1] ? ' (oldest ' + date(dates[0]) + ')' : '');
   }
   function accountNote(account) {
     if (!account.note) return '';
@@ -155,7 +181,7 @@
         '<td class="act">' + (s.manual ? (editable ? '<button class="nw-button link" data-record="' + esc(id) + '">Record</button>' : '') + (s.points.length ? '<button class="nw-button link" data-history="' + esc(id) + '" aria-expanded="' + open + '">' + s.points.length + ' dated' + icon(open ? 'up' : 'down') + '</button>' : '') : '<span class="nw-muted">' + (s.sourceType === 'home' ? 'from Home register' : 'from statements') + '</span>') + '</td></tr>' +
         (open ? '<tr class="nw-history"><td colspan="4"><table>' + s.points.slice().reverse().map(function (q) { return '<tr><td>' + date(q.date) + '</td><td class="num">' + money(q.value) + '</td><td>' + esc(q.source || '') + (q.note ? ' · ' + esc(q.note) : '') + '</td><td class="act">' + (editable ? '<button class="nw-button link danger" data-delete="' + esc(id) + '" data-date="' + esc(q.date) + '">Remove</button>' : '') + '</td></tr>'; }).join('') + '</table></td></tr>' : '');
     }).join('');
-    return '<section class="nw-group"><div class="nw-group-head"><h4><i class="nw-dot-' + g[0] + '"></i>' + esc(g[1]) + '</h4><strong>' + (subtotal == null ? '—' : money0(subtotal)) + '</strong></div>' +
+    return '<section class="nw-group" id="nw-group-' + esc(g[0]) + '"><div class="nw-group-head"><h4><i class="nw-dot-' + g[0] + '"></i>' + esc(g[1]) + '</h4><strong>' + (subtotal == null ? '—' : money0(subtotal)) + '</strong></div>' +
       (rows ? '<table class="nw-table"><thead><tr><th>Account</th><th class="num">Balance</th><th>As at</th><th></th></tr></thead><tbody>' + rows + '</tbody></table>' : '<p class="nw-empty">' + esc(g[2]) + '</p>') + '</section>';
   }
   function flowsHTML() {

@@ -129,26 +129,26 @@ away.
   decisions on what is and is not verified are in `CLAUDE.md`; as of
   5 September 2026 every item is Verified with a document and a settled
   warranty state.
-- **Net worth** — assets minus liabilities. Dated balance snapshots recorded
-  by hand live in Git-ignored `manual/net_worth.json` (accounts grouped as
-  cash, CPF, investments, insurance, property, liabilities). Derived series
-  come from data already present: the UOB ONE closing balance on every
-  statement and the mortgage balance on the Home register. A value carries
-  forward until the next snapshot, so each account shows its as-at date and
-  anything over three months old is marked. The headline figures (net worth,
-  personal accounts, property equity, assets less liabilities, 12-month
-  change) are one tile row with the counting rules in a collapsed note; the
-  money-moved reference sits above the balances table. The history chart stacks groups
-  by month with liabilities below zero; the 12-month change counts only
-  accounts recorded at both dates, and a second figure excludes property and
-  the home loan. `/api/net-worth` saves one account, snapshot or deletion per
-  request with the same guarantees as Home; `app/data/net_worth.json` is the
-  read-only snapshot. A final panel totals money moved from the bank account
-  to brokers, SRS and fixed deposits as a reference, never a valuation.
-  Insurance counts at net surrender value, not premiums paid. Personal accounts
-  and whole-property values are labelled separately; changes to the Home mortgage
-  update its derived liability without reloading. Excluding property removes only
-  the home loan, retaining other debts.
+- **Net worth** — laid out like the net-worth trackers people know: one
+  headline number with its change over the chosen range (1Y, 3Y, All) and
+  the history chart beneath it as a single unit (groups stacked by month,
+  liabilities below zero), a **With property / Personal only** toggle that
+  sets the property and home loan aside while keeping other debts, then
+  Assets and Liabilities side by side as grouped lists that jump to the
+  register, a collapsed note on how figures are counted, the money moved
+  from the bank account (a reference, never a valuation), and the Balances
+  register. Balances recorded by hand live in Git-ignored
+  `manual/net_worth.json` (accounts grouped as cash, CPF, investments,
+  insurance, property, liabilities); derived series come from data already
+  present: the UOB ONE closing balance on every statement and the mortgage
+  balance on the Home register, which updates its liability without
+  reloading. A value carries forward until the next snapshot, so each
+  account shows its as-at date and anything over three months old is
+  marked; the change counts only accounts recorded at both dates. Insurance
+  counts at net surrender value, not premiums paid; property at acquisition
+  cost. `/api/net-worth` saves one account, snapshot or deletion per request
+  with the same guarantees as Home; `app/data/net_worth.json` is the
+  read-only snapshot.
 - **Travel** — the whole travel history: this year against earlier years,
   spending by country and by year, and the trips. A trip is the cluster of
   Travel-category charges belonging to one journey; a charge matched to a
