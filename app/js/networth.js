@@ -6,6 +6,7 @@
   // records a loan balance, the mortgage. Nothing here is a transaction.
   var root = typeof document !== 'undefined' ? document.getElementById('pane-networth') : null;
   if (!root && typeof module === 'undefined') return;
+  if (typeof window !== 'undefined') window.NetWorthSchedule = { topUpDue: function () { return topUpDue.apply(null, arguments); } };
   var GROUPS = [
     ['cash', 'Cash', 'Bank balances from statements and any other cash accounts.'],
     ['cpf', 'CPF', 'Ordinary, Special and MediSave balances read from the CPF portal.'],
@@ -42,6 +43,55 @@
       return sum + (s.account.group === 'property' || s.sourceType === 'home' ? values[s.account.id] || 0 : 0);
     }, 0);
   }
+  // An account topped up by a fixed amount in the same month every year
+  // (`topUp: {month, amount, since}` on the record) carries that schedule as
+  // balances: each top-up adds to the last known value once its month
+  // begins. A balance recorded inside a top-up month is taken to include
+  // that year's top-up, so a statement read after the transfer is not
+  // counted twice.
+  function scheduledPoints(account, recorded, now) {
+    var t = account.topUp; if (!t) return recorded;
+    var events = recorded.map(function (p) { return { date: p.date, point: p }; }), months = {};
+    recorded.forEach(function (p) { months[monthOf(p.date)] = true; });
+    for (var y = t.since; y <= +now.slice(0, 4); y++) {
+      var m = y + '-' + String(t.month).padStart(2, '0'), first = m + '-01';
+      if (first > now || months[m]) continue;
+      events.push({ date: first, amount: t.amount });
+    }
+    events.sort(function (a, b) { return a.date.localeCompare(b.date); });
+    var value = 0;
+    return events.map(function (e) {
+      if (e.point) { value = e.point.value; return e.point; }
+      value = Math.round((value + e.amount) * 100) / 100;
+      return { date: e.date, value: value, source: 'Scheduled top-up of ' + money0(e.amount), scheduled: true };
+    });
+  }
+  // Reminder window for a yearly transfer ({month, amount, since} on an
+  // account's `topUp` or a standalone entry in the register's `reminders`):
+  // the month before it, its own month, and the month after (statements for
+  // the transfer month arrive late). `seen` is the statement date of this
+  // year's transfer when the entry names a statement `flow` or a `match`
+  // text in the description, so the reminder clears itself.
+  function topUpDue(name, t, now, transactions) {
+    if (!t) return null;
+    var year = +now.slice(0, 4), y = null, m, needle = t.match ? String(t.match).toUpperCase() : '';
+    [year - 1, year].forEach(function (c) {
+      var cm = c + '-' + String(t.month).padStart(2, '0');
+      if (c >= t.since && now >= addMonths(cm, -1) + '-01' && now <= monthEnd(addMonths(cm, 1))) { y = c; m = cm; }
+    });
+    if (y == null) return null;
+    var seen = null;
+    (transactions || []).forEach(function (x) {
+      if (x.direction !== 'withdrawal' || x.date.slice(0, 4) !== String(y)) return;
+      var hit = (t.flow && x.flow === t.flow) || (needle && String(x.description || '').toUpperCase().indexOf(needle) !== -1);
+      if (hit && (!seen || x.date > seen)) seen = x.date;
+    });
+    return { name: name, amount: t.amount, year: y, dueBy: monthEnd(m), overdue: now > monthEnd(m), seen: seen, tracked: !!(t.flow || needle) };
+  }
+  function nextTopUp(t, now) {
+    var y = +now.slice(0, 4), m = String(t.month).padStart(2, '0');
+    return (y + '-' + m + '-01' > now ? y : y + 1) + '-' + m;
+  }
   function replaceHomeSeries(series, home) { return series.filter(function (s) { return s.sourceType !== 'home'; }).concat(deriveMortgage(home)); }
   var ICONS = { home: '<path d="m3 11 9-8 9 8v9a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>', close: '<path d="M6 6l12 12M18 6 6 18"/>', plus: '<path d="M12 5v14M5 12h14"/>', down: '<path d="m6 10 6 6 6-6"/>', up: '<path d="m6 14 6-6 6 6"/>', trend: '<path d="M3 17l5-5 4 4 9-9"/><path d="M15 7h6v6"/>', scale: '<path d="M12 3v18M5 7h14M7 7l-3 7a3 3 0 0 0 6 0L7 7Zm10 0-3 7a3 3 0 0 0 6 0l-3-7Z"/>' };
   function icon(name) { return '<svg class="nw-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' + ICONS[name] + '</svg>'; }
@@ -53,7 +103,7 @@
   function allAccounts() {
     var manual = store.accounts.filter(function (a) { return !a.archived; }).map(function (a) {
       var points = store.snapshots.filter(function (s) { return s.accountId === a.id; }).slice().sort(function (x, y) { return x.date.localeCompare(y.date); });
-      return { account: a, points: points, manual: true };
+      return { account: a, points: scheduledPoints(a, points, today()), manual: true };
     });
     // An account with no balance ever recorded is carried at its net
     // contributions from the statements, labelled as such in the register,
@@ -108,17 +158,18 @@
     });
     return { month: month, byGroup: byGroup, values: values, assets: assets, liabilities: liabilities, net: assets - liabilities };
   }
-  // Change is measured only across accounts recorded at both dates; an account
-  // that first appears in between (a loan balance read for the first time, a
-  // new broker) would otherwise read as money gained or lost.
+  // Change is the difference in total net worth between the two dates, the
+  // way the headline figure would have moved. Accounts first recorded in
+  // between (a new broker, a loan balance read for the first time) are named
+  // so a jump can be traced to them rather than read as growth.
   function changeBetween(all, then, now) {
-    var delta = 0, base = 0, excluded = [];
+    var added = [], dropped = [];
     all.forEach(function (s) {
       var id = s.account.id, a = then.values[id], b = now.values[id];
-      if (a != null && b != null) { delta += b - a; base += a; }
-      else if (a != null || b != null) excluded.push(s.account.name);
+      if (a == null && b != null) added.push(s.account.name);
+      else if (a != null && b == null) dropped.push(s.account.name);
     });
-    return { delta: delta, base: base, excluded: excluded };
+    return { delta: now.net - then.net, base: then.net, added: added, dropped: dropped };
   }
 
   // ---------- Rendering ----------
@@ -126,7 +177,10 @@
   // Empower): one headline number with its change and the history chart as
   // a single unit, then assets and liabilities side by side as grouped
   // lists, then the account register. Scope and range are view settings.
-  var view = { scope: 'all', range: 12 };
+  // The property and its loan dwarf everything else on the chart and never
+  // move between valuations, so the personal view is the default wherever a
+  // property exists; the toggle brings the property in.
+  var view = { scope: 'personal', range: 12 };
   function isHome(s) { return s.account.group === 'property' || s.sourceType === 'home'; }
   function render() {
     var everything = allAccounts();
@@ -156,7 +210,7 @@
         '<div class="nw-hero-head"><div class="nw-hero-copy">' +
           '<p class="nw-eyebrow">Net worth' + (hasHome ? (view.scope === 'personal' ? ' \u00b7 personal accounts' : ' \u00b7 including property') : '') + '</p>' +
           '<strong class="nw-hero-value">' + money0(history.length ? now.net : null) + '</strong>' +
-          '<p class="nw-hero-change">' + (change ? '<span class="' + (change.delta >= 0 ? 'good' : 'bad') + '">' + signed(change.delta) + (pct != null ? ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)' : '') + '</span> over ' + span + ' month' + (span === 1 ? '' : 's') + ' \u00b7 since ' + monthLabel(back.month) + (change.excluded.length ? ' \u00b7 <span class="nw-muted" title="Not recorded at both dates: ' + esc(change.excluded.join(', ')) + '">' + (change.excluded.length <= 2 ? 'excludes ' + esc(change.excluded.join(' and ')) : change.excluded.length + ' accounts left out') + '</span>' : '') : '<span class="nw-muted">Record balances on two dates to see the change</span>') + '</p>' +
+          '<p class="nw-hero-change">' + (change ? '<span class="' + (change.delta >= 0 ? 'good' : 'bad') + '">' + signed(change.delta) + (pct != null ? ' (' + (pct >= 0 ? '+' : '') + pct.toFixed(1) + '%)' : '') + '</span> over ' + span + ' month' + (span === 1 ? '' : 's') + ' \u00b7 since ' + monthLabel(back.month) + changeNote(change) : '<span class="nw-muted">Record balances on two dates to see the change</span>') + '</p>' +
           '<p class="nw-muted">' + latestNote + (stale.length ? ' \u00b7 <span class="nw-stale">over 90 days old: ' + esc(stale.join(', ')) + '</span>' : '') + '</p>' +
         '</div><div class="nw-hero-controls">' +
           (hasHome ? seg('Scope', [{ key: 'scope', value: 'all', label: 'With property', on: view.scope === 'all' }, { key: 'scope', value: 'personal', label: 'Personal only', on: view.scope === 'personal' }]) : '') +
@@ -177,7 +231,7 @@
           }).join('') : '<p class="nw-empty">' + (view.scope === 'personal' && hasHome ? 'The home loan is set aside with the property.' : 'No liabilities recorded.') + '</p>') +
         '</section>' +
       '</div>' +
-      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (hasHome ? ' "Personal only" sets aside the property and the home loan but keeps other debts; the property is carried at acquisition cost, not a market valuation, with no ownership share applied.' : '') + ' The change compares only accounts recorded at both dates. An account with no balance recorded yet is carried at its net contributions from the statements (cost basis, marked in the register) until a portal value is entered.</p></details>' +
+      '<details class="nw-about"><summary>How these figures are counted</summary><p>Assets minus liabilities, from balances you record here and the bank balances already read from statements. Each account holds its last recorded balance until the next one, so the as-at dates matter.' + (hasHome ? ' "Personal only" sets aside the property and the home loan but keeps other debts; the property is carried at acquisition cost, not a market valuation, with no ownership share applied.' : '') + ' The change is the movement in that total between the two dates, so an account whose first balance was recorded inside the window counts as growth from nothing; those accounts are named next to the change. An account with no balance recorded yet is carried at its net contributions from the statements (cost basis, marked in the register) until a portal value is entered.</p></details>' +
       flowsHTML() +
       '<section class="nw-panel"><div class="nw-panel-head"><div><h3>Balances</h3><p class="nw-muted">' + (editable ? 'Record a balance whenever you read one from a portal or statement.' : 'Read-only view.') + '</p></div><div class="nw-actions">' + (editable ? '<button class="nw-button" id="nw-add-account">' + icon('plus') + 'Add account</button><button class="nw-button primary" id="nw-add-snapshot">' + icon('plus') + 'Record balance</button>' : '') + '</div></div><div class="nw-groups">' + GROUPS.map(function (g) { return groupHTML(g, everything.filter(function (s) { return s.account.group === g[0]; }), totalsFor(everything, now.month || monthOf(today())).byGroup[g[0]]); }).join('') + '</div></section>';
     drawChart(document.getElementById('nw-chart'), shown);
@@ -185,10 +239,18 @@
     root.querySelectorAll('[data-range]').forEach(function (b) { b.onclick = function () { view.range = parseInt(b.dataset.range, 10) || 0; render(); }; });
     bind(everything);
   }
+  // Accounts that entered or left the books inside the comparison window.
+  function changeNote(change) {
+    function part(names, verb) {
+      if (!names.length) return '';
+      return ' \u00b7 <span class="nw-muted" title="' + esc(names.join(', ')) + '">' + (names.length <= 2 ? esc(names.join(' and ')) + ' ' + verb : names.length + ' accounts ' + verb) + '</span>';
+    }
+    return part(change.added, 'added since') + part(change.dropped, 'no longer counted');
+  }
   // Manual accounts whose newest balance is more than a quarter old; derived
   // series refresh with the statements and are not the owner's job.
   function staleAccounts(all) {
-    return all.filter(function (s) { var p = latest(s); return s.manual && p && ageDays(p.date) > 90; }).map(function (s) { return s.account.name; });
+    return all.filter(function (s) { var p = latest(s); return s.manual && !s.account.topUp && p && ageDays(p.date) > 90; }).map(function (s) { return s.account.name; });
   }
   function accountNote(account) {
     if (!account.note) return '';
@@ -201,11 +263,11 @@
   }
   function groupHTML(g, series, subtotal) {
     var rows = series.map(function (s) {
-      var p = latest(s), age = p ? ageDays(p.date) : null, stale = age != null && age > 90;
+      var p = latest(s), age = p ? ageDays(p.date) : null, stale = age != null && age > 90 && !s.account.topUp;
       var id = s.account.id, open = !!openHistory[id];
       return '<tr data-account="' + esc(id) + '"><td><span class="nw-name">' + esc(s.account.name) + '</span>' + accountNote(s.account) + '</td>' +
         '<td class="num">' + (p ? money(p.value) : '<span class="nw-none">No balance recorded</span>') + '</td>' +
-        '<td>' + (p ? '<span class="' + (stale ? 'nw-stale' : 'nw-fresh') + '">' + date(p.date) + (age > 0 ? ' · ' + age + ' day' + (age === 1 ? '' : 's') + ' old' : '') + '</span>' + sourceHTML(p.source) : '<span class="nw-note">' + esc(s.account.source || '') + '</span>') + '</td>' +
+        '<td>' + (p ? '<span class="' + (stale ? 'nw-stale' : 'nw-fresh') + '">' + date(p.date) + (age > 0 ? ' · ' + age + ' day' + (age === 1 ? '' : 's') + ' old' : '') + '</span>' + sourceHTML(p.source) : '<span class="nw-note">' + esc(s.account.source || '') + '</span>') + (s.account.topUp ? '<span class="nw-note">Next top-up ' + monthLabel(nextTopUp(s.account.topUp, today())) + '</span>' : '') + '</td>' +
         '<td class="act">' + (s.manual ? (editable ? '<button class="nw-button link" data-record="' + esc(id) + '">Record</button>' : '') + (s.estimated ? '<span class="nw-muted" title="Cost basis: what has been transferred in from UOB ONE, net of withdrawals. Record a portal value to replace it.">cost basis</span>' : s.points.length ? '<button class="nw-button link" data-history="' + esc(id) + '" aria-expanded="' + open + '">' + s.points.length + ' dated' + icon(open ? 'up' : 'down') + '</button>' : '') : '<span class="nw-muted">' + (s.sourceType === 'home' ? 'from Home register' : 'from statements') + '</span>') + '</td></tr>' +
         (open ? '<tr class="nw-history"><td colspan="4"><table>' + s.points.slice().reverse().map(function (q) { return '<tr><td>' + date(q.date) + '</td><td class="num">' + money(q.value) + '</td><td>' + esc(q.source || '') + (q.note ? ' · ' + esc(q.note) : '') + '</td><td class="act">' + (editable ? '<button class="nw-button link danger" data-delete="' + esc(id) + '" data-date="' + esc(q.date) + '">Remove</button>' : '') + '</td></tr>'; }).join('') + '</table></td></tr>' : '');
     }).join('');
@@ -228,31 +290,41 @@
     var maxA = Math.max.apply(null, history.map(function (r) { return r.assets; }).concat([1]));
     var maxL = Math.max.apply(null, history.map(function (r) { return r.liabilities; }).concat([0]));
     var step = niceStep((maxA + maxL) / 5), top = Math.ceil(maxA / step) * step, bottom = Math.ceil(maxL / step) * step;
-    var y = function (v) { return T + (top - v) / (top + bottom) * h; }, x = function (i) { return L + i / (history.length - 1) * w; };
+    // Balances are read on a handful of dates and carried forward, so the
+    // series are drawn as steps: each month holds its value across its own
+    // column, and a change shows where it was recorded rather than as a ramp
+    // implying steady movement in between.
+    var n = history.length, col = w / n;
+    var y = function (v) { return T + (top - v) / (top + bottom) * h; }, x = function (i) { return L + i * col; }, mid = function (i) { return x(i) + col / 2; };
+    function steps(valueAt) {
+      var pts = [];
+      history.forEach(function (r, i) { var py = y(valueAt(r, i)); pts.push(x(i) + ',' + py, x(i + 1) + ',' + py); });
+      return pts;
+    }
     var areas = '', stack = history.map(function () { return 0; });
     order.forEach(function (g) {
       if (!history.some(function (r) { return r.byGroup[g]; })) return;
-      var upper = history.map(function (r, i) { return x(i) + ',' + y(stack[i] + (r.byGroup[g] || 0)); });
-      var lower = history.map(function (r, i) { return x(i) + ',' + y(stack[i]); }).reverse();
+      var upper = steps(function (r, i) { return stack[i] + (r.byGroup[g] || 0); });
+      var lower = steps(function (r, i) { return stack[i]; }).reverse();
       areas += '<polygon class="nw-area" data-group="' + g + '" points="' + upper.concat(lower).join(' ') + '"/>';
       history.forEach(function (r, i) { stack[i] += r.byGroup[g] || 0; });
     });
     if (maxL) {
-      var up = history.map(function (r, i) { return x(i) + ',' + y(0); }), lo = history.map(function (r, i) { return x(i) + ',' + y(-r.liabilities); }).reverse();
+      var up = steps(function () { return 0; }), lo = steps(function (r) { return -r.liabilities; }).reverse();
       areas += '<polygon class="nw-area" data-group="liabilities" points="' + up.concat(lo).join(' ') + '"/>';
     }
-    var net = history.map(function (r, i) { return (i ? 'L' : 'M') + x(i) + ' ' + y(r.net); }).join(' ');
+    var net = steps(function (r) { return r.net; }).map(function (p, i) { return (i ? 'L' : 'M') + p.replace(',', ' '); }).join(' ');
     var ticks = '';
     for (var v = -bottom; v <= top; v += step) ticks += '<line x1="' + L + '" x2="' + (W - R) + '" y1="' + y(v) + '" y2="' + y(v) + '"/><text x="' + (L - 8) + '" y="' + (y(v) + 4) + '" text-anchor="end">' + compact(v) + '</text>';
-    var labels = '', every = history.length > 30 ? 12 : history.length > 14 ? 6 : 3;
-    history.forEach(function (r, i) { if (i % every === 0 || i === history.length - 1) labels += '<text x="' + x(i) + '" y="' + (H - 8) + '" text-anchor="middle">' + monthLabel(r.month) + '</text>'; });
+    var labels = '', every = n > 30 ? 12 : n > 14 ? 6 : 3;
+    history.forEach(function (r, i) { if (i % every === 0 || i === n - 1) labels += '<text x="' + mid(i) + '" y="' + (H - 8) + '" text-anchor="middle">' + monthLabel(r.month) + '</text>'; });
     host.innerHTML = '<svg viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="Net worth by month"><g class="axis">' + ticks + labels + '</g>' + areas + '<path class="net-halo" d="' + net + '"/><path class="net" d="' + net + '"/><line class="hover" id="nw-hover" x1="0" x2="0" y1="' + T + '" y2="' + (T + h) + '" visibility="hidden"/></svg><div class="nw-tip" id="nw-tip" hidden></div>' +
       '<div class="nw-legend">' + order.concat(['liabilities']).filter(function (g) { return history.some(function (r) { return r.byGroup[g]; }); }).map(function (g) { return '<span class="nw-legend-item" tabindex="0" data-group="' + g + '"><i class="nw-dot-' + g + '"></i>' + GROUP_NAME[g] + '</span>'; }).join('') + '<span class="nw-legend-item" tabindex="0" data-group="net"><i class="net"></i>Net worth</span></div>';
     var svg = host.querySelector('svg'), tip = host.querySelector('#nw-tip'), line = host.querySelector('#nw-hover');
     svg.addEventListener('mousemove', function (e) {
       var rect = svg.getBoundingClientRect(), px = (e.clientX - rect.left) / rect.width * W;
-      var i = Math.max(0, Math.min(history.length - 1, Math.round((px - L) / w * (history.length - 1)))), r = history[i];
-      line.setAttribute('x1', x(i)); line.setAttribute('x2', x(i)); line.setAttribute('visibility', 'visible');
+      var i = Math.max(0, Math.min(n - 1, Math.floor((px - L) / col))), r = history[i];
+      line.setAttribute('x1', mid(i)); line.setAttribute('x2', mid(i)); line.setAttribute('visibility', 'visible');
       tip.hidden = false;
       tip.innerHTML = '<strong>' + monthLabel(r.month) + '</strong>' + order.concat(['liabilities']).filter(function (g) { return r.byGroup[g]; }).map(function (g) { return '<div><span>' + GROUP_NAME[g] + '</span><span>' + (g === 'liabilities' ? '−' : '') + money0(r.byGroup[g]) + '</span></div>'; }).join('') + '<div><span><b>Net worth</b></span><span><b>' + money0(r.net) + '</b></span></div>';
       var left = (e.clientX - rect.left) / rect.width * host.clientWidth;
@@ -417,7 +489,7 @@
     } catch (error) { root.innerHTML = '<section class="nw-panel"><h2>Net worth unavailable</h2><p>' + esc(error.message) + '</p><button class="nw-button" id="nw-retry">Retry</button></section>'; root.querySelector('#nw-retry').onclick = load; }
   }
   if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries, contributionSeries: contributionSeries };
+    module.exports = { ageDays: ageDays, snapshotDefaults: snapshotDefaults, homeEquity: homeEquity, replaceHomeSeries: replaceHomeSeries, contributionSeries: contributionSeries, changeBetween: changeBetween, scheduledPoints: scheduledPoints, nextTopUp: nextTopUp, topUpDue: topUpDue };
     return;
   }
   var latestHome = null;

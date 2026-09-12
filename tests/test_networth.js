@@ -47,3 +47,55 @@ assert.deepEqual(Object.keys(contrib).sort(),['Interactive Brokers','Tiger Broke
 assert.deepEqual(contrib['Interactive Brokers'].points,[{date:'2025-04-30',value:1500,source:'net contributions from UOB ONE statements'},{date:'2025-06-30',value:1300,source:'net contributions from UOB ONE statements'}]);
 assert.equal(contrib['Interactive Brokers'].total,1300);
 console.log('Contribution series accumulate net transfers by month.');
+
+// The change is the movement in total net worth; accounts first recorded
+// inside the window are named rather than dropped from the figure.
+{
+  const all = [{account:{id:'a',name:'Bank'}},{account:{id:'b',name:'Broker'}},{account:{id:'c',name:'Old loan'}}];
+  const then = {net:100, values:{a:100, c:-20}}, now = {net:400, values:{a:150, b:250}};
+  const change = N.changeBetween(all, then, now);
+  assert.equal(change.delta, 300);
+  assert.equal(change.base, 100);
+  assert.deepEqual(change.added, ['Broker']);
+  assert.deepEqual(change.dropped, ['Old loan']);
+  console.log('Net worth: change is the movement in the total, with added and dropped accounts named.');
+}
+
+// An annual top-up schedule carries balances forward: each top-up adds to
+// the last known value once its month begins, a recorded balance takes over
+// and absorbs a top-up in its own month, and a future month is not counted.
+{
+  const srs = {id:'srs', topUp:{month:12, amount:15300, since:2023}};
+  assert.deepEqual(N.scheduledPoints(srs, [], '2026-09-12').map(p=>[p.date,p.value]), [['2023-12-01',15300],['2024-12-01',30600],['2025-12-01',45900]]);
+  assert.deepEqual(N.scheduledPoints(srs, [{date:'2025-12-23',value:15300}], '2026-09-12').map(p=>[p.date,p.value]), [['2023-12-01',15300],['2024-12-01',30600],['2025-12-23',15300]]);
+  assert.deepEqual(N.scheduledPoints(srs, [{date:'2025-12-23',value:15300}], '2026-12-05').map(p=>[p.date,p.value]).pop(), ['2026-12-01',30600]);
+  assert.deepEqual(N.scheduledPoints({id:'plain'}, [{date:'2025-01-01',value:1}], '2026-09-12'), [{date:'2025-01-01',value:1}]);
+  assert.equal(N.nextTopUp(srs.topUp, '2026-09-12'), '2026-12');
+  assert.equal(N.nextTopUp(srs.topUp, '2026-12-05'), '2027-12');
+  console.log('Net worth: annual top-up schedule carries balances forward.');
+}
+
+// A top-up reminder runs from the month before the top-up to the month
+// after, names the year and due date, and clears once the statements show
+// that year's transfer.
+{
+  const srs = {month:12, amount:15300, since:2025, flow:'Retirement (SRS)'};
+  const paid = [{flow:'Retirement (SRS)', direction:'withdrawal', date:'2025-12-23', amount:15300}];
+  assert.equal(N.topUpDue('SRS', srs, '2026-10-31', paid), null);
+  const nov = N.topUpDue('SRS', srs, '2026-11-01', paid);
+  assert.deepEqual([nov.name, nov.year, nov.dueBy, nov.overdue, nov.seen, nov.tracked], ['SRS', 2026, '2026-12-31', false, null, true]);
+  const jan = N.topUpDue('SRS', srs, '2027-01-15', paid);
+  assert.deepEqual([jan.year, jan.overdue, jan.seen], [2026, true, null]);
+  assert.equal(N.topUpDue('SRS', srs, '2027-02-01', paid), null);
+  const done = N.topUpDue('SRS', srs, '2026-12-05', paid.concat([{flow:'Retirement (SRS)', direction:'withdrawal', date:'2026-12-02', amount:15300}]));
+  assert.equal(done.seen, '2026-12-02');
+  assert.equal(N.topUpDue('x', {month:12, amount:1, since:2027}, '2026-11-15', []), null, 'not before the first year');
+  assert.equal(N.topUpDue('x', undefined, '2026-11-15', []), null);
+  // A standalone reminder clears on a description match, case-insensitively.
+  const mum = {month:12, amount:2000, since:2025, match:'CENTRAL PROVIDENT'};
+  const cpf = [{flow:'Transfer', direction:'withdrawal', date:'2026-12-04', amount:2000, description:'PAYNOW-FAST PIB Central Provident Fu OTHR'}];
+  assert.equal(N.topUpDue('Mum', mum, '2026-11-20', []).seen, null);
+  assert.equal(N.topUpDue('Mum', mum, '2026-12-20', cpf).seen, '2026-12-04');
+  assert.equal(N.topUpDue('Mum', mum, '2026-12-20', [{flow:'Transfer', direction:'deposit', date:'2026-12-04', amount:2000, description:'CENTRAL PROVIDENT'}]).seen, null, 'a deposit is not a top-up');
+  console.log('Net worth: top-up reminder window and clearing.');
+}

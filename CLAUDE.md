@@ -80,6 +80,22 @@
   marked as such in the register; Interactive Brokers is in that state. A
   recorded portal balance takes over from its own date.
 - Insurance counts at net surrender value from `manual/insurance.json`.
+- UOB SRS (owner, 12 Sep 2026): topped up every December by a fixed
+  S$15,300. Recorded as `topUp` on the account (`{month, amount, since}`);
+  the dashboard adds each year's top-up to the last known balance once
+  December begins and never flags the account as stale. The statements show
+  the Dec 2025 top-up only, so `since` is 2025; move it earlier only if the
+  owner names an earlier first year (paid from another account).
+- Top-up reminders (owner, 12 Sep 2026): the Overview shows a "Top-up due"
+  panel from 1 Nov to 31 Jan for each scheduled top-up until the statements
+  show that year's transfer (`topUp.flow` names the statement flow, here
+  `Retirement (SRS)`). A yearly Claude scheduled task `srs-top-up-reminder`
+  also fires on 1 Nov.
+- Mum's CPF top-up (owner, 12 Sep 2026): S$2,000 cash top-up every December
+  to Mum's CPF retirement account. A gift, never an asset: it lives in
+  `reminders` in `manual/net_worth.json` (matched on "CENTRAL PROVIDENT" in
+  the statement description) and only ever appears as a reminder. The
+  statements show Dec 2025 only, so `since` is 2025.
 
 ## Google Drive through Chrome
 

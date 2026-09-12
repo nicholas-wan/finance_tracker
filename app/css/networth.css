@@ -27,14 +27,15 @@
 /* ---------- Hero: headline, change, controls, chart as one unit ---------- */
 .nw-hero { padding: 18px 20px 14px; }
 .nw-hero-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; flex-wrap: wrap; margin-bottom: 6px; }
-.nw-hero-copy { min-width: 0; }
+/* The copy grows and wraps its own lines; the controls keep their place at the right rather than dropping below whenever a scope's change line runs long. */
+.nw-hero-copy { flex: 1 1 320px; min-width: 0; }
 .nw-eyebrow { margin: 0 0 2px; font-size: var(--fs-small); color: var(--text-3); text-transform: uppercase; letter-spacing: .04em; }
 .nw-hero-value { display: block; font-size: 34px; font-weight: 650; letter-spacing: -.03em; font-variant-numeric: tabular-nums; line-height: 1.1; }
 .nw-hero-change { margin: 6px 0 2px; font-size: var(--fs-body); color: var(--text-2); }
 .nw-hero-change .good { color: var(--green); font-weight: 600; }
 .nw-hero-change .bad { color: var(--red); font-weight: 600; }
 .nw-hero-copy .nw-muted { margin: 0; }
-.nw-hero-controls { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.nw-hero-controls { flex: 0 0 auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
 .nw-seg { display: inline-flex; border: 1px solid var(--border); border-radius: 999px; padding: 2px; background: var(--surface); }
 .nw-seg-btn { border: 0; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-small); padding: 4px 11px; border-radius: 999px; cursor: pointer; }
 .nw-seg-btn.active { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
@@ -78,7 +79,7 @@
 .nw-chart svg { width: 100%; height: auto; display: block; overflow: visible; }
 .nw-chart .axis text { fill: var(--text-3); font-size: 11px; }
 .nw-chart .axis line { stroke: var(--nw-line); }
-.nw-chart .net { fill: none; stroke: var(--accent); stroke-width: 2.5; stroke-linejoin: round; }
+.nw-chart .net { fill: none; stroke: var(--accent); stroke-width: 2.75; stroke-linejoin: round; }
 .nw-chart .net-halo { fill: none; stroke: var(--surface); stroke-width: 6; stroke-linejoin: round; opacity: .9; }
 .nw-chart .hover { fill: none; stroke: var(--text-3); stroke-dasharray: 3 3; }
 .nw-area[data-group="cash"] { fill: var(--nw-cash); }
@@ -87,9 +88,10 @@
 .nw-area[data-group="insurance"] { fill: var(--nw-insurance); }
 .nw-area[data-group="property"] { fill: var(--nw-property); }
 .nw-area[data-group="liabilities"] { fill: var(--nw-liabilities); }
-.nw-area { fill-opacity: .34; transition: fill-opacity 160ms ease; }
-.nw-area.is-dim { fill-opacity: .08; }
-.nw-area.is-focus { fill-opacity: .78; }
+/* Fills stay quiet so the net worth line reads as the series; a legend hover lifts one band. */
+.nw-area { fill-opacity: .2; transition: fill-opacity 160ms ease; }
+.nw-area.is-dim { fill-opacity: .06; }
+.nw-area.is-focus { fill-opacity: .6; }
 .nw-chart .net { transition: opacity 160ms ease, stroke-width 160ms ease; }
 .nw-chart .net.is-dim { opacity: .25; }
 .nw-chart .net.is-focus { stroke-width: 3.5; }

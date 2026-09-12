@@ -21,6 +21,7 @@
 
   var data = null;
   var account = { transactions: [], months: [] };
+  var netWorthRegister = { accounts: [] };
   var cardFeeReviews = { resolvedIds: [] };
   var accountReviewedSignals = {};
   // Handle returned by bindToggle, so a drill-down can reset the grouping
@@ -2692,6 +2693,35 @@
       (missing.length ? missing.map(monthLabel).join(", ") + " missing" : "no gaps") +
       " · " + refreshed;
     wrap.appendChild(el("span", "freshness-meta", meta));
+  }
+
+  // Scheduled top-ups (net-worth register, `topUp` on an account) surface
+  // here from the month before they fall due until the statements show the
+  // transfer for that year.
+  function renderTopUpAlerts() {
+    var panel = document.getElementById("top-up-alerts");
+    var wrap = document.getElementById("top-up-alert-list");
+    if (!panel || !wrap || !window.NetWorthSchedule) return;
+    clear(wrap);
+    var today = new Date(), now = today.getFullYear() + "-" + String(today.getMonth() + 1).padStart(2, "0") + "-" + String(today.getDate()).padStart(2, "0");
+    var through = data.freshness && data.freshness.sourceThrough;
+    var items = (netWorthRegister.accounts || []).filter(function (a) { return a.topUp && !a.archived; }).map(function (a) { return [a.name, a.topUp]; })
+      .concat((netWorthRegister.reminders || []).map(function (r) { return [r.name, r]; }));
+    var due = items.map(function (pair) {
+      return window.NetWorthSchedule.topUpDue(pair[0], pair[1], now, account.transactions);
+    }).filter(function (d) { return d && !d.seen; });
+    panel.classList.toggle("hidden", !due.length);
+    if (!due.length) return;
+    panel.querySelector(".hint").textContent = due.length === 1 ? "before the year ends" : due.length + " due";
+    due.forEach(function (d) {
+      var item = el("div", "card-fee-alert");
+      var copy = el("div", "card-fee-alert-copy");
+      copy.appendChild(el("strong", "", fmt(d.amount) + " " + d.name + " top-up for " + d.year));
+      copy.appendChild(el("span", "", (d.overdue ? "Was due by " : "Due by ") + dateLabel(d.dueBy) + " · " +
+        (d.tracked ? "not yet in the statements" + (through ? " (through " + dateLabel(through) + ")" : "") : "clears when this year's balance is recorded")));
+      item.appendChild(copy);
+      wrap.appendChild(item);
+    });
   }
 
   function renderCardFeeAlerts() {
@@ -7646,7 +7676,7 @@
   var PANEL_TAB = { overview: 'overview', ledger: 'transactions', games: 'transactions', income: 'wealth', insurance: 'insurance', split: 'split', travel: 'travel' };
   function renderPanel(key) {
     if (key === 'overview') {
-      renderFreshness(); renderCardFeeAlerts(); renderKpis();
+      renderFreshness(); renderCardFeeAlerts(); renderTopUpAlerts(); renderKpis();
       renderRecurring(); renderDataQuality(); renderStacked(); renderKeyMetrics();
       renderInsights(); renderSpendingSummary(); renderCategories(); renderOutflows();
     } else if (key === 'ledger') {
@@ -8197,9 +8227,11 @@
     loadJson("data/transactions.json"), loadJson("data/account_transactions.json"),
     loadJson("api/status").catch(function () { return { editable: false }; }),
     loadJson("api/account-reviews").catch(function () { return { recognizedSignals: [] }; }),
-    loadJson("api/card-fee-reviews").catch(function () { return { resolvedIds: [] }; })
+    loadJson("api/card-fee-reviews").catch(function () { return { resolvedIds: [] }; }),
+    loadJson("data/net_worth.json").catch(function () { return { accounts: [] }; })
   ]).then(function (results) {
     applyBranding(results[0]); data = results[1]; applyIdentity(); account = results[2];
+    netWorthRegister = results[6] && Array.isArray(results[6].accounts) ? results[6] : { accounts: [] };
     if ((data.generationId || account.generationId) && data.generationId !== account.generationId) throw new Error("card and account data belong to different import generations");
     return results.slice(3);
   })

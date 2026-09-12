@@ -86,6 +86,31 @@ class NetWorthTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             serve.save_net_worth(dict(account=dict(id='a', name='A', group='cash')))
 
+    def test_annual_top_up_schedule(self):
+        state = net_worth.apply_change(dict(net_worth.EMPTY), dict(account=dict(
+            id='srs', name='SRS', group='investments', topUp=dict(month=12, amount=15300, since=2025))))
+        self.assertEqual(state['accounts'][0]['topUp'], dict(month=12, amount=15300.0, since=2025))
+        state = net_worth.apply_change(state, dict(account=dict(
+            id='srs', name='SRS', group='investments', topUp=dict(month=12, amount=15300, since=2025, flow='Retirement (SRS)'))))
+        self.assertEqual(state['accounts'][0]['topUp']['flow'], 'Retirement (SRS)')
+        with self.assertRaises(ValueError):
+            net_worth.apply_change(state, dict(account=dict(id='srs', name='SRS', group='investments', topUp=dict(month=12, amount=1, since=2025, flow=''))))
+        for bad in [dict(month=13, amount=1, since=2025), dict(month=12, amount=0, since=2025),
+                    dict(month=12, amount=1, since=1999), dict(month=12, amount=1, since=2025, extra=1), 'yearly']:
+            with self.assertRaises(ValueError):
+                net_worth.apply_change(state, dict(account=dict(id='srs', name='SRS', group='investments', topUp=bad)))
+
+    def test_reminders_are_carried_through_saves(self):
+        reminder = dict(id='mum_cpf', name="Mum's CPF top-up", month=12, amount=2000, since=2025, match='CENTRAL PROVIDENT')
+        current = dict(net_worth.EMPTY, reminders=[reminder])
+        state = net_worth.apply_change(current, dict(account=dict(id='a', name='A', group='cash')))
+        self.assertEqual(state['reminders'], [dict(reminder, amount=2000.0)])
+        with self.assertRaises(ValueError):
+            net_worth.apply_change(dict(current, reminders=[dict(reminder, month=0)]), dict(account=dict(id='a', name='A', group='cash')))
+        with self.assertRaises(ValueError):
+            net_worth.apply_change(dict(current, reminders=[dict(reminder, extra='x')]), dict(account=dict(id='a', name='A', group='cash')))
+        self.assertNotIn('reminders', net_worth.apply_change(dict(net_worth.EMPTY), dict(account=dict(id='a', name='A', group='cash'))))
+
     def test_fresh_clone_is_seeded_and_published(self):
         self.assertFalse(serve.NET_WORTH_PATH.exists())
         self.assertEqual(serve.read_net_worth(), net_worth.EMPTY)
