@@ -152,14 +152,6 @@ h2 .icon { color: var(--text-3); }
   backdrop-filter: blur(14px);
 }
 .tabbar-inner { max-width: 1060px; margin: 0 auto; padding: 8px 20px; display: flex; align-items: center; gap: 12px; }
-/* Once the brand row has scrolled away, a small monogram appears at the left
-   of the pinned tab row so the Overview stays one click away. */
-.tabbar-home { display: none; border: 0; background: none; padding: 2px; margin: -2px 0; border-radius: 9px; cursor: pointer; opacity: 0; transform: translateX(-6px); transition: opacity var(--motion-medium) var(--motion-ease), transform var(--motion-medium) var(--motion-ease); }
-.tabbar-home .brand-mark { width: 26px; height: 26px; border-radius: 7px; }
-.tabbar-home .brand-mark text { font-size: 15px; }
-.tabbar-home:hover { background: color-mix(in srgb, var(--brand) 10%, transparent); }
-.tabbar-home:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.tabbar.compact .tabbar-home { display: inline-flex; opacity: 1; transform: none; }
 .topbar-inner h1 { justify-self: start; }
 /* Brand lockup: a compact monogram beside the wordmark, sized to the header
    controls (34px) rather than the heading, with the brand colour carried
@@ -2550,7 +2542,6 @@ button:not(:disabled):active { transform: translateY(1px) scale(0.98); }
 .brand-link { display: inline-flex; align-items: center; gap: 10px; border: 0; background: none; padding: 2px 6px 2px 2px; margin: -2px 0 -2px -2px; border-radius: 10px; cursor: pointer; font: inherit; color: inherit; }
 .brand-link:hover { background: color-mix(in srgb, var(--brand) 10%, transparent); }
 .brand-link:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-.brand-link[aria-current="page"] .brand-name { text-decoration: underline; text-decoration-color: color-mix(in srgb, var(--brand) 45%, transparent); text-underline-offset: 4px; }
 .subtabs { display: flex; gap: 4px; flex-wrap: wrap; border-bottom: 1px solid var(--border); margin: 0 0 4px; }
 .subtab { border: 0; background: none; color: var(--text-2); font: inherit; font-size: var(--fs-md); padding: 10px 12px; margin-bottom: -1px; border-bottom: 2px solid transparent; cursor: pointer; border-radius: 6px 6px 0 0; }
 .subtab:hover { color: var(--text); background: color-mix(in srgb, var(--text) 4%, transparent); }

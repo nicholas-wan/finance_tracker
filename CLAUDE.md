@@ -10,12 +10,15 @@
 - Clone identity is private: `manual/branding.json` (port, monogram, title,
   colours) and `manual/branding/favicon.*`. Yx's is port 3403, purple "Yx";
   this clone has none and uses the tracked defaults (3402, green "N").
-- Header layout (6 Sep 2026): the logo opens Overview (no Overview tab);
-  Income and Net worth are sub-tabs of **Wealth**; Games is a sub-tab of
-  **Transactions**. `tabs` in each clone's `manual/branding.json` lists the
-  top-level tabs shown. Nicholas: Wealth, Insurance, Home, Split,
-  Transactions (no Travel). Yx: Wealth, Insurance, Travel, Transactions (no
-  Home, no Split). Features unique to one person stay unique by that list,
+- Header layout (6 Sep 2026, revised 13 Sep 2026): **Overview is the first
+  tab** in every clone, always shown and never listed in `tabs`; the logo
+  also opens it. (The 6 Sep "logo only, no Overview tab" layout left the
+  tab row with nothing lit on the Overview, and Wealth in the leftmost slot
+  kept getting clicked as home.) Income and Net worth are sub-tabs of
+  **Wealth**; Games is a sub-tab of **Transactions**. `tabs` in each clone's
+  `manual/branding.json` lists the top-level tabs shown after Overview.
+  Nicholas: Wealth, Insurance, Home, Split, Transactions (no Travel). Yx:
+  Wealth, Insurance, Travel, Transactions (no Home, no Split). Features unique to one person stay unique by that list,
   not by code; do not add a tab to the other clone's list unless asked.
   `setTab("income")`, `setTab("networth")` and `setTab("games")` still work
   and land on the right sub-tab.

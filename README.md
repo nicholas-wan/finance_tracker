@@ -73,13 +73,12 @@ an existing month is rejected.
 
 The header is two rows: the brand row (logo, wordmark, share and theme)
 scrolls away, and the tab row beneath it stays pinned to the top of the
-window. The logo is the way to the Overview; there is no Overview tab.
+window. **Overview** is always the first tab, so the tab row always has
+exactly one lit tab; clicking the logo also opens it and scrolls to the top.
 Income and Net worth are sub-tabs of **Wealth**, Games is a sub-tab of
 **Transactions**, and **Insurance** shows one insured person per sub-tab
-(no combined view), so the tab row holds at most six tabs; each clone lists
-the ones it shows in `manual/branding.json`. Once the brand row has scrolled
-away, a small monogram on the pinned tab row keeps the Overview one click
-away.
+(no combined view), so the tab row holds at most seven tabs; each clone
+lists the ones it shows after Overview in `manual/branding.json`.
 
 - **Overview** — a status line (statements through, next statement, last
   refresh, resolved card fee) that only grows into cards when something needs

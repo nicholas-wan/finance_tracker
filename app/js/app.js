@@ -93,7 +93,7 @@
   function restoreNavigation() {
     try {
       var saved = JSON.parse(localStorage.getItem('finance-navigation') || '{}');
-      if (saved.tab === 'overview' || (typeof saved.tab === 'string' && document.getElementById('tab-' + saved.tab))) state.tab = saved.tab;
+      if (typeof saved.tab === 'string' && document.getElementById('tab-' + saved.tab)) state.tab = saved.tab;
       state.subtab = {};
       ['wealth', 'transactions'].forEach(function (name) {
         var value = saved.subtab && saved.subtab[name];
@@ -7962,19 +7962,10 @@
 
   function buildControls() {
     buildThemeToggle();
-    // The logo is the way back to the Overview; there is no Overview tab.
+    // Overview is the first tab; the logo is a second way there (and scrolls
+    // back to the top), the way a site logo usually behaves.
     var brandHome = document.getElementById("brand-home");
     if (brandHome) brandHome.addEventListener("click", function () { setTab("overview"); window.scrollTo(0, 0); });
-    var tabbarHome = document.getElementById("tabbar-home");
-    if (tabbarHome) tabbarHome.addEventListener("click", function () { setTab("overview"); window.scrollTo(0, 0); });
-    // Show the small monogram on the pinned tab row only while the brand row
-    // is out of view.
-    var topbar = document.querySelector("header.topbar"), tabbar = document.getElementById("tabbar");
-    if (topbar && tabbar && window.IntersectionObserver) {
-      new IntersectionObserver(function (entries) {
-        tabbar.classList.toggle("compact", !entries[0].isIntersecting);
-      }, { threshold: 0 }).observe(topbar);
-    }
     Array.prototype.forEach.call(document.querySelectorAll(".subtab"), function (b) {
       b.addEventListener("click", function () { setSubtab(b.closest(".pane"), b.getAttribute("data-subtab")); renderActivePanel(); window.dispatchEvent(new Event("finance:navigation")); });
     });
@@ -8339,12 +8330,15 @@
       var brand = document.querySelector("h1.brand");
       if (brand) brand.title = document.title;
     }
-    // Only the listed tabs, in the listed order; each person keeps the
-    // features they use and the header stays readable. Runs before the tab
-    // buttons are wired, so keyboard order follows what is shown.
+    // Overview first, then only the listed tabs in the listed order; each
+    // person keeps the features they use and the header stays readable. Runs
+    // before the tab buttons are wired, so keyboard order follows what is
+    // shown. Overview is never listed: it is the home of every clone.
     if (Array.isArray(branding.tabs) && branding.tabs.length) {
       var nav = document.getElementById("tabs");
-      var keep = branding.tabs.filter(function (name) { return document.getElementById("tab-" + name); });
+      var keep = ["overview"].concat(branding.tabs.filter(function (name) {
+        return name !== "overview" && document.getElementById("tab-" + name);
+      }));
       // Panes stay in the document (renderers still address them); only the
       // buttons go, so a hidden tab is simply unreachable.
       Array.prototype.forEach.call(document.querySelectorAll(".tab"), function (button) {
